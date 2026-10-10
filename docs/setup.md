@@ -51,11 +51,12 @@ cargo build
 
 ## Flash and monitor
 
-With the board on USB (the CH9102 adapter shows up as `/dev/ttyACM0`), from `firmware/`:
+With the board on USB, from `firmware/`. The CH9102 adapter shows up as `/dev/ttyACM0` or `/dev/ttyACM1`
+depending on the order devices were plugged in; the `/dev/serial/by-id/` path does not change:
 
 ```sh
-espflash flash --port /dev/ttyACM0 target/xtensa-esp32-espidf/debug/firmware
-espflash monitor --port /dev/ttyACM0
+espflash flash --port /dev/serial/by-id/usb-1a86_* target/xtensa-esp32-espidf/debug/firmware
+espflash monitor --port /dev/serial/by-id/usb-1a86_*
 ```
 
 Or build, flash and monitor in one step (uses the runner in `.cargo/config.toml`):
@@ -64,16 +65,37 @@ Or build, flash and monitor in one step (uses the runner in `.cargo/config.toml`
 cargo run
 ```
 
-## Serial client
+## Firmware configuration
 
-Talks to a node flashed with `firmware/` over the USB serial port. Close `espflash monitor` first,
-only one program can hold the port.
+The firmware reads the Wi-Fi credentials and the broker address at compile time from
+`firmware/cfg.toml`, which is ignored by git:
 
 ```sh
-cargo run -p oxihome-serial-client -- /dev/ttyACM0
+cp firmware/cfg.toml.example firmware/cfg.toml
 ```
 
-Type `help` for the commands, e.g. `set 1 0 true` turns the LED on.
+`mqtt_url` must use the LAN address of the machine running the broker, e.g. `mqtt://192.168.15.10:1883`.
+
+## MQTT broker
+
+Mosquitto 2 in Docker, anonymous access on port 1883 (see `infra/`):
+
+```sh
+docker compose -f infra/compose.yaml up -d
+```
+
+## Client
+
+Talks to nodes over MQTT or the USB serial port. Type `help` for the commands, e.g. `set 1 0 true`
+turns the LED on.
+
+```sh
+cargo run -p oxihome-client -- mqtt localhost esp32-08d1f9ca41e4
+cargo run -p oxihome-client -- serial /dev/serial/by-id/usb-1a86_*
+```
+
+The current firmware only speaks MQTT; serial mode needs a firmware that uses the UART transport.
+Close `espflash monitor` before using serial mode, only one program can hold the port.
 
 ## Editor
 
