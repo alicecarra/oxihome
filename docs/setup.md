@@ -114,6 +114,21 @@ needs internet once), scans `hub/src/**/*.rs` for class names (input: `hub/style
 the CSS that the hub serves at `/static/app.css`. No Node and no `topcoat asset bundle` are needed.
 Class names must appear literally in the code; names assembled at runtime are not generated.
 
+UI components come from Topcoat UI (shadcn/ui style): their Rust source is copied into
+`hub/src/components/` and becomes ours to edit; the theme (design tokens, light and dark) is
+`hub/styles.css` and the install state is `hub/components.toml`. The Topcoat CLI is only needed to
+add or update components, not to build or run the hub:
+
+```sh
+cargo install topcoat-cli --version 0.10.0 --locked
+cd hub
+topcoat ui list                  # available and installed components
+topcoat ui add badge button card # copy components into src/components
+```
+
+Avoid `dialog`, `alert_dialog`, `sheet`, `sidebar` and `tabs`: they need Topcoat's JavaScript
+runtime, which the hub does not use.
+
 htmx is vendored in `hub/static/htmx.min.js` and served by the hub, so the page works without
 internet access. To update it, change the version and download again:
 

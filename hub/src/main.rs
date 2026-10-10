@@ -1,3 +1,6 @@
+// Copied from the Topcoat UI registry; not every helper is used.
+#[allow(dead_code)]
+mod components;
 mod events;
 mod hub;
 mod mqtt;
