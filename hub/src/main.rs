@@ -1,5 +1,6 @@
 mod mqtt;
 mod registry;
+mod state;
 
 use std::time::{Duration, Instant};
 
@@ -9,6 +10,7 @@ use serde::Deserialize;
 
 use mqtt::{Incoming, Mqtt};
 use registry::Registry;
+use state::State;
 
 const PRESENCE_CHECK_INTERVAL: Duration = Duration::from_secs(10);
 
@@ -33,6 +35,7 @@ async fn main() -> anyhow::Result<()> {
 
     let (mut mqtt, mut incoming) = Mqtt::connect(&config.mqtt.host, config.mqtt.port);
     let mut registry = Registry::default();
+    let mut state = State::default();
     let mut presence_check = tokio::time::interval(PRESENCE_CHECK_INTERVAL);
 
     loop {
@@ -41,10 +44,14 @@ async fn main() -> anyhow::Result<()> {
                 Incoming::Connected => {
                     println!("connected to {}:{}", config.mqtt.host, config.mqtt.port);
                     mqtt.broadcast(Payload::Query { what: QueryKind::Hello }).await?;
+                    mqtt.broadcast(Payload::Query { what: QueryKind::State { entity: None } }).await?;
                 }
                 Incoming::Message(message) => {
                     if let Some(node_event) = registry.handle(&message, Instant::now()) {
                         println!("{node_event}");
+                    }
+                    for update in state.apply(&message) {
+                        println!("{update}");
                     }
                 }
             },
