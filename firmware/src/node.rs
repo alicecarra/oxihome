@@ -1,10 +1,12 @@
-use esp_idf_svc::hal::delay::NON_BLOCK;
+use std::collections::HashMap;
+
 use esp_idf_svc::hal::gpio::{Output, PinDriver};
-use esp_idf_svc::hal::uart::UartDriver;
 use oxihome_protocol::{
     Access, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, EventKind, Message,
     Payload, QueryKind, Value, ValueType,
 };
+
+use crate::transport::{Transport, TransportEvent};
 
 pub const LED_ENTITY: u8 = 1;
 pub const BUTTON_ENTITY: u8 = 2;
@@ -15,52 +17,37 @@ const ERROR_INVALID_MESSAGE: u16 = 1;
 const ERROR_UNSUPPORTED: u16 = 2;
 const ERROR_UNKNOWN_TARGET: u16 = 3;
 
-const MAX_LINE_LENGTH: usize = 1024;
-
-/// Speaks `oxihome-protocol` as JSON lines over a UART.
-pub struct Node {
-    device_id: String,
-    uart: UartDriver<'static>,
-    led: PinDriver<'static, Output>,
-    next_message_id: u32,
-    line: Vec<u8>,
+struct HandledCommand {
+    message_id: u32,
+    ack: Vec<u8>,
 }
 
-impl Node {
-    pub fn new(
-        device_id: String,
-        uart: UartDriver<'static>,
-        led: PinDriver<'static, Output>,
-    ) -> Self {
+/// Speaks `oxihome-protocol` as JSON over a `Transport`.
+pub struct Node<T: Transport> {
+    device_id: String,
+    transport: T,
+    led: PinDriver<'static, Output>,
+    next_message_id: u32,
+    /// Last command per sender, to answer duplicates without running them again.
+    last_commands: HashMap<String, HandledCommand>,
+}
+
+impl<T: Transport> Node<T> {
+    pub fn new(device_id: String, transport: T, led: PinDriver<'static, Output>) -> Self {
         Self {
             device_id,
-            uart,
+            transport,
             led,
             next_message_id: 0,
-            line: Vec::new(),
+            last_commands: HashMap::new(),
         }
     }
 
-    pub fn announce(&mut self) -> anyhow::Result<()> {
-        self.send_hello(None)?;
-        self.send_led_state(None)
-    }
-
-    /// Reads whatever is available on the UART and handles complete lines.
-    pub fn poll_serial(&mut self) -> anyhow::Result<()> {
-        let mut buffer = [0u8; 128];
-        let length = self.uart.read(&mut buffer, NON_BLOCK).unwrap_or(0);
-
-        for &byte in &buffer[..length] {
-            if byte == b'\n' {
-                let line = std::mem::take(&mut self.line);
-                let line = String::from_utf8_lossy(&line);
-                let line = line.trim();
-                if !line.is_empty() {
-                    self.handle_line(line)?;
-                }
-            } else if self.line.len() < MAX_LINE_LENGTH {
-                self.line.push(byte);
+    pub fn poll(&mut self) -> anyhow::Result<()> {
+        while let Some(event) = self.transport.poll() {
+            match event {
+                TransportEvent::Connected => self.announce()?,
+                TransportEvent::Received(bytes) => self.handle_bytes(&bytes)?,
             }
         }
         Ok(())
@@ -85,8 +72,14 @@ impl Node {
         Ok(())
     }
 
-    fn handle_line(&mut self, line: &str) -> anyhow::Result<()> {
-        let message = match Message::from_json(line) {
+    fn announce(&mut self) -> anyhow::Result<()> {
+        self.send_hello(None)?;
+        self.send_led_state(None)
+    }
+
+    fn handle_bytes(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        let text = String::from_utf8_lossy(bytes);
+        let message = match Message::from_json(&text) {
             Ok(message) => message,
             Err(error) => {
                 log::warn!("Invalid message: {error}");
@@ -104,26 +97,18 @@ impl Node {
 
         let reply_to = Some(message.msg_id);
         match message.payload {
-            Payload::Command {
-                entity: LED_ENTITY,
-                channel: MAIN_CHANNEL,
-                op: CommandOp::Set(Value::Bool(on)),
-            } => {
-                if on {
-                    self.led.set_high()?;
-                } else {
-                    self.led.set_low()?;
+            Payload::Command { .. } => {
+                let duplicate_ack = self
+                    .last_commands
+                    .get(&message.src)
+                    .filter(|handled| handled.message_id == message.msg_id)
+                    .map(|handled| handled.ack.clone());
+                if let Some(ack) = duplicate_ack {
+                    log::info!("Duplicate command #{} from {}", message.msg_id, message.src);
+                    return self.transport.send(&ack);
                 }
-                self.send(Payload::Ack { ok: true }, reply_to)?;
-                self.send_led_state(None)
+                self.handle_command(message)
             }
-            Payload::Command {
-                entity, channel, ..
-            } => self.send_error(
-                ERROR_UNKNOWN_TARGET,
-                format!("cannot command entity {entity} channel {channel}"),
-                reply_to,
-            ),
             Payload::Query {
                 what: QueryKind::Hello,
             } => self.send_hello(reply_to),
@@ -147,6 +132,41 @@ impl Node {
                 format!("unsupported message: {other:?}"),
                 reply_to,
             ),
+        }
+    }
+
+    fn handle_command(&mut self, message: Message) -> anyhow::Result<()> {
+        let reply_to = Some(message.msg_id);
+        match message.payload {
+            Payload::Command {
+                entity: LED_ENTITY,
+                channel: MAIN_CHANNEL,
+                op: CommandOp::Set(Value::Bool(on)),
+            } => {
+                if on {
+                    self.led.set_high()?;
+                } else {
+                    self.led.set_low()?;
+                }
+                let ack = self.encode(Payload::Ack { ok: true }, reply_to)?;
+                self.transport.send(&ack)?;
+                self.last_commands.insert(
+                    message.src,
+                    HandledCommand {
+                        message_id: message.msg_id,
+                        ack,
+                    },
+                );
+                self.send_led_state(None)
+            }
+            Payload::Command {
+                entity, channel, ..
+            } => self.send_error(
+                ERROR_UNKNOWN_TARGET,
+                format!("cannot command entity {entity} channel {channel}"),
+                reply_to,
+            ),
+            _ => unreachable!("only called with commands"),
         }
     }
 
@@ -214,6 +234,11 @@ impl Node {
     }
 
     fn send(&mut self, payload: Payload, reply_to: Option<u32>) -> anyhow::Result<()> {
+        let bytes = self.encode(payload, reply_to)?;
+        self.transport.send(&bytes)
+    }
+
+    fn encode(&mut self, payload: Payload, reply_to: Option<u32>) -> anyhow::Result<Vec<u8>> {
         let message = Message {
             version: 1,
             msg_id: self.next_message_id,
@@ -226,10 +251,6 @@ impl Node {
             auth: None,
         };
         self.next_message_id = self.next_message_id.wrapping_add(1);
-
-        let mut line = message.to_json()?;
-        line.push('\n');
-        self.uart.write(line.as_bytes())?;
-        Ok(())
+        Ok(message.to_json()?.into_bytes())
     }
 }

@@ -1,16 +1,24 @@
 mod button;
+mod config;
 mod node;
+mod transport;
+mod wifi;
 
+use std::time::{Duration, Instant};
+
+use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::delay::FreeRtos;
-use esp_idf_svc::hal::gpio::{AnyIOPin, PinDriver, Pull};
+use esp_idf_svc::hal::gpio::{PinDriver, Pull};
 use esp_idf_svc::hal::peripherals::Peripherals;
-use esp_idf_svc::hal::uart::{config::Config, UartDriver};
-use esp_idf_svc::hal::units::Hertz;
+use esp_idf_svc::nvs::EspDefaultNvsPartition;
 
 use button::Button;
+use config::CONFIG;
 use node::Node;
+use transport::MqttTransport;
 
 const POLL_INTERVAL_MS: u32 = 10;
+const WIFI_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -19,25 +27,29 @@ fn main() -> anyhow::Result<()> {
     let peripherals = Peripherals::take()?;
     let pins = peripherals.pins;
 
-    let uart = UartDriver::new(
-        peripherals.uart0,
-        pins.gpio1,
-        pins.gpio3,
-        Option::<AnyIOPin>::None,
-        Option::<AnyIOPin>::None,
-        &Config::default().baudrate(Hertz(115_200)),
-    )?;
     let led = PinDriver::output(pins.gpio2)?;
     let mut button = Button::new(PinDriver::input(pins.gpio0, Pull::Up)?);
 
     let device_id = device_id()?;
     log::info!("Oxihome node {device_id} started");
 
-    let mut node = Node::new(device_id, uart, led);
-    node.announce()?;
+    let mut wifi = wifi::connect(
+        peripherals.modem,
+        EspSystemEventLoop::take()?,
+        EspDefaultNvsPartition::take()?,
+        CONFIG.wifi_ssid,
+        CONFIG.wifi_password,
+    )?;
+    let transport = MqttTransport::new(CONFIG.mqtt_url, &device_id)?;
+    let mut node = Node::new(device_id, transport, led);
 
+    let mut last_wifi_check = Instant::now();
     loop {
-        node.poll_serial()?;
+        if last_wifi_check.elapsed() >= WIFI_CHECK_INTERVAL {
+            wifi::ensure_connected(&mut wifi)?;
+            last_wifi_check = Instant::now();
+        }
+        node.poll()?;
         if let Some(event) = button.poll() {
             node.handle_button(event)?;
         }

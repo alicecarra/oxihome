@@ -1,0 +1,5 @@
+# Copy to cfg.toml (ignored by git) and fill in.
+[firmware]
+wifi_ssid = "my-network"
+wifi_password = "my-password"
+mqtt_url = "mqtt://192.168.0.10:1883"

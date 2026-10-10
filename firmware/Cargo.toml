@@ -32,6 +32,7 @@ esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf.git" }
 [dependencies]
 log = "0.4"
 anyhow = "1"
+toml-cfg = "0.2"
 oxihome-protocol = { path = "../protocol" }
 esp-idf-svc = { version = "0.53", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
 # Remove `generic-queue-8` if you plan to use `embassy-time` WITH `embassy-executor`

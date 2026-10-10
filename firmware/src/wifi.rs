@@ -1,0 +1,49 @@
+use anyhow::anyhow;
+use esp_idf_svc::eventloop::EspSystemEventLoop;
+use esp_idf_svc::hal::modem::WifiModemPeripheral;
+use esp_idf_svc::nvs::EspDefaultNvsPartition;
+use esp_idf_svc::wifi::{BlockingWifi, ClientConfiguration, Configuration, EspWifi};
+
+pub type Wifi = BlockingWifi<EspWifi<'static>>;
+
+pub fn connect(
+    modem: impl WifiModemPeripheral + 'static,
+    event_loop: EspSystemEventLoop,
+    nvs: EspDefaultNvsPartition,
+    ssid: &str,
+    password: &str,
+) -> anyhow::Result<Wifi> {
+    let mut wifi = BlockingWifi::wrap(
+        EspWifi::new(modem, event_loop.clone(), Some(nvs))?,
+        event_loop,
+    )?;
+
+    wifi.set_configuration(&Configuration::Client(ClientConfiguration {
+        ssid: ssid
+            .try_into()
+            .map_err(|_| anyhow!("Wi-Fi SSID is too long"))?,
+        password: password
+            .try_into()
+            .map_err(|_| anyhow!("Wi-Fi password is too long"))?,
+        ..Default::default()
+    }))?;
+
+    wifi.start()?;
+    wifi.connect()?;
+    wifi.wait_netif_up()?;
+
+    let ip = wifi.wifi().sta_netif().get_ip_info()?.ip;
+    log::info!("Wi-Fi connected to {ssid}, IP {ip}");
+    Ok(wifi)
+}
+
+/// Blocks until reconnected; returns whether a reconnection was needed.
+pub fn ensure_connected(wifi: &mut Wifi) -> anyhow::Result<bool> {
+    if wifi.is_connected()? {
+        return Ok(false);
+    }
+    log::warn!("Wi-Fi lost, reconnecting");
+    wifi.connect()?;
+    wifi.wait_netif_up()?;
+    Ok(true)
+}
