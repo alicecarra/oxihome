@@ -65,11 +65,11 @@ mod tests {
                     channels: vec![Channel {
                         id: 0,
                         access: Access::Read,
-                        value: ValueType::Float {
+                        value: Some(ValueType::Float {
                             min: -40.0,
                             max: 85.0,
                             step: 0.1,
-                        },
+                        }),
                         quantity: Some(Quantity::Temperature),
                         unit: Some(Unit::Celsius),
                     }],
@@ -79,7 +79,17 @@ mod tests {
                     channels: vec![Channel {
                         id: 0,
                         access: Access::ReadWrite,
-                        value: ValueType::Bool,
+                        value: Some(ValueType::Bool),
+                        quantity: None,
+                        unit: None,
+                    }],
+                },
+                EntityDescriptor {
+                    id: 3,
+                    channels: vec![Channel {
+                        id: 0,
+                        access: Access::Event,
+                        value: None,
                         quantity: None,
                         unit: None,
                     }],

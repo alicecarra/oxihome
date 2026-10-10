@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 pub struct Channel {
     pub id: u8,
     pub access: Access,
-    pub value: ValueType,
+    /// `None` for channels without a value: a `Trigger` with no argument, an `Event` with no data.
+    pub value: Option<ValueType>,
     pub quantity: Option<Quantity>,
     pub unit: Option<Unit>,
 }
