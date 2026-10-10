@@ -15,6 +15,15 @@ opt-level = "s"
 [profile.dev]
 debug = true    # Symbols are nice, and they don't increase the size on Flash
 opt-level = "z"
+
+# The Xtensa LLVM backend crashes ("Cannot select: XtensaISD::PCREL_WRAPPER") on serde's f32
+# deserialization when the protocol crate is optimized. Recheck after `espup update`.
+[profile.dev.package.oxihome-protocol]
+opt-level = 0
+
+[profile.release.package.oxihome-protocol]
+opt-level = 0
+
 [patch.crates-io]
 esp-idf-sys = { git = "https://github.com/esp-rs/esp-idf.git" }
 esp-idf-hal = { git = "https://github.com/esp-rs/esp-idf.git" }
@@ -23,6 +32,7 @@ esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf.git" }
 [dependencies]
 log = "0.4"
 anyhow = "1"
+oxihome-protocol = { path = "../protocol" }
 esp-idf-svc = { version = "0.53", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
 # Remove `generic-queue-8` if you plan to use `embassy-time` WITH `embassy-executor`
 embassy-time = { version = "0.5", features = ["generic-queue-8"] }
