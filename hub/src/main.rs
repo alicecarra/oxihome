@@ -17,6 +17,7 @@ use tokio::net::TcpListener;
 use hub::Hub;
 use mqtt::{Incoming, Mqtt};
 use names::Names;
+use registry::NodeEvent;
 
 const PRESENCE_CHECK_INTERVAL: Duration = Duration::from_secs(10);
 
@@ -74,9 +75,18 @@ async fn main() -> anyhow::Result<()> {
                     hub.mqtt().broadcast(Payload::Query { what: QueryKind::State { entity: None } }).await?;
                 }
                 Incoming::Message(message) => {
-                    let (node_event, updates, event) = hub.handle(&message, Instant::now());
-                    if let Some(node_event) = node_event {
+                    let (node_events, updates, event) = hub.handle(&message, Instant::now());
+                    for node_event in node_events {
                         println!("{node_event}");
+                        if let NodeEvent::Unknown(device_id) = node_event {
+                            let mqtt = hub.mqtt();
+                            mqtt.publish(
+                                mqtt.next_message_id(),
+                                Some(&device_id),
+                                Payload::Query { what: QueryKind::Hello },
+                            )
+                            .await?;
+                        }
                     }
                     for update in updates {
                         println!("{update}");

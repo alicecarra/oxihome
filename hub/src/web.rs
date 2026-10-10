@@ -79,6 +79,12 @@ async fn node_list(nodes: Vec<NodeOverview>) -> Result<impl View> {
             <p>
                 if node.online { "online" } else { "offline" }
                 ", firmware " (node.firmware_version.clone())
+                if let Some(uptime) = node.uptime_seconds {
+                    ", up " (duration_label(Duration::from_secs(uptime.into())))
+                }
+                if let Some(rssi) = node.rssi {
+                    ", RSSI " (rssi.to_string()) " dBm"
+                }
             </p>
             <ul>
                 for channel in node.channels {
@@ -117,11 +123,16 @@ async fn node_list(nodes: Vec<NodeOverview>) -> Result<impl View> {
 }
 
 fn ago_label(ago: Duration) -> String {
-    let seconds = ago.as_secs();
+    format!("{} ago", duration_label(ago))
+}
+
+fn duration_label(duration: Duration) -> String {
+    let seconds = duration.as_secs();
     match seconds {
-        0..60 => format!("{seconds} s ago"),
-        60..3600 => format!("{} min ago", seconds / 60),
-        _ => format!("{} h ago", seconds / 3600),
+        0..60 => format!("{seconds} s"),
+        60..3600 => format!("{} min", seconds / 60),
+        3600..86400 => format!("{} h", seconds / 3600),
+        _ => format!("{} d", seconds / 86400),
     }
 }
 

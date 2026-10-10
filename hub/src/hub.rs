@@ -37,6 +37,8 @@ pub struct NodeOverview {
     pub name: Option<String>,
     pub firmware_version: String,
     pub online: bool,
+    pub uptime_seconds: Option<u32>,
+    pub rssi: Option<i8>,
     pub channels: Vec<ChannelOverview>,
 }
 
@@ -71,7 +73,7 @@ impl Hub {
         &self,
         message: &Message,
         now: Instant,
-    ) -> (Option<NodeEvent>, Vec<ChannelUpdate>, Option<EventRecord>) {
+    ) -> (Vec<NodeEvent>, Vec<ChannelUpdate>, Option<EventRecord>) {
         let mut state = self.state.lock().unwrap();
         let mut updates = Vec::new();
         let pending = message
@@ -88,10 +90,10 @@ impl Hub {
             }
             let _ = pending.answer.send(message.payload.clone());
         }
-        let node_event = self.registry.lock().unwrap().handle(message, now);
+        let node_events = self.registry.lock().unwrap().handle(message, now);
         updates.extend(state.apply(message));
         let event = self.events.lock().unwrap().apply(message, now);
-        (node_event, updates, event)
+        (node_events, updates, event)
     }
 
     pub fn check_presence(&self, now: Instant) -> Vec<NodeEvent> {
@@ -167,6 +169,8 @@ impl Hub {
                 name: name(NameTarget::Node(device_id.clone())),
                 firmware_version: node.firmware_version.clone(),
                 online: node.online,
+                uptime_seconds: node.uptime_seconds,
+                rssi: node.rssi,
                 channels: node
                     .entities
                     .iter()

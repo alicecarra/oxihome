@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -12,6 +12,8 @@ pub struct Node {
     pub entities: Vec<EntityDescriptor>,
     pub online: bool,
     last_seen: Instant,
+    pub uptime_seconds: Option<u32>,
+    pub rssi: Option<i8>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -22,7 +24,13 @@ pub enum NodeEvent {
         entity_count: usize,
     },
     Online(String),
+    Rebooted {
+        device_id: String,
+        previous_uptime: u32,
+        uptime: u32,
+    },
     Offline(String),
+    Unknown(String),
 }
 
 impl fmt::Display for NodeEvent {
@@ -37,7 +45,18 @@ impl fmt::Display for NodeEvent {
                 "{device_id} online (firmware {firmware_version}, {entity_count} entities)"
             ),
             NodeEvent::Online(device_id) => write!(formatter, "{device_id} online"),
+            NodeEvent::Rebooted {
+                device_id,
+                previous_uptime,
+                uptime,
+            } => write!(
+                formatter,
+                "{device_id} rebooted (uptime {previous_uptime} s -> {uptime} s)"
+            ),
             NodeEvent::Offline(device_id) => write!(formatter, "{device_id} offline"),
+            NodeEvent::Unknown(device_id) => {
+                write!(formatter, "{device_id} unknown, asking for its Hello")
+            }
         }
     }
 }
@@ -45,6 +64,7 @@ impl fmt::Display for NodeEvent {
 #[derive(Default)]
 pub struct Registry {
     nodes: HashMap<String, Node>,
+    asked_for_hello: HashSet<String>,
 }
 
 impl Registry {
@@ -55,7 +75,7 @@ impl Registry {
         nodes
     }
 
-    pub fn handle(&mut self, message: &Message, now: Instant) -> Option<NodeEvent> {
+    pub fn handle(&mut self, message: &Message, now: Instant) -> Vec<NodeEvent> {
         if let Payload::Hello {
             fw_version,
             entities,
@@ -68,22 +88,46 @@ impl Registry {
                     entities: entities.clone(),
                     online: true,
                     last_seen: now,
+                    uptime_seconds: None,
+                    rssi: None,
                 },
             );
-            return Some(NodeEvent::Registered {
+            self.asked_for_hello.remove(&message.src);
+            return vec![NodeEvent::Registered {
                 device_id: message.src.clone(),
                 firmware_version: fw_version.clone(),
                 entity_count: entities.len(),
-            });
+            }];
         }
 
-        let node = self.nodes.get_mut(&message.src)?;
+        let Some(node) = self.nodes.get_mut(&message.src) else {
+            return self
+                .asked_for_hello
+                .insert(message.src.clone())
+                .then(|| NodeEvent::Unknown(message.src.clone()))
+                .into_iter()
+                .collect();
+        };
+
+        let mut events = Vec::new();
         node.last_seen = now;
-        if node.online {
-            return None;
+        if !node.online {
+            node.online = true;
+            events.push(NodeEvent::Online(message.src.clone()));
         }
-        node.online = true;
-        Some(NodeEvent::Online(message.src.clone()))
+
+        if let Payload::Heartbeat { uptime_s, rssi, .. } = &message.payload {
+            node.rssi = *rssi;
+            let previous = node.uptime_seconds.replace(*uptime_s);
+            if let Some(previous) = previous.filter(|previous| uptime_s < previous) {
+                events.push(NodeEvent::Rebooted {
+                    device_id: message.src.clone(),
+                    previous_uptime: previous,
+                    uptime: *uptime_s,
+                });
+            }
+        }
+        events
     }
 
     pub fn check_presence(&mut self, now: Instant) -> Vec<NodeEvent> {
@@ -125,10 +169,10 @@ mod tests {
         })
     }
 
-    fn heartbeat() -> Message {
+    fn heartbeat(uptime_s: u32) -> Message {
         message(Payload::Heartbeat {
-            uptime_s: 10,
-            rssi: None,
+            uptime_s,
+            rssi: Some(-50),
             battery: None,
         })
     }
@@ -139,11 +183,11 @@ mod tests {
         let event = registry.handle(&hello(), Instant::now());
         assert_eq!(
             event,
-            Some(NodeEvent::Registered {
+            vec![NodeEvent::Registered {
                 device_id: DEVICE.into(),
                 firmware_version: "0.3.1".into(),
                 entity_count: 0,
-            })
+            }]
         );
     }
 
@@ -177,12 +221,83 @@ mod tests {
         registry.check_presence(start + OFFLINE_AFTER);
 
         assert_eq!(
-            registry.handle(&heartbeat(), start + OFFLINE_AFTER * 2),
-            Some(NodeEvent::Online(DEVICE.into()))
+            registry.handle(&heartbeat(10), start + OFFLINE_AFTER * 2),
+            vec![NodeEvent::Online(DEVICE.into())]
         );
+        assert!(
+            registry
+                .handle(&heartbeat(40), start + OFFLINE_AFTER * 2)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn uptime_drop_is_a_reboot() {
+        let mut registry = Registry::default();
+        let now = Instant::now();
+        registry.handle(&hello(), now);
+        registry.handle(&heartbeat(100), now);
+
         assert_eq!(
-            registry.handle(&heartbeat(), start + OFFLINE_AFTER * 2),
-            None
+            registry.handle(&heartbeat(5), now),
+            vec![NodeEvent::Rebooted {
+                device_id: DEVICE.into(),
+                previous_uptime: 100,
+                uptime: 5,
+            }]
         );
+    }
+
+    #[test]
+    fn growing_uptime_is_not_a_reboot() {
+        let mut registry = Registry::default();
+        let now = Instant::now();
+        registry.handle(&hello(), now);
+        registry.handle(&heartbeat(100), now);
+
+        assert!(registry.handle(&heartbeat(130), now).is_empty());
+    }
+
+    #[test]
+    fn offline_node_that_rebooted_reports_both() {
+        let mut registry = Registry::default();
+        let start = Instant::now();
+        registry.handle(&hello(), start);
+        registry.handle(&heartbeat(100), start);
+        registry.check_presence(start + OFFLINE_AFTER);
+
+        assert_eq!(
+            registry.handle(&heartbeat(3), start + OFFLINE_AFTER * 2),
+            vec![
+                NodeEvent::Online(DEVICE.into()),
+                NodeEvent::Rebooted {
+                    device_id: DEVICE.into(),
+                    previous_uptime: 100,
+                    uptime: 3,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn unknown_node_is_asked_once() {
+        let mut registry = Registry::default();
+        let now = Instant::now();
+
+        assert_eq!(
+            registry.handle(&heartbeat(10), now),
+            vec![NodeEvent::Unknown(DEVICE.into())]
+        );
+        assert!(registry.handle(&heartbeat(40), now).is_empty());
+    }
+
+    #[test]
+    fn hello_allows_asking_again() {
+        let mut registry = Registry::default();
+        let now = Instant::now();
+        registry.handle(&heartbeat(10), now);
+        registry.handle(&hello(), now);
+
+        assert!(!registry.asked_for_hello.contains(DEVICE));
     }
 }
