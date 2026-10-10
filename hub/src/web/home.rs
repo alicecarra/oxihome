@@ -20,9 +20,6 @@ pub async fn home(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         layout(
             title: "Oxihome",
-            <h1 class="text-3xl font-bold">"Oxihome Hub"</h1>
-            <p><a href="/settings">"Settings"</a></p>
-            <div id="status"></div>
             <div id="nodes" hx-get="/nodes" hx-trigger="every 2s, refresh">
                 node_list(nodes: hub.overview())
             </div>
@@ -59,7 +56,7 @@ pub async fn set(cx: &Cx, Form(form): Form<SetForm>) -> Result<ViewHandle> {
 
     view! { cx =>
         if let Err(error) = result {
-            <p><strong>"Error: "</strong>(error.to_string())</p>
+            <p class="text-sm text-destructive">(error.to_string())</p>
         }
     }
     .single()

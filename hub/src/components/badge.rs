@@ -18,6 +18,10 @@ pub enum BadgeVariant {
     Outline,
     /// A destructive-filled badge for errors and warnings.
     Destructive,
+    /// A soft green fill for healthy statuses, such as online.
+    Success,
+    /// A soft grey fill for inactive statuses, such as offline.
+    Muted,
 }
 
 impl BadgeVariant {
@@ -31,6 +35,8 @@ impl BadgeVariant {
             Self::Destructive => {
                 class!("border-transparent bg-destructive text-destructive-foreground")
             }
+            Self::Success => class!("border-transparent bg-success/10 text-success"),
+            Self::Muted => class!("border-transparent bg-foreground/5 text-muted-foreground"),
         }
     }
 }

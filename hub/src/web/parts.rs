@@ -3,7 +3,7 @@ use std::time::Duration;
 use oxihome_protocol::Value;
 use topcoat::{
     Result,
-    view::{View, component, view},
+    view::{Child, View, component, view},
 };
 
 use crate::components::badge::{BadgeVariant, badge};
@@ -39,7 +39,7 @@ async fn node_card(node: NodeOverview) -> Result<impl View> {
                 card_description((description))
             )
             card_content(
-                <ul class="divide-y">
+                <ul class="divide-y divide-border">
                     for channel in node.channels {
                         channel_row(device_id: node.device_id.clone(), channel: channel)
                     }
@@ -53,10 +53,21 @@ async fn node_card(node: NodeOverview) -> Result<impl View> {
 async fn presence_badge(online: bool) -> Result<impl View> {
     Ok(view! {
         if online {
-            badge(variant: BadgeVariant::Primary, "online")
+            badge(variant: BadgeVariant::Success, <span class="size-1.5 rounded-full bg-current"></span> "online")
         } else {
-            badge(variant: BadgeVariant::Outline, "offline")
+            badge(variant: BadgeVariant::Muted, <span class="size-1.5 rounded-full bg-current"></span> "offline")
         }
+    })
+}
+
+/// A coloured dot before a short state text: green when active, grey otherwise.
+#[component]
+async fn status_dot(active: bool, #[default] child: Child<'_>) -> Result<impl View> {
+    Ok(view! {
+        <p class="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+            <span class=(if active { "size-2 rounded-full bg-success" } else { "size-2 rounded-full bg-muted-foreground/40" })></span>
+            (child)
+        </p>
     })
 }
 
@@ -70,7 +81,10 @@ async fn channel_row(device_id: String, channel: ChannelOverview) -> Result<impl
                     (entity_label(channel.entity, &channel.entity_name)) " · "
                     (channel_label(channel.channel, &channel.channel_name))
                 </p>
-                <p class="text-sm text-muted-foreground">(channel_state(&channel))</p>
+                match &channel.value {
+                    Some(Value::Bool(active)) => status_dot(active: *active, if *active { "on" } else { "off" }),
+                    _ => <p class="text-sm text-muted-foreground">(channel_state(&channel))</p>,
+                }
             </div>
             if channel.switchable {
                 <form
@@ -119,8 +133,6 @@ fn channel_state(channel: &ChannelOverview) -> String {
         };
     }
     match &channel.value {
-        Some(Value::Bool(true)) => "on".into(),
-        Some(Value::Bool(false)) => "off".into(),
         Some(value) => format!("{value:?}"),
         None => "unknown".into(),
     }
