@@ -1,9 +1,9 @@
 [package]
 name = "firmware"
-version = "0.1.0"
-edition = "2021"
+version = "0.2.0"
+edition = "2024"
 resolver = "2"
-rust-version = "1.82"
+rust-version = "1.97"
 
 [[bin]]
 name = "firmware"
@@ -34,9 +34,7 @@ log = "0.4"
 anyhow = "1"
 toml-cfg = "0.2"
 oxihome-protocol = { path = "../protocol" }
-esp-idf-svc = { version = "0.53", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
-# Remove `generic-queue-8` if you plan to use `embassy-time` WITH `embassy-executor`
-embassy-time = { version = "0.5", features = ["generic-queue-8"] }
+esp-idf-svc = { version = "0.53", features = ["critical-section"] }
 
 [build-dependencies]
 embuild = "0.33.5"

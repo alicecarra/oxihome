@@ -298,7 +298,7 @@ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "oxihome-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "oxihome-protocol",
@@ -308,7 +308,7 @@ dependencies = [
 
 [[package]]
 name = "oxihome-protocol"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
