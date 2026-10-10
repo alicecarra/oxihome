@@ -3,12 +3,12 @@ use std::time::Duration;
 use oxihome_protocol::Value;
 use topcoat::{
     Result,
-    view::{Child, View, component, view},
+    view::{Child, View, attributes, component, view},
 };
 
 use crate::components::badge::{BadgeVariant, badge};
-use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::card::{card, card_content, card_description, card_header, card_title};
+use crate::components::switch::switch;
 use crate::hub::{ChannelOverview, NodeOverview};
 
 #[component]
@@ -74,13 +74,15 @@ async fn status_dot(active: bool, #[default] child: Child<'_>) -> Result<impl Vi
 #[component]
 async fn channel_row(device_id: String, channel: ChannelOverview) -> Result<impl View> {
     let on = channel.value == Some(Value::Bool(true));
+    let label = format!(
+        "{} · {}",
+        entity_label(channel.entity, &channel.entity_name),
+        channel_label(channel.channel, &channel.channel_name)
+    );
     Ok(view! {
         <li class="flex items-center justify-between gap-4 py-3">
             <div>
-                <p class="text-sm font-medium">
-                    (entity_label(channel.entity, &channel.entity_name)) " · "
-                    (channel_label(channel.channel, &channel.channel_name))
-                </p>
+                <p class="text-sm font-medium">(label.clone())</p>
                 match &channel.value {
                     Some(Value::Bool(active)) => status_dot(active: *active, if *active { "on" } else { "off" }),
                     _ => <p class="text-sm text-muted-foreground">(channel_state(&channel))</p>,
@@ -89,18 +91,21 @@ async fn channel_row(device_id: String, channel: ChannelOverview) -> Result<impl
             if channel.switchable {
                 <form
                     hx-post="/set"
+                    hx-trigger="change"
                     hx-target="#status"
                     ("hx-on--after-request")="htmx.trigger('#nodes', 'refresh')"
                 >
                     <input type="hidden" name="device_id" value=(device_id)>
                     <input type="hidden" name="entity" value=(channel.entity.to_string())>
                     <input type="hidden" name="channel" value=(channel.channel.to_string())>
-                    <input type="hidden" name="value" value=((!on).to_string())>
-                    button(
-                        variant: if on { ButtonVariant::Outline } else { ButtonVariant::Primary },
-                        size: ButtonSize::Sm,
-                        if on { "Turn off" } else { "Turn on" }
-                    )
+                    switch(attrs: attributes! {
+                        name="value"
+                        value="true"
+                        aria-label=(label.clone())
+                        if on {
+                            checked=""
+                        }
+                    })
                 </form>
             }
         </li>

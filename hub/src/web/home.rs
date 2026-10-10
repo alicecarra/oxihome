@@ -38,6 +38,8 @@ struct SetForm {
     device_id: String,
     entity: u8,
     channel: u8,
+    /// An unchecked switch sends no value.
+    #[serde(default)]
     value: bool,
 }
 
