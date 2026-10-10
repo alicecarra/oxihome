@@ -84,6 +84,15 @@ Mosquitto 2 in Docker, anonymous access on port 1883 (see `infra/`):
 docker compose -f infra/compose.yaml up -d
 ```
 
+## Hub
+
+Connects to the broker configured in `hub/hub.toml`, asks every node for its `Hello` and tracks
+which nodes are online (offline after 90 s without messages):
+
+```sh
+cargo run -p oxihome-hub -- hub/hub.toml
+```
+
 ## Client
 
 Talks to nodes over MQTT or the USB serial port. Type `help` for the commands, e.g. `set 1 0 true`
