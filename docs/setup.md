@@ -64,6 +64,17 @@ Or build, flash and monitor in one step (uses the runner in `.cargo/config.toml`
 cargo run
 ```
 
+## Serial client
+
+Talks to a node flashed with `firmware/` over the USB serial port. Close `espflash monitor` first,
+only one program can hold the port.
+
+```sh
+cargo run -p oxihome-serial-client -- /dev/ttyACM0
+```
+
+Type `help` for the commands, e.g. `set 1 0 true` turns the LED on.
+
 ## Editor
 
 `.vscode/settings.json` links both the root workspace and `firmware/` in rust-analyzer. The firmware

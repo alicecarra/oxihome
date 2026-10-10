@@ -1,0 +1,9 @@
+[package]
+name = "oxihome-serial-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+oxihome-protocol = { path = "../protocol" }
+serialport = "4"
