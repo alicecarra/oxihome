@@ -108,6 +108,12 @@ request from the command line:
 curl -X POST -d "device_id=esp32-08d1f9ca41e4&entity=1&channel=0&value=true" localhost:8080/set
 ```
 
+Styles use Tailwind CSS 4. `hub/build.rs` runs Topcoat's Tailwind integration: on the first build it
+downloads the standalone Tailwind CLI (pinned by Topcoat, cached in `target/topcoat/cache/tailwind/`,
+needs internet once), scans `hub/src/**/*.rs` for class names (input: `hub/styles.css`) and writes
+the CSS that the hub serves at `/static/app.css`. No Node and no `topcoat asset bundle` are needed.
+Class names must appear literally in the code; names assembled at runtime are not generated.
+
 htmx is vendored in `hub/static/htmx.min.js` and served by the hub, so the page works without
 internet access. To update it, change the version and download again:
 
