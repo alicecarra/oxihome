@@ -47,3 +47,9 @@ pub fn ensure_connected(wifi: &mut Wifi) -> anyhow::Result<bool> {
     wifi.wait_netif_up()?;
     Ok(true)
 }
+
+pub fn rssi() -> Option<i8> {
+    let mut record = esp_idf_svc::sys::wifi_ap_record_t::default();
+    let result = unsafe { esp_idf_svc::sys::esp_wifi_sta_get_ap_info(&mut record) };
+    (result == esp_idf_svc::sys::ESP_OK).then_some(record.rssi)
+}

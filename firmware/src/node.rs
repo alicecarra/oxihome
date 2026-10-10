@@ -67,6 +67,17 @@ impl<T: Transport> Node<T> {
         Ok(())
     }
 
+    pub fn send_heartbeat(&mut self, uptime_seconds: u32, rssi: Option<i8>) -> anyhow::Result<()> {
+        self.send(
+            Payload::Heartbeat {
+                uptime_s: uptime_seconds,
+                rssi,
+                battery: None,
+            },
+            None,
+        )
+    }
+
     fn announce(&mut self) -> anyhow::Result<()> {
         self.send_hello(None)?;
         self.send_led_state(None)

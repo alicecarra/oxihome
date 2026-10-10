@@ -19,6 +19,7 @@ use transport::MqttTransport;
 
 const POLL_INTERVAL_MS: u32 = 10;
 const WIFI_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -44,10 +45,15 @@ fn main() -> anyhow::Result<()> {
     let mut node = Node::new(device_id, transport, led);
 
     let mut last_wifi_check = Instant::now();
+    let mut last_heartbeat = Instant::now();
     loop {
         if last_wifi_check.elapsed() >= WIFI_CHECK_INTERVAL {
             wifi::ensure_connected(&mut wifi)?;
             last_wifi_check = Instant::now();
+        }
+        if last_heartbeat.elapsed() >= HEARTBEAT_INTERVAL {
+            node.send_heartbeat(uptime_seconds(), wifi::rssi())?;
+            last_heartbeat = Instant::now();
         }
         node.poll()?;
         if let Some(event) = button.poll() {
@@ -65,4 +71,9 @@ fn device_id() -> anyhow::Result<String> {
     })?;
     let hex: String = mac.iter().map(|byte| format!("{byte:02x}")).collect();
     Ok(format!("esp32-{hex}"))
+}
+
+fn uptime_seconds() -> u32 {
+    let microseconds = unsafe { esp_idf_svc::sys::esp_timer_get_time() };
+    (microseconds / 1_000_000) as u32
 }
