@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use esp_idf_svc::hal::gpio::{Output, PinDriver};
 use oxihome_protocol::{
-    Access, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, EventKind, Message,
-    Payload, QueryKind, Value, ValueType,
+    Access, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, ErrorCode, EventKind,
+    Message, Payload, QueryKind, Value, ValueType,
 };
 
 use crate::transport::{Transport, TransportEvent};
@@ -11,11 +11,6 @@ use crate::transport::{Transport, TransportEvent};
 pub const LED_ENTITY: u8 = 1;
 pub const BUTTON_ENTITY: u8 = 2;
 const MAIN_CHANNEL: u8 = 0;
-
-// Not defined by the spec yet.
-const ERROR_INVALID_MESSAGE: u16 = 1;
-const ERROR_UNSUPPORTED: u16 = 2;
-const ERROR_UNKNOWN_TARGET: u16 = 3;
 
 struct HandledCommand {
     message_id: u32,
@@ -83,7 +78,7 @@ impl<T: Transport> Node<T> {
             Ok(message) => message,
             Err(error) => {
                 log::warn!("Invalid message: {error}");
-                return self.send_error(ERROR_INVALID_MESSAGE, error.to_string(), None);
+                return self.send_error(ErrorCode::InvalidMessage, error.to_string(), None);
             }
         };
 
@@ -119,16 +114,26 @@ impl<T: Transport> Node<T> {
                     },
             } => self.send_led_state(reply_to),
             Payload::Query {
+                what:
+                    QueryKind::State {
+                        entity: Some(BUTTON_ENTITY),
+                    },
+            } => self.send_error(
+                ErrorCode::InvalidOperation,
+                format!("entity {BUTTON_ENTITY} has no state"),
+                reply_to,
+            ),
+            Payload::Query {
                 what: QueryKind::State {
                     entity: Some(entity),
                 },
             } => self.send_error(
-                ERROR_UNKNOWN_TARGET,
-                format!("entity {entity} has no state"),
+                ErrorCode::UnknownEntity,
+                format!("unknown entity {entity}"),
                 reply_to,
             ),
             other => self.send_error(
-                ERROR_UNSUPPORTED,
+                ErrorCode::Unsupported,
                 format!("unsupported message: {other:?}"),
                 reply_to,
             ),
@@ -137,37 +142,56 @@ impl<T: Transport> Node<T> {
 
     fn handle_command(&mut self, message: Message) -> anyhow::Result<()> {
         let reply_to = Some(message.msg_id);
-        match message.payload {
-            Payload::Command {
-                entity: LED_ENTITY,
-                channel: MAIN_CHANNEL,
-                op: CommandOp::Set(Value::Bool(on)),
-            } => {
-                if on {
-                    self.led.set_high()?;
+        let Payload::Command {
+            entity,
+            channel,
+            op,
+        } = message.payload
+        else {
+            unreachable!("only called with commands");
+        };
+
+        let rejection = match (entity, channel, op) {
+            (LED_ENTITY, MAIN_CHANNEL, CommandOp::Set(Value::Bool(on))) => {
+                let result = if on {
+                    self.led.set_high()
                 } else {
-                    self.led.set_low()?;
+                    self.led.set_low()
+                };
+                match result {
+                    Ok(()) => None,
+                    Err(error) => Some((ErrorCode::Internal, format!("LED: {error}"))),
                 }
-                let ack = self.encode(Payload::Ack { ok: true }, reply_to)?;
-                self.transport.send(&ack)?;
-                self.last_commands.insert(
-                    message.src,
-                    HandledCommand {
-                        message_id: message.msg_id,
-                        ack,
-                    },
-                );
-                self.send_led_state(None)
             }
-            Payload::Command {
-                entity, channel, ..
-            } => self.send_error(
-                ERROR_UNKNOWN_TARGET,
-                format!("cannot command entity {entity} channel {channel}"),
-                reply_to,
-            ),
-            _ => unreachable!("only called with commands"),
+            (LED_ENTITY, MAIN_CHANNEL, CommandOp::Set(value)) => Some((
+                ErrorCode::InvalidValue,
+                format!("expected Bool, got {value:?}"),
+            )),
+            (LED_ENTITY | BUTTON_ENTITY, MAIN_CHANNEL, op) => Some((
+                ErrorCode::InvalidOperation,
+                format!("{op:?} not allowed on entity {entity} channel {channel}"),
+            )),
+            (LED_ENTITY | BUTTON_ENTITY, _, _) => Some((
+                ErrorCode::UnknownChannel,
+                format!("entity {entity} has no channel {channel}"),
+            )),
+            _ => Some((ErrorCode::UnknownEntity, format!("unknown entity {entity}"))),
+        };
+
+        if let Some((code, detail)) = rejection {
+            return self.send_error(code, detail, reply_to);
         }
+
+        let ack = self.encode(Payload::Ack { ok: true }, reply_to)?;
+        self.transport.send(&ack)?;
+        self.last_commands.insert(
+            message.src,
+            HandledCommand {
+                message_id: message.msg_id,
+                ack,
+            },
+        );
+        self.send_led_state(None)
     }
 
     fn send_hello(&mut self, reply_to: Option<u32>) -> anyhow::Result<()> {
@@ -177,7 +201,7 @@ impl<T: Transport> Node<T> {
                 channels: vec![Channel {
                     id: MAIN_CHANNEL,
                     access: Access::ReadWrite,
-                    value: ValueType::Bool,
+                    value: Some(ValueType::Bool),
                     quantity: None,
                     unit: None,
                 }],
@@ -187,8 +211,7 @@ impl<T: Transport> Node<T> {
                 channels: vec![Channel {
                     id: MAIN_CHANNEL,
                     access: Access::Event,
-                    // The spec has no value type for event channels without data yet.
-                    value: ValueType::Bool,
+                    value: None,
                     quantity: None,
                     unit: None,
                 }],
@@ -220,13 +243,13 @@ impl<T: Transport> Node<T> {
 
     fn send_error(
         &mut self,
-        code: u16,
+        code: ErrorCode,
         detail: String,
         reply_to: Option<u32>,
     ) -> anyhow::Result<()> {
         self.send(
             Payload::Error {
-                code,
+                code: code.into(),
                 detail: Some(detail),
             },
             reply_to,
