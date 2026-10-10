@@ -97,6 +97,9 @@ cargo run -p oxihome-hub -- hub/hub.toml
 Only one hub can run per broker: both use the MQTT client id `oxihome-hub` and keep disconnecting
 each other.
 
+Friendly names for nodes, entities and channels are edited on `/settings` and stored in the SQLite
+file set in `[database] path` (default `hub/hub.sqlite`, ignored by git). It is created on first run.
+
 The page uses htmx: the node list refreshes every 2 s and the buttons post to `/set` without
 reloading the page. `/set` answers with an empty body on success or the error message. The same
 request from the command line:

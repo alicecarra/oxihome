@@ -1,5 +1,6 @@
 mod hub;
 mod mqtt;
+mod names;
 mod registry;
 mod state;
 mod web;
@@ -14,13 +15,20 @@ use tokio::net::TcpListener;
 
 use hub::Hub;
 use mqtt::{Incoming, Mqtt};
+use names::Names;
 
 const PRESENCE_CHECK_INTERVAL: Duration = Duration::from_secs(10);
 
 #[derive(Deserialize)]
 struct Config {
     mqtt: MqttConfig,
+    database: DatabaseConfig,
     http: HttpConfig,
+}
+
+#[derive(Deserialize)]
+struct DatabaseConfig {
+    path: String,
 }
 
 #[derive(Deserialize)]
@@ -43,8 +51,10 @@ async fn main() -> anyhow::Result<()> {
     let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
     let config: Config = toml::from_str(&text).with_context(|| format!("parsing {path}"))?;
 
+    let names = Names::open(&config.database.path)
+        .with_context(|| format!("opening {}", config.database.path))?;
     let (mqtt, mut incoming) = Mqtt::connect(&config.mqtt.host, config.mqtt.port);
-    let hub = Arc::new(Hub::new(mqtt));
+    let hub = Arc::new(Hub::new(mqtt, names));
 
     let listener = TcpListener::bind((config.http.host.as_str(), config.http.port)).await?;
     println!(

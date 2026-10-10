@@ -7,6 +7,7 @@ use oxihome_protocol::{Access, CommandOp, Message, Payload, Value, ValueType};
 use tokio::sync::oneshot;
 
 use crate::mqtt::Mqtt;
+use crate::names::{NameTarget, Names};
 use crate::registry::{NodeEvent, Registry};
 use crate::state::{ChannelUpdate, State};
 
@@ -17,6 +18,7 @@ pub struct Hub {
     mqtt: Mqtt,
     registry: Mutex<Registry>,
     state: Mutex<State>,
+    names: Mutex<Names>,
     /// Commands waiting for their `Ack` or `Error`, by message id.
     pending_commands: Mutex<HashMap<u32, PendingCommand>>,
 }
@@ -30,6 +32,7 @@ struct PendingCommand {
 
 pub struct NodeOverview {
     pub device_id: String,
+    pub name: Option<String>,
     pub firmware_version: String,
     pub online: bool,
     pub channels: Vec<ChannelOverview>,
@@ -37,18 +40,21 @@ pub struct NodeOverview {
 
 pub struct ChannelOverview {
     pub entity: u8,
+    pub entity_name: Option<String>,
     pub channel: u8,
+    pub channel_name: Option<String>,
     pub has_value: bool,
     pub value: Option<Value>,
     pub switchable: bool,
 }
 
 impl Hub {
-    pub fn new(mqtt: Mqtt) -> Self {
+    pub fn new(mqtt: Mqtt, names: Names) -> Self {
         Self {
             mqtt,
             registry: Mutex::default(),
             state: Mutex::default(),
+            names: Mutex::new(names),
             pending_commands: Mutex::default(),
         }
     }
@@ -144,11 +150,14 @@ impl Hub {
     pub fn overview(&self) -> Vec<NodeOverview> {
         let registry = self.registry.lock().unwrap();
         let state = self.state.lock().unwrap();
+        let names = self.names.lock().unwrap();
+        let name = |target: NameTarget| names.get(&target).map(String::from);
         registry
             .nodes()
             .into_iter()
             .map(|(device_id, node)| NodeOverview {
                 device_id: device_id.clone(),
+                name: name(NameTarget::Node(device_id.clone())),
                 firmware_version: node.firmware_version.clone(),
                 online: node.online,
                 channels: node
@@ -157,7 +166,13 @@ impl Hub {
                     .flat_map(|entity| {
                         entity.channels.iter().map(|channel| ChannelOverview {
                             entity: entity.id,
+                            entity_name: name(NameTarget::Entity(device_id.clone(), entity.id)),
                             channel: channel.id,
+                            channel_name: name(NameTarget::Channel(
+                                device_id.clone(),
+                                entity.id,
+                                channel.id,
+                            )),
                             has_value: channel.value.is_some(),
                             value: state.value(device_id, entity.id, channel.id).cloned(),
                             switchable: channel.value == Some(ValueType::Bool)
@@ -167,5 +182,10 @@ impl Hub {
                     .collect(),
             })
             .collect()
+    }
+
+    pub fn rename(&self, target: NameTarget, name: &str) -> anyhow::Result<()> {
+        self.names.lock().unwrap().set(target, name)?;
+        Ok(())
     }
 }

@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1"
 oxihome-protocol = { path = "../protocol" }
 rumqttc = "0.25"
+rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 topcoat = "=0.10.0"

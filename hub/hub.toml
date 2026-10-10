@@ -2,6 +2,9 @@
 host = "localhost"
 port = 1883
 
+[database]
+path = "hub/hub.sqlite"
+
 [http]
 host = "127.0.0.1"
 port = 8080
