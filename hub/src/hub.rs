@@ -19,8 +19,6 @@ pub struct Hub {
     state: Mutex<State>,
     /// Commands waiting for their `Ack` or `Error`, by message id.
     pending_commands: Mutex<HashMap<u32, PendingCommand>>,
-    /// Shown once on the next page render.
-    last_error: Mutex<Option<String>>,
 }
 
 struct PendingCommand {
@@ -52,7 +50,6 @@ impl Hub {
             registry: Mutex::default(),
             state: Mutex::default(),
             pending_commands: Mutex::default(),
-            last_error: Mutex::default(),
         }
     }
 
@@ -170,13 +167,5 @@ impl Hub {
                     .collect(),
             })
             .collect()
-    }
-
-    pub fn set_last_error(&self, error: String) {
-        *self.last_error.lock().unwrap() = Some(error);
-    }
-
-    pub fn take_last_error(&self) -> Option<String> {
-        self.last_error.lock().unwrap().take()
     }
 }

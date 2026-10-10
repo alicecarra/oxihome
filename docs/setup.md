@@ -97,10 +97,19 @@ cargo run -p oxihome-hub -- hub/hub.toml
 Only one hub can run per broker: both use the MQTT client id `oxihome-hub` and keep disconnecting
 each other.
 
-The page's buttons post to `/set`; the same request from the command line:
+The page uses htmx: the node list refreshes every 2 s and the buttons post to `/set` without
+reloading the page. `/set` answers with an empty body on success or the error message. The same
+request from the command line:
 
 ```sh
 curl -X POST -d "device_id=esp32-08d1f9ca41e4&entity=1&channel=0&value=true" localhost:8080/set
+```
+
+htmx is vendored in `hub/static/htmx.min.js` and served by the hub, so the page works without
+internet access. To update it, change the version and download again:
+
+```sh
+curl -sSfL -o hub/static/htmx.min.js https://cdn.jsdelivr.net/npm/htmx.org@2.0.10/dist/htmx.min.js
 ```
 
 ## Client
