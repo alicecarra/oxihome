@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use oxihome_protocol::Value;
 use serde::Deserialize;
@@ -85,7 +86,12 @@ async fn node_list(nodes: Vec<NodeOverview>) -> Result<impl View> {
                         (entity_label(channel.entity, &channel.entity_name)) ", "
                         (channel_label(channel.channel, &channel.channel_name)) ": "
                         match &channel.value {
-                            _ if !channel.has_value => "no value",
+                            _ if !channel.has_value => match channel.last_event {
+                                Some((kind, ago)) => {
+                                    "last event: " (format!("{kind:?}")) ", " (ago_label(ago))
+                                },
+                                None => "no events yet",
+                            },
                             Some(value) => (format!("{value:?}")),
                             None => "unknown",
                         }
@@ -108,6 +114,15 @@ async fn node_list(nodes: Vec<NodeOverview>) -> Result<impl View> {
             </ul>
         }
     })
+}
+
+fn ago_label(ago: Duration) -> String {
+    let seconds = ago.as_secs();
+    match seconds {
+        0..60 => format!("{seconds} s ago"),
+        60..3600 => format!("{} min ago", seconds / 60),
+        _ => format!("{} h ago", seconds / 3600),
+    }
 }
 
 fn entity_label(entity: u8, name: &Option<String>) -> String {

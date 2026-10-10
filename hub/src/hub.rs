@@ -3,9 +3,10 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::bail;
-use oxihome_protocol::{Access, CommandOp, Message, Payload, Value, ValueType};
+use oxihome_protocol::{Access, CommandOp, EventKind, Message, Payload, Value, ValueType};
 use tokio::sync::oneshot;
 
+use crate::events::{EventRecord, Events};
 use crate::mqtt::Mqtt;
 use crate::names::{NameTarget, Names};
 use crate::registry::{NodeEvent, Registry};
@@ -18,6 +19,7 @@ pub struct Hub {
     mqtt: Mqtt,
     registry: Mutex<Registry>,
     state: Mutex<State>,
+    events: Mutex<Events>,
     names: Mutex<Names>,
     /// Commands waiting for their `Ack` or `Error`, by message id.
     pending_commands: Mutex<HashMap<u32, PendingCommand>>,
@@ -45,6 +47,7 @@ pub struct ChannelOverview {
     pub channel_name: Option<String>,
     pub has_value: bool,
     pub value: Option<Value>,
+    pub last_event: Option<(EventKind, Duration)>,
     pub switchable: bool,
 }
 
@@ -54,6 +57,7 @@ impl Hub {
             mqtt,
             registry: Mutex::default(),
             state: Mutex::default(),
+            events: Mutex::default(),
             names: Mutex::new(names),
             pending_commands: Mutex::default(),
         }
@@ -67,7 +71,7 @@ impl Hub {
         &self,
         message: &Message,
         now: Instant,
-    ) -> (Option<NodeEvent>, Vec<ChannelUpdate>) {
+    ) -> (Option<NodeEvent>, Vec<ChannelUpdate>, Option<EventRecord>) {
         let mut state = self.state.lock().unwrap();
         let mut updates = Vec::new();
         let pending = message
@@ -86,7 +90,8 @@ impl Hub {
         }
         let node_event = self.registry.lock().unwrap().handle(message, now);
         updates.extend(state.apply(message));
-        (node_event, updates)
+        let event = self.events.lock().unwrap().apply(message, now);
+        (node_event, updates, event)
     }
 
     pub fn check_presence(&self, now: Instant) -> Vec<NodeEvent> {
@@ -150,7 +155,9 @@ impl Hub {
     pub fn overview(&self) -> Vec<NodeOverview> {
         let registry = self.registry.lock().unwrap();
         let state = self.state.lock().unwrap();
+        let events = self.events.lock().unwrap();
         let names = self.names.lock().unwrap();
+        let now = Instant::now();
         let name = |target: NameTarget| names.get(&target).map(String::from);
         registry
             .nodes()
@@ -175,6 +182,9 @@ impl Hub {
                             )),
                             has_value: channel.value.is_some(),
                             value: state.value(device_id, entity.id, channel.id).cloned(),
+                            last_event: events
+                                .last(device_id, entity.id, channel.id)
+                                .map(|(kind, at)| (kind, now - at)),
                             switchable: channel.value == Some(ValueType::Bool)
                                 && matches!(channel.access, Access::Write | Access::ReadWrite),
                         })

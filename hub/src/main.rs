@@ -1,3 +1,4 @@
+mod events;
 mod hub;
 mod mqtt;
 mod names;
@@ -73,12 +74,15 @@ async fn main() -> anyhow::Result<()> {
                     hub.mqtt().broadcast(Payload::Query { what: QueryKind::State { entity: None } }).await?;
                 }
                 Incoming::Message(message) => {
-                    let (node_event, updates) = hub.handle(&message, Instant::now());
+                    let (node_event, updates, event) = hub.handle(&message, Instant::now());
                     if let Some(node_event) = node_event {
                         println!("{node_event}");
                     }
                     for update in updates {
                         println!("{update}");
+                    }
+                    if let Some(event) = event {
+                        println!("{event}");
                     }
                 }
             },
