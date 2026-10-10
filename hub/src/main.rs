@@ -1,26 +1,36 @@
+mod hub;
 mod mqtt;
 mod registry;
 mod state;
+mod web;
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use oxihome_protocol::{Payload, QueryKind};
 use serde::Deserialize;
+use tokio::net::TcpListener;
 
+use hub::Hub;
 use mqtt::{Incoming, Mqtt};
-use registry::Registry;
-use state::State;
 
 const PRESENCE_CHECK_INTERVAL: Duration = Duration::from_secs(10);
 
 #[derive(Deserialize)]
 struct Config {
     mqtt: MqttConfig,
+    http: HttpConfig,
 }
 
 #[derive(Deserialize)]
 struct MqttConfig {
+    host: String,
+    port: u16,
+}
+
+#[derive(Deserialize)]
+struct HttpConfig {
     host: String,
     port: u16,
 }
@@ -33,32 +43,42 @@ async fn main() -> anyhow::Result<()> {
     let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
     let config: Config = toml::from_str(&text).with_context(|| format!("parsing {path}"))?;
 
-    let (mut mqtt, mut incoming) = Mqtt::connect(&config.mqtt.host, config.mqtt.port);
-    let mut registry = Registry::default();
-    let mut state = State::default();
-    let mut presence_check = tokio::time::interval(PRESENCE_CHECK_INTERVAL);
+    let (mqtt, mut incoming) = Mqtt::connect(&config.mqtt.host, config.mqtt.port);
+    let hub = Arc::new(Hub::new(mqtt));
 
+    let listener = TcpListener::bind((config.http.host.as_str(), config.http.port)).await?;
+    println!(
+        "web interface on http://{}:{}",
+        config.http.host, config.http.port
+    );
+    let mut web_server = tokio::spawn(topcoat::serve(listener, web::router(hub.clone())));
+
+    let mut presence_check = tokio::time::interval(PRESENCE_CHECK_INTERVAL);
     loop {
         tokio::select! {
             Some(event) = incoming.recv() => match event {
                 Incoming::Connected => {
                     println!("connected to {}:{}", config.mqtt.host, config.mqtt.port);
-                    mqtt.broadcast(Payload::Query { what: QueryKind::Hello }).await?;
-                    mqtt.broadcast(Payload::Query { what: QueryKind::State { entity: None } }).await?;
+                    hub.mqtt().broadcast(Payload::Query { what: QueryKind::Hello }).await?;
+                    hub.mqtt().broadcast(Payload::Query { what: QueryKind::State { entity: None } }).await?;
                 }
                 Incoming::Message(message) => {
-                    if let Some(node_event) = registry.handle(&message, Instant::now()) {
+                    let (node_event, updates) = hub.handle(&message, Instant::now());
+                    if let Some(node_event) = node_event {
                         println!("{node_event}");
                     }
-                    for update in state.apply(&message) {
+                    for update in updates {
                         println!("{update}");
                     }
                 }
             },
             _ = presence_check.tick() => {
-                for node_event in registry.check_presence(Instant::now()) {
+                for node_event in hub.check_presence(Instant::now()) {
                     println!("{node_event}");
                 }
+            }
+            result = &mut web_server => {
+                return Ok(result??);
             }
         }
     }

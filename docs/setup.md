@@ -86,11 +86,21 @@ docker compose -f infra/compose.yaml up -d
 
 ## Hub
 
-Connects to the broker configured in `hub/hub.toml`, asks every node for its `Hello` and tracks
-which nodes are online (offline after 90 s without messages):
+Connects to the broker configured in `hub/hub.toml`, asks every node for its `Hello` and `State`,
+tracks which nodes are online (offline after 90 s without messages) and serves a web interface
+(Topcoat) on the `[http]` address, by default <http://127.0.0.1:8080>:
 
 ```sh
 cargo run -p oxihome-hub -- hub/hub.toml
+```
+
+Only one hub can run per broker: both use the MQTT client id `oxihome-hub` and keep disconnecting
+each other.
+
+The page's buttons post to `/set`; the same request from the command line:
+
+```sh
+curl -X POST -d "device_id=esp32-08d1f9ca41e4&entity=1&channel=0&value=true" localhost:8080/set
 ```
 
 ## Client

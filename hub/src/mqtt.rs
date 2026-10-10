@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use oxihome_protocol::{Message, Payload};
@@ -16,7 +17,7 @@ pub enum Incoming {
 
 pub struct Mqtt {
     client: AsyncClient,
-    next_message_id: u32,
+    next_message_id: AtomicU32,
 }
 
 impl Mqtt {
@@ -61,27 +62,44 @@ impl Mqtt {
         (
             Self {
                 client,
-                next_message_id: 0,
+                next_message_id: AtomicU32::new(0),
             },
             receiver,
         )
     }
 
-    pub async fn broadcast(&mut self, payload: Payload) -> anyhow::Result<()> {
+    pub fn next_message_id(&self) -> u32 {
+        self.next_message_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    pub async fn broadcast(&self, payload: Payload) -> anyhow::Result<()> {
+        self.publish(self.next_message_id(), None, payload).await
+    }
+
+    /// `destination` is a device id, `None` broadcasts.
+    pub async fn publish(
+        &self,
+        message_id: u32,
+        destination: Option<&str>,
+        payload: Payload,
+    ) -> anyhow::Result<()> {
         let message = Message {
             version: 1,
-            msg_id: self.next_message_id,
+            msg_id: message_id,
             src: SOURCE.into(),
-            dst: None,
+            dst: destination.map(String::from),
             ttl: 1,
             reply_to: None,
             timestamp: None,
             payload,
             auth: None,
         };
-        self.next_message_id = self.next_message_id.wrapping_add(1);
+        let topic = match destination {
+            Some(device_id) => format!("oxihome/{device_id}/down"),
+            None => BROADCAST_TOPIC.into(),
+        };
         self.client
-            .publish(BROADCAST_TOPIC, QoS::AtLeastOnce, false, message.to_json()?)
+            .publish(topic, QoS::AtLeastOnce, false, message.to_json()?)
             .await?;
         Ok(())
     }

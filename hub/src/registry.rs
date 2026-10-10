@@ -2,14 +2,16 @@ use std::collections::HashMap;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use oxihome_protocol::{Message, Payload};
+use oxihome_protocol::{EntityDescriptor, Message, Payload};
 
 /// Three missed heartbeats (the firmware sends one every 30 s).
 pub const OFFLINE_AFTER: Duration = Duration::from_secs(90);
 
-struct Node {
+pub struct Node {
+    pub firmware_version: String,
+    pub entities: Vec<EntityDescriptor>,
+    pub online: bool,
     last_seen: Instant,
-    online: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -46,6 +48,13 @@ pub struct Registry {
 }
 
 impl Registry {
+    /// Sorted by device id.
+    pub fn nodes(&self) -> Vec<(&String, &Node)> {
+        let mut nodes: Vec<_> = self.nodes.iter().collect();
+        nodes.sort_by_key(|(device_id, _)| *device_id);
+        nodes
+    }
+
     pub fn handle(&mut self, message: &Message, now: Instant) -> Option<NodeEvent> {
         if let Payload::Hello {
             fw_version,
@@ -55,8 +64,10 @@ impl Registry {
             self.nodes.insert(
                 message.src.clone(),
                 Node {
-                    last_seen: now,
+                    firmware_version: fw_version.clone(),
+                    entities: entities.clone(),
                     online: true,
+                    last_seen: now,
                 },
             );
             return Some(NodeEvent::Registered {
