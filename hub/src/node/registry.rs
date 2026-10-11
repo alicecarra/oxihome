@@ -3,7 +3,7 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use oxihome_protocol::management::{self, HEARTBEAT_INTERVAL};
-use oxihome_protocol::{EntityDescriptor, Message, Payload, Value};
+use oxihome_protocol::{Access, Channel, EntityDescriptor, Message, Payload, Value, ValueType};
 
 pub const DEFAULT_MISSED_HEARTBEATS: u32 = 3;
 
@@ -23,6 +23,44 @@ impl Node {
         self.entities.iter().any(|descriptor| {
             descriptor.id == entity && descriptor.channels.iter().any(|known| known.id == channel)
         })
+    }
+
+    pub fn channel(&self, entity: u8, channel: u8) -> Option<&Channel> {
+        self.entities
+            .iter()
+            .find(|descriptor| descriptor.id == entity)?
+            .channels
+            .iter()
+            .find(|known| known.id == channel)
+    }
+
+    /// Whether the node declares a `Trigger` channel that takes this value.
+    pub fn check_invoke(&self, entity: u8, channel: u8, value: Option<&str>) -> Result<(), String> {
+        let Some(declared) = self.channel(entity, channel) else {
+            return Err(format!("the node has no channel {entity}/{channel}"));
+        };
+        if declared.access != Access::Trigger {
+            return Err(format!("channel {entity}/{channel} is not a Trigger"));
+        }
+        match (&declared.value, value) {
+            (None, None) => Ok(()),
+            (None, Some(value)) => Err(format!(
+                "channel {entity}/{channel} takes no value, got \"{value}\""
+            )),
+            (Some(ValueType::Enum(options)), Some(value))
+                if options.iter().any(|option| option == value) =>
+            {
+                Ok(())
+            }
+            (Some(ValueType::Enum(options)), _) => Err(format!(
+                "{} is not one of {}",
+                value.map_or("no value".to_string(), |value| format!("\"{value}\"")),
+                options.join(", ")
+            )),
+            (Some(other), _) => Err(format!(
+                "channel {entity}/{channel} takes {other:?}, not a name"
+            )),
+        }
     }
 
     fn offline_after(&self, missed_heartbeats: u32) -> Duration {
@@ -261,6 +299,73 @@ mod tests {
                 confidence: Confidence::Confirmed,
             }],
         })
+    }
+
+    fn buzzer_node() -> Node {
+        let mut registry = Registry::default();
+        registry.handle(
+            &message(Payload::Hello {
+                fw_version: "0.7.0".into(),
+                entities: vec![EntityDescriptor {
+                    id: 5,
+                    channels: vec![
+                        Channel {
+                            id: 0,
+                            access: Access::Trigger,
+                            value: Some(ValueType::Enum(vec!["Short".into(), "Alarm".into()])),
+                            quantity: None,
+                            unit: None,
+                        },
+                        Channel {
+                            id: 1,
+                            access: Access::Trigger,
+                            value: None,
+                            quantity: None,
+                            unit: None,
+                        },
+                        Channel {
+                            id: 2,
+                            access: Access::ReadWrite,
+                            value: Some(ValueType::Bool),
+                            quantity: None,
+                            unit: None,
+                        },
+                    ],
+                }],
+            }),
+            Instant::now(),
+        );
+        registry.nodes.remove(DEVICE).unwrap()
+    }
+
+    #[test]
+    fn invoke_checks_the_declared_options() {
+        let node = buzzer_node();
+        assert_eq!(node.check_invoke(5, 0, Some("Alarm")), Ok(()));
+        assert_eq!(node.check_invoke(5, 1, None), Ok(()));
+        assert_eq!(
+            node.check_invoke(5, 0, Some("Siren")),
+            Err("\"Siren\" is not one of Short, Alarm".into())
+        );
+        assert_eq!(
+            node.check_invoke(5, 0, None),
+            Err("no value is not one of Short, Alarm".into())
+        );
+        assert!(
+            node.check_invoke(5, 1, Some("Alarm"))
+                .unwrap_err()
+                .contains("takes no value")
+        );
+        assert!(
+            node.check_invoke(5, 2, None)
+                .unwrap_err()
+                .contains("not a Trigger")
+        );
+        assert!(
+            node.check_invoke(6, 0, None)
+                .unwrap_err()
+                .contains("no channel 6/0")
+        );
     }
 
     #[test]

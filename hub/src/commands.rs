@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::bail;
-use oxihome_protocol::{CommandOp, Message, Payload, Value};
+use oxihome_protocol::{CommandOp, Message, Payload};
 use tokio::sync::oneshot;
 
 use crate::mqtt::Mqtt;
@@ -16,7 +16,7 @@ pub struct PendingCommand {
     answer: oneshot::Sender<Payload>,
     pub entity: u8,
     pub channel: u8,
-    pub value: Value,
+    pub op: CommandOp,
 }
 
 impl PendingCommand {
@@ -38,14 +38,14 @@ impl Commands {
         self.pending.lock().unwrap().remove(&reply_to)
     }
 
-    /// Sends a `Set` and waits for the node's answer.
-    pub async fn set(
+    /// Sends a command and waits for the node's answer.
+    pub async fn send(
         &self,
         mqtt: &Mqtt,
         device_id: &str,
         entity: u8,
         channel: u8,
-        value: Value,
+        op: CommandOp,
     ) -> anyhow::Result<()> {
         let message_id = mqtt.next_message_id();
         let (answer, receiver) = oneshot::channel();
@@ -55,14 +55,14 @@ impl Commands {
                 answer,
                 entity,
                 channel,
-                value: value.clone(),
+                op: op.clone(),
             },
         );
 
         let payload = Payload::Command {
             entity,
             channel,
-            op: CommandOp::Set(value),
+            op,
         };
         if let Err(error) = mqtt.publish(message_id, Some(device_id), payload).await {
             self.pending.lock().unwrap().remove(&message_id);

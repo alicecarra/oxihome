@@ -4,12 +4,13 @@ use std::time::{Duration, Instant};
 
 use jiff::Zoned;
 use oxihome_protocol::management::{self, PARAMETERS, Parameter};
-use oxihome_protocol::{Access, EventKind, Quantity, Unit, Value, ValueType};
+use oxihome_protocol::{Access, Channel, EventKind, Quantity, Unit, Value, ValueType};
 
 use super::format::{channel_label, entity_label, value_label};
 use crate::config::names::{NameTarget, Names};
 use crate::config::rules::{
-    Action, CronTrigger, Day, EventTrigger, Limit, ScheduleTrigger, ThresholdTrigger, Trigger,
+    Action, CronTrigger, Day, EventTrigger, Limit, OfflineTrigger, ScheduleTrigger,
+    ThresholdTrigger, Trigger,
 };
 use crate::hub::{Hub, Snapshot};
 use crate::node::registry::Registry;
@@ -49,17 +50,25 @@ pub struct ChannelOverview {
     pub switchable: bool,
     pub quantity: Option<Quantity>,
     pub unit: Option<Unit>,
+    /// For `Trigger` channels: one button per declared option, or a single one without a value.
+    pub invocations: Option<Vec<Option<String>>>,
 }
 
 pub struct RuleOverview {
     pub name: String,
     pub trigger: String,
-    pub actions: Vec<String>,
+    pub actions: Vec<ActionOverview>,
     pub enabled: bool,
     /// Scheduled rules only.
     pub next_run: Option<String>,
     /// How long ago it ran and the errors of the actions that failed.
     pub last_run: Option<(Duration, Vec<String>)>,
+}
+
+pub struct ActionOverview {
+    pub text: String,
+    /// Why the node would refuse it, from what the node declares; `None` when fine or unknown.
+    pub warning: Option<String>,
 }
 
 /// One entry per registered node, for the nodes page.
@@ -105,11 +114,22 @@ pub fn nodes(hub: &Hub) -> Vec<NodeOverview> {
                             && matches!(channel.access, Access::Write | Access::ReadWrite),
                         quantity: channel.quantity,
                         unit: channel.unit,
+                        invocations: invocations(channel),
                     })
                 })
                 .collect(),
         })
         .collect()
+}
+
+fn invocations(channel: &Channel) -> Option<Vec<Option<String>>> {
+    if channel.access != Access::Trigger {
+        return None;
+    }
+    match &channel.value {
+        Some(ValueType::Enum(options)) => Some(options.iter().cloned().map(Some).collect()),
+        _ => Some(vec![None]),
+    }
 }
 
 /// Nodes that declare the management entity, for the settings page.
@@ -179,7 +199,10 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
             actions: rule
                 .then
                 .iter()
-                .map(|action| action_description(&snapshot.names, action))
+                .map(|action| ActionOverview {
+                    text: action_description(&snapshot.names, action),
+                    warning: action_warning(&snapshot.registry, action),
+                })
                 .collect(),
             last_run: runs
                 .remove(&rule.name)
@@ -196,6 +219,19 @@ fn trigger_description(names: &Names, registry: &Registry, trigger: &Trigger) ->
         Trigger::Threshold(trigger) => threshold_description(names, registry, trigger),
         Trigger::Schedule(trigger) => schedule_description(trigger),
         Trigger::Cron(trigger) => cron_description(trigger),
+        Trigger::Offline(trigger) => offline_description(names, trigger),
+    }
+}
+
+fn offline_description(names: &Names, trigger: &OfflineTrigger) -> String {
+    match &trigger.device {
+        Some(device) => {
+            let node = names
+                .get(&NameTarget::Node(device.clone()))
+                .unwrap_or(device);
+            format!("{node} goes offline")
+        }
+        None => "Any node goes offline".into(),
     }
 }
 
@@ -317,8 +353,36 @@ fn action_description(names: &Names, action: &Action) -> String {
             "Toggle {}",
             channel_description(names, device, *entity, *channel, None)
         ),
+        Action::Invoke {
+            device,
+            entity,
+            channel,
+            value,
+        } => {
+            let target = channel_description(names, device, *entity, *channel, None);
+            match value {
+                Some(value) => format!("Invoke {target} with {value}"),
+                None => format!("Invoke {target}"),
+            }
+        }
         Action::Notify { title, message } => format!("Notify \"{title}\": {message}"),
     }
+}
+
+fn action_warning(registry: &Registry, action: &Action) -> Option<String> {
+    let Action::Invoke {
+        device,
+        entity,
+        channel,
+        value,
+    } = action
+    else {
+        return None;
+    };
+    registry
+        .node(device)?
+        .check_invoke(*entity, *channel, value.as_deref())
+        .err()
 }
 
 /// `Test board › LED`; the channel only shows when it is not the entity's first.
@@ -521,6 +585,32 @@ mod tests {
         assert_eq!(
             action_description(&names(), &notify),
             "Notify \"Good night\": All lamps are off"
+        );
+    }
+
+    #[test]
+    fn offline_and_invoke_descriptions() {
+        let names = names();
+        let bedroom = OfflineTrigger {
+            device: Some("esp32-test".into()),
+        };
+        assert_eq!(
+            offline_description(&names, &bedroom),
+            "Test board goes offline"
+        );
+        assert_eq!(
+            offline_description(&names, &OfflineTrigger { device: None }),
+            "Any node goes offline"
+        );
+        let invoke = Action::Invoke {
+            device: "esp32-test".into(),
+            entity: 1,
+            channel: 0,
+            value: Some("Alarm".into()),
+        };
+        assert_eq!(
+            action_description(&names, &invoke),
+            "Invoke Test board › LED with Alarm"
         );
     }
 }

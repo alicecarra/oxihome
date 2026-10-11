@@ -136,7 +136,11 @@ previous configuration stays in use.
 
 - `rules.toml`: a rule runs its actions when its trigger (`when`) fires. Actions set or toggle
   boolean channels, or show a notification as a toast on the web interface
-  (`notify = { title = "...", message = "..." }`). `enabled = false` turns a rule off. Triggers:
+  (`notify = { title = "...", message = "..." }`), or fire a `Trigger` channel such as the test
+  board buzzer (`invoke = { device = "...", entity = 5, channel = 0, value = "Alarm" }`). The
+  value must be one of the options the node declares in its `Hello`; while the node is online the hub
+  refuses other values without sending them, and `/rules` shows the problem under the action.
+  `enabled = false` turns a rule off. Triggers:
   - an event of a channel: `when = { device = "...", entity = 2, channel = 0, event = "Press" }`;
   - a local time, every day or on some days: `when = { at = "07:00", days = ["monday", "friday"] }`;
   - a numeric channel crossing a limit: `when = { device = "...", entity = 3, channel = 0, above = 28 }`
@@ -145,7 +149,9 @@ previous configuration stays in use.
     (on above 28, off below 27) gives hysteresis;
   - a cron expression, standard five fields (minute, hour, day of month, month, day of week):
     `when = { cron = "*/30 8-22 * * mon-fri" }`. When both the day of month and the day of week
-    are restricted, either one matching is enough, as in classic cron.
+    are restricted, either one matching is enough, as in classic cron;
+  - a node going offline: `when = { offline = "sim-bedroom" }`, or `offline = "*"` for any node.
+    It runs when the hub marks the node offline (the same moment as the toast).
 
   Times are local, in the zone set in `[time] zone` of `hub/hub.toml` (an IANA name such as
   `America/Sao_Paulo`; the system's zone when missing). Scheduled rules are checked once per minute:
@@ -181,7 +187,8 @@ previous configuration stays in use.
   wifi_check_interval = 5
   ```
 
-The page uses htmx: the switches post to `/set` without reloading the page, and the hub announces
+The page uses htmx: the switches post to `/set` and the buttons of `Trigger` channels (one per
+option, such as the buzzer patterns) post to `/invoke`, without reloading the page, and the hub announces
 changes over server-sent events at `/events` (`nodes` when a value, event or presence changes,
 `notifications` for a new toast). The page fetches the node list and the toasts again when it hears
 them, and every 30 s as well, which also keeps the "3 s ago" labels moving. To watch the events:
@@ -193,6 +200,7 @@ request from the command line:
 
 ```sh
 curl -X POST -d "device_id=esp32-08d1f9ca41e4&entity=1&channel=0&value=true" localhost:8080/set
+curl -X POST -d "device_id=esp32-08d1f9ca41e4&entity=5&channel=0&value=Short" localhost:8080/invoke
 ```
 
 Styles use Tailwind CSS 4. `hub/build.rs` runs Topcoat's Tailwind integration: on the first build it

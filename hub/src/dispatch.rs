@@ -74,7 +74,7 @@ pub async fn on_message(hub: &Arc<Hub>, message: &Message) -> anyhow::Result<()>
 }
 
 /// Marks nodes that went quiet as offline.
-pub fn on_presence_check(hub: &Hub) {
+pub fn on_presence_check(hub: &Arc<Hub>) {
     for node_event in hub.check_presence(Instant::now()) {
         on_node_event(hub, &node_event);
     }
@@ -89,7 +89,12 @@ pub fn on_clock_tick(hub: &Arc<Hub>, schedule: &mut Schedule) {
     }
 }
 
-fn on_node_event(hub: &Hub, node_event: &NodeEvent) {
+fn on_node_event(hub: &Arc<Hub>, node_event: &NodeEvent) {
     println!("{node_event}");
     hub.notify_node_event(node_event);
+    if let NodeEvent::Offline(device_id) = node_event {
+        for rule in hub.offline_rules(device_id) {
+            tokio::spawn(rules::run(hub.clone(), rule));
+        }
+    }
 }

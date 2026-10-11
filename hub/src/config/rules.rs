@@ -30,13 +30,14 @@ pub enum Trigger {
     Schedule(ScheduleTrigger),
     Cron(CronTrigger),
     Threshold(ThresholdTrigger),
+    Offline(OfflineTrigger),
 }
 
 impl Trigger {
     /// The first run strictly after `now`; `None` for event rules.
     pub fn next_run(&self, now: &Zoned) -> Option<Zoned> {
         match self {
-            Trigger::Event(_) | Trigger::Threshold(_) => None,
+            Trigger::Event(_) | Trigger::Threshold(_) | Trigger::Offline(_) => None,
             Trigger::Schedule(trigger) => trigger.next_run(now),
             Trigger::Cron(trigger) => trigger.cron.find_next_occurrence(now, false).ok(),
         }
@@ -44,7 +45,7 @@ impl Trigger {
 
     fn is_due(&self, minute: DateTime) -> bool {
         match self {
-            Trigger::Event(_) | Trigger::Threshold(_) => false,
+            Trigger::Event(_) | Trigger::Threshold(_) | Trigger::Offline(_) => false,
             Trigger::Schedule(trigger) => trigger.is_due(minute),
             Trigger::Cron(trigger) => trigger.cron.is_time_matching(&minute).unwrap_or(false),
         }
@@ -65,12 +66,29 @@ struct TriggerFields {
     #[serde(default)]
     days: Vec<Day>,
     cron: Option<String>,
+    offline: Option<String>,
 }
 
 impl TryFrom<TriggerFields> for Trigger {
     type Error = String;
 
     fn try_from(fields: TriggerFields) -> Result<Self, String> {
+        if let Some(device) = fields.offline {
+            let alone = fields.device.is_none()
+                && fields.entity.is_none()
+                && fields.channel.is_none()
+                && fields.event.is_none()
+                && fields.above.is_none()
+                && fields.below.is_none()
+                && fields.at.is_none()
+                && fields.days.is_empty()
+                && fields.cron.is_none();
+            if !alone {
+                return Err("`offline` goes alone in `when`".into());
+            }
+            let device = (device != "*").then_some(device);
+            return Ok(Trigger::Offline(OfflineTrigger { device }));
+        }
         let channel_kinds = [
             fields.event.is_some(),
             fields.above.is_some(),
@@ -131,7 +149,7 @@ impl TryFrom<TriggerFields> for Trigger {
         if !fields.days.is_empty() {
             return Err("`days` needs `at`".into());
         }
-        Err("`when` needs an event or a limit on a channel (`device`, `entity`, `channel`), `at` or `cron`".into())
+        Err("`when` needs an event or a limit on a channel (`device`, `entity`, `channel`), `at`, `cron` or `offline`".into())
     }
 }
 
@@ -170,6 +188,12 @@ fn number(value: &Value) -> Option<f32> {
         Value::Float(number) => Some(*number),
         _ => None,
     }
+}
+
+/// Runs when the hub marks a node offline; `None` for any node (`offline = "*"`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct OfflineTrigger {
+    pub device: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -275,6 +299,13 @@ pub enum Action {
         entity: u8,
         channel: u8,
     },
+    /// Fires a `Trigger` channel, e.g. a buzzer pattern; `value` is one of the channel's `Enum` options.
+    Invoke {
+        device: String,
+        entity: u8,
+        channel: u8,
+        value: Option<String>,
+    },
     Notify {
         title: String,
         message: String,
@@ -295,6 +326,18 @@ impl fmt::Display for Action {
                 entity,
                 channel,
             } => write!(formatter, "toggle {device} {entity}/{channel}"),
+            Action::Invoke {
+                device,
+                entity,
+                channel,
+                value: Some(value),
+            } => write!(formatter, "invoke {device} {entity}/{channel} with {value}"),
+            Action::Invoke {
+                device,
+                entity,
+                channel,
+                value: None,
+            } => write!(formatter, "invoke {device} {entity}/{channel}"),
             Action::Notify { title, .. } => write!(formatter, "notify \"{title}\""),
         }
     }
@@ -353,6 +396,17 @@ impl Rules {
             .collect()
     }
 
+    pub fn offline(&self, device_id: &str) -> Vec<&Rule> {
+        self.rules
+            .iter()
+            .filter(|rule| {
+                rule.enabled
+                    && matches!(&rule.when, Trigger::Offline(trigger)
+                        if trigger.device.as_deref().is_none_or(|device| device == device_id))
+            })
+            .collect()
+    }
+
     /// Scheduled rules for a local minute (seconds are ignored).
     pub fn due(&self, minute: DateTime) -> Vec<&Rule> {
         self.rules
@@ -389,6 +443,15 @@ async fn perform(hub: &Hub, action: &Action, rule_name: &str) -> anyhow::Result<
         Action::Notify { title, message } => {
             hub.notify(title.clone(), message.clone(), rule_name.to_string());
             return Ok("shown".into());
+        }
+        Action::Invoke {
+            device,
+            entity,
+            channel,
+            value,
+        } => {
+            hub.invoke(device, *entity, *channel, value.clone()).await?;
+            return Ok("done".into());
         }
         Action::Set {
             device,
@@ -624,6 +687,60 @@ mod tests {
         assert!(error(r#"{ device = "sim-bedroom", entity = 1, channel = 0, event = "Press", at = "07:00" }"#).contains("cannot have"));
         assert!(error(r#"{ at = "07:00", day = ["monday"] }"#).contains("unknown field"));
         assert!(error("{}").contains("needs an event"));
+    }
+
+    const OFFLINE: &str = r#"
+        [[rules]]
+        name = "Any node offline"
+        when = { offline = "*" }
+        then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
+
+        [[rules]]
+        name = "Bedroom offline"
+        when = { offline = "sim-bedroom" }
+        then = []
+    "#;
+
+    #[test]
+    fn offline_rules_match_their_node_or_any() {
+        let rules: Rules = toml::from_str(OFFLINE).unwrap();
+        assert_eq!(
+            names(rules.offline("sim-bedroom")),
+            ["Any node offline", "Bedroom offline"]
+        );
+        assert_eq!(
+            names(rules.offline("sim-living-room")),
+            ["Any node offline"]
+        );
+        assert!(rules.matching(&event(EventKind::Press, 2)).is_empty());
+        assert!(rules.due(minute("2026-10-12T23:00")).is_empty());
+    }
+
+    #[test]
+    fn invoke_action_parses() {
+        let rules: Rules = toml::from_str(OFFLINE).unwrap();
+        assert_eq!(
+            rules.rules[0].then[0],
+            Action::Invoke {
+                device: "esp32-08d1f9ca41e4".into(),
+                entity: 5,
+                channel: 0,
+                value: Some("Alarm".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn offline_trigger_goes_alone() {
+        assert_eq!(
+            when(r#"{ offline = "*" }"#),
+            Ok(Trigger::Offline(OfflineTrigger { device: None }))
+        );
+        assert!(
+            when(r#"{ offline = "sim-bedroom", at = "07:00" }"#)
+                .unwrap_err()
+                .contains("goes alone")
+        );
     }
 
     const THRESHOLDS: &str = r#"

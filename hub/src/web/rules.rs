@@ -79,7 +79,12 @@ async fn rule_card(rule: RuleOverview) -> Result<impl View> {
                     <dd>
                         <ul class="space-y-1">
                             for action in rule.actions {
-                                <li>(action)</li>
+                                <li>
+                                    (action.text)
+                                    if let Some(warning) = action.warning {
+                                        <p class="text-destructive">(warning)</p>
+                                    }
+                                </li>
                             }
                         </ul>
                     </dd>

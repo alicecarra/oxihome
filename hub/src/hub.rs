@@ -7,7 +7,7 @@ use anyhow::bail;
 use jiff::civil::DateTime;
 use jiff::tz::TimeZone;
 use oxihome_protocol::management::{self, Parameter};
-use oxihome_protocol::{Message, Payload, Value};
+use oxihome_protocol::{CommandOp, Message, Payload, Value};
 use tokio::sync::broadcast;
 
 use crate::commands::Commands;
@@ -103,12 +103,14 @@ impl Hub {
         let mut updates = Vec::new();
         if let Some(pending) = self.commands.answered_by(message) {
             // Shown until the node's own `State` confirms it.
-            if message.payload == (Payload::Ack { ok: true }) {
+            if let (Payload::Ack { ok: true }, CommandOp::Set(value)) =
+                (&message.payload, &pending.op)
+            {
                 updates.extend(state.assume(
                     &message.src,
                     pending.entity,
                     pending.channel,
-                    pending.value.clone(),
+                    value.clone(),
                 ));
             }
             pending.answer(message.payload.clone());
@@ -148,7 +150,43 @@ impl Hub {
         value: Value,
     ) -> anyhow::Result<()> {
         self.commands
-            .set(&self.mqtt, device_id, entity, channel, value)
+            .send(
+                &self.mqtt,
+                device_id,
+                entity,
+                channel,
+                CommandOp::Set(value),
+            )
+            .await
+    }
+
+    /// Sends an `Invoke` and waits for the node's answer. Refused without sending when the
+    /// node is known and does not declare the value.
+    pub async fn invoke(
+        &self,
+        device_id: &str,
+        entity: u8,
+        channel: u8,
+        value: Option<String>,
+    ) -> anyhow::Result<()> {
+        let check = self
+            .registry
+            .lock()
+            .unwrap()
+            .node(device_id)
+            .map(|node| node.check_invoke(entity, channel, value.as_deref()));
+        if let Some(Err(error)) = check {
+            bail!("{device_id}: {error}");
+        }
+        let value = value.map(Value::Enum);
+        self.commands
+            .send(
+                &self.mqtt,
+                device_id,
+                entity,
+                channel,
+                CommandOp::Invoke(value),
+            )
             .await
     }
 
@@ -252,6 +290,16 @@ impl Hub {
             .lock()
             .unwrap()
             .crossed(update)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    pub fn offline_rules(&self, device_id: &str) -> Vec<Rule> {
+        self.rules
+            .lock()
+            .unwrap()
+            .offline(device_id)
             .into_iter()
             .cloned()
             .collect()

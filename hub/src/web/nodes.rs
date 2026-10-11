@@ -9,6 +9,7 @@ use topcoat::{
 use super::format::{ago_label, channel_label, duration_label, entity_label, value_label};
 use super::overview::{ChannelOverview, NodeOverview};
 use crate::components::badge::{BadgeVariant, badge};
+use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::card::{card, card_content, card_description, card_header, card_title};
 use crate::components::switch::switch;
 
@@ -92,9 +93,37 @@ async fn channel_row(device_id: String, channel: ChannelOverview) -> Result<impl
                 <p class="text-sm font-medium">(label.clone())</p>
                 match &channel.value {
                     Some(Value::Bool(active)) => status_dot(active: *active, if *active { "on" } else { "off" }),
+                    _ if channel.invocations.is_some() => {}
                     _ => <p class="text-sm text-muted-foreground">(channel_state(&channel))</p>,
                 }
             </div>
+            if let Some(invocations) = channel.invocations.clone() {
+                <form
+                    class="flex flex-wrap justify-end gap-2"
+                    hx-post="/invoke"
+                    hx-target="#status"
+                >
+                    <input type="hidden" name="device_id" value=(device_id.clone())>
+                    <input type="hidden" name="entity" value=(channel.entity.to_string())>
+                    <input type="hidden" name="channel" value=(channel.channel.to_string())>
+                    for invocation in invocations {
+                        match invocation {
+                            Some(option) => button(
+                                variant: ButtonVariant::Outline,
+                                size: ButtonSize::Sm,
+                                attrs: attributes! { type="submit" name="value" value=(option.clone()) },
+                                (option)
+                            ),
+                            None => button(
+                                variant: ButtonVariant::Outline,
+                                size: ButtonSize::Sm,
+                                attrs: attributes! { type="submit" },
+                                "Run"
+                            ),
+                        }
+                    }
+                </form>
+            }
             if channel.switchable {
                 <form
                     hx-post="/set"
@@ -102,7 +131,7 @@ async fn channel_row(device_id: String, channel: ChannelOverview) -> Result<impl
                     hx-target="#status"
                     ("hx-on--after-request")="htmx.trigger('#nodes', 'refresh')"
                 >
-                    <input type="hidden" name="device_id" value=(device_id)>
+                    <input type="hidden" name="device_id" value=(device_id.clone())>
                     <input type="hidden" name="entity" value=(channel.entity.to_string())>
                     <input type="hidden" name="channel" value=(channel.channel.to_string())>
                     switch(attrs: attributes! {

@@ -33,6 +33,7 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .page(rules::rules)
         .page(settings::settings)
         .route(home::set)
+        .route(home::invoke)
         .route(settings::reload)
         .route(settings::save)
         .route(toasts::toasts)

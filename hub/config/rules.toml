@@ -54,3 +54,8 @@ when = { device = "sim-living-room", entity = 3, channel = 0, below = 27 }
 then = [
     { set = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0, value = false } },
 ]
+
+[[rules]]
+name = "Any node offline: buzzer alarm"
+when = { offline = "*" }
+then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
