@@ -8,6 +8,7 @@ entities.2 = { name = "BOOT button", channels.0 = "Press" }
 entities.3 = { name = "Climate sensor" }
 entities.4 = { name = "External LED", channels.0 = "Power" }
 entities.5 = { name = "Buzzer", channels.0 = "Pattern" }
+entities.6 = { name = "IR receiver", channels.0 = "Code" }
 
 [nodes."sim-living-room"]
 name = "Living room (simulated)"

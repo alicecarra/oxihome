@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::time::Instant;
 
-use oxihome_protocol::{EventKind, Message, Payload};
+use oxihome_protocol::{EventKind, Message, Payload, Value};
 
 #[derive(Debug, PartialEq)]
 pub struct EventRecord {
@@ -10,6 +10,7 @@ pub struct EventRecord {
     pub entity: u8,
     pub channel: u8,
     pub kind: EventKind,
+    pub data: Option<Value>,
 }
 
 impl fmt::Display for EventRecord {
@@ -18,14 +19,37 @@ impl fmt::Display for EventRecord {
             formatter,
             "{} {}/{} event {:?}",
             self.device_id, self.entity, self.channel, self.kind
-        )
+        )?;
+        match &self.data {
+            Some(data) => write!(formatter, " {}", data_label(data)),
+            None => Ok(()),
+        }
     }
+}
+
+/// `Bytes` holding UTF-8 show as text: the IR receiver sends its codes that way until the
+/// protocol has a text value.
+pub fn data_label(data: &Value) -> String {
+    match data {
+        Value::Bytes(bytes) => match std::str::from_utf8(bytes) {
+            Ok(text) => text.to_string(),
+            Err(_) => format!("{} bytes", bytes.len()),
+        },
+        other => format!("{other:?}"),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LastEvent {
+    pub kind: EventKind,
+    pub data: Option<Value>,
+    pub at: Instant,
 }
 
 /// Last event of every (node, entity, channel), since the hub started.
 #[derive(Default)]
 pub struct Events {
-    last: HashMap<(String, u8, u8), (EventKind, Instant)>,
+    last: HashMap<(String, u8, u8), LastEvent>,
 }
 
 impl Events {
@@ -34,25 +58,30 @@ impl Events {
             entity,
             channel,
             event,
-            ..
+            data,
         } = &message.payload
         else {
             return None;
         };
-        self.last
-            .insert((message.src.clone(), *entity, *channel), (*event, now));
+        self.last.insert(
+            (message.src.clone(), *entity, *channel),
+            LastEvent {
+                kind: *event,
+                data: data.clone(),
+                at: now,
+            },
+        );
         Some(EventRecord {
             device_id: message.src.clone(),
             entity: *entity,
             channel: *channel,
             kind: *event,
+            data: data.clone(),
         })
     }
 
-    pub fn last(&self, device_id: &str, entity: u8, channel: u8) -> Option<(EventKind, Instant)> {
-        self.last
-            .get(&(device_id.to_string(), entity, channel))
-            .copied()
+    pub fn last(&self, device_id: &str, entity: u8, channel: u8) -> Option<&LastEvent> {
+        self.last.get(&(device_id.to_string(), entity, channel))
     }
 }
 
@@ -84,7 +113,14 @@ mod tests {
         let record = events.apply(&event(EventKind::Press), now);
 
         assert_eq!(record.map(|record| record.kind), Some(EventKind::Press));
-        assert_eq!(events.last(DEVICE, 2, 0), Some((EventKind::Press, now)));
+        assert_eq!(
+            events.last(DEVICE, 2, 0),
+            Some(&LastEvent {
+                kind: EventKind::Press,
+                data: None,
+                at: now
+            })
+        );
     }
 
     #[test]
@@ -95,9 +131,31 @@ mod tests {
         events.apply(&event(EventKind::LongPress), start + Duration::from_secs(1));
 
         assert_eq!(
-            events.last(DEVICE, 2, 0),
+            events.last(DEVICE, 2, 0).map(|last| (last.kind, last.at)),
             Some((EventKind::LongPress, start + Duration::from_secs(1)))
         );
+    }
+
+    #[test]
+    fn event_data_is_kept_and_text_bytes_show_as_text() {
+        let mut events = Events::default();
+        let received = message(Payload::Event {
+            entity: 6,
+            channel: 0,
+            event: EventKind::Received,
+            data: Some(Value::Bytes(b"NEC 00 45".to_vec())),
+        });
+        let record = events.apply(&received, Instant::now()).unwrap();
+
+        assert_eq!(
+            record.to_string(),
+            "esp32-test 6/0 event Received NEC 00 45"
+        );
+        assert_eq!(
+            events.last(DEVICE, 6, 0).and_then(|last| last.data.clone()),
+            Some(Value::Bytes(b"NEC 00 45".to_vec()))
+        );
+        assert_eq!(data_label(&Value::Bytes(vec![0xFF, 0x00])), "2 bytes");
     }
 
     #[test]

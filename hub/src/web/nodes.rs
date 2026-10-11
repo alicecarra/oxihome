@@ -168,8 +168,11 @@ fn node_description(node: &NodeOverview) -> String {
 
 fn channel_state(channel: &ChannelOverview) -> String {
     if !channel.has_value {
-        return match channel.last_event {
-            Some((kind, ago)) => format!("last event: {kind:?}, {}", ago_label(ago)),
+        return match &channel.last_event {
+            Some((kind, Some(data), ago)) => {
+                format!("last event: {kind:?} {data}, {}", ago_label(*ago))
+            }
+            Some((kind, None, ago)) => format!("last event: {kind:?}, {}", ago_label(*ago)),
             None => "no events yet".into(),
         };
     }

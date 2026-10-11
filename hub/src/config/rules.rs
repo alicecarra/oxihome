@@ -509,6 +509,7 @@ mod tests {
             entity,
             channel: 0,
             kind,
+            data: None,
         }
     }
 

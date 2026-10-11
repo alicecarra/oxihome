@@ -13,6 +13,7 @@ use crate::config::rules::{
     ThresholdTrigger, Trigger,
 };
 use crate::hub::{Hub, Snapshot};
+use crate::node::events::data_label;
 use crate::node::registry::Registry;
 
 pub struct NodeOverview {
@@ -46,7 +47,8 @@ pub struct ChannelOverview {
     pub channel_name: Option<String>,
     pub has_value: bool,
     pub value: Option<Value>,
-    pub last_event: Option<(EventKind, Duration)>,
+    /// Kind, data as text and how long ago.
+    pub last_event: Option<(EventKind, Option<String>, Duration)>,
     pub switchable: bool,
     pub quantity: Option<Quantity>,
     pub unit: Option<Unit>,
@@ -105,11 +107,11 @@ pub fn nodes(hub: &Hub) -> Vec<NodeOverview> {
                             entity.id,
                             channel.id,
                         )),
-                        has_value: channel.value.is_some(),
+                        has_value: channel.value.is_some() && channel.access != Access::Event,
                         value: state.value(device_id, entity.id, channel.id).cloned(),
-                        last_event: events
-                            .last(device_id, entity.id, channel.id)
-                            .map(|(kind, at)| (kind, now - at)),
+                        last_event: events.last(device_id, entity.id, channel.id).map(|last| {
+                            (last.kind, last.data.as_ref().map(data_label), now - last.at)
+                        }),
                         switchable: channel.value == Some(ValueType::Bool)
                             && matches!(channel.access, Access::Write | Access::ReadWrite),
                         quantity: channel.quantity,
