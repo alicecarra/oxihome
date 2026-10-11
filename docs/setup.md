@@ -99,9 +99,12 @@ Only one hub can run per broker: both use the MQTT client id `oxihome-hub` and k
 each other.
 
 The home's configuration lives in TOML files in the directory set in `[config] dir` (default
-`hub/config/`, versioned in git). The hub reads them at start; after editing a file, press
-**Reload config** on `/settings`. A file with an error is reported there and the previous
-configuration stays in use.
+`hub/config/`, versioned in git). The hub reads them at start. They can be edited on `/settings`,
+where each file has a text box and a Save button: the whole configuration is validated with the
+new text before the file is written, and an error (file, line, column) leaves the file untouched.
+Saving is refused if the file changed on disk since the page was loaded. After editing a file in an
+editor instead, press **Reload config from disk**; a file with an error is reported there and the
+previous configuration stays in use.
 
 - `names.toml`: friendly names for nodes, entities and channels.
 

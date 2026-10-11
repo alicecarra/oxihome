@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::bail;
 use oxihome_protocol::management::{self, PARAMETERS, Parameter};
@@ -10,7 +10,7 @@ use oxihome_protocol::{
 };
 use tokio::sync::oneshot;
 
-use crate::config::HomeConfig;
+use crate::config::{ConfigFile, FILES, HomeConfig, read_file, write_file};
 use crate::events::{EventRecord, Events};
 use crate::mqtt::Mqtt;
 use crate::names::{NameTarget, Names};
@@ -240,11 +240,40 @@ impl Hub {
     /// Rereads the config directory; on error the current configuration stays.
     pub fn reload_config(&self) -> anyhow::Result<usize> {
         let config = HomeConfig::load(&self.config_directory)?;
+        Ok(self.apply_config(config))
+    }
+
+    pub fn config_file(&self, file: &str) -> anyhow::Result<ConfigFile> {
+        read_file(&self.config_directory.join(file))
+    }
+
+    /// Validates the whole configuration with the new text, then writes and applies it.
+    /// Refuses when the file changed on disk since `expected_modified` was read.
+    pub fn save_config_file(
+        &self,
+        file: &str,
+        text: &str,
+        expected_modified: Option<SystemTime>,
+    ) -> anyhow::Result<usize> {
+        if !FILES.contains(&file) {
+            bail!("{file} is not an editable config file");
+        }
+        let path = self.config_directory.join(file);
+        if read_file(&path)?.modified != expected_modified {
+            bail!("{file} changed on disk since this page was loaded; reload the page");
+        }
+        let config = HomeConfig::load_with(&self.config_directory, Some((file, text)))?;
+        write_file(&path, text)?;
+        Ok(self.apply_config(config))
+    }
+
+    /// Returns the number of rules.
+    fn apply_config(&self, config: HomeConfig) -> usize {
         let rule_count = config.rules.len();
         *self.names.lock().unwrap() = config.names;
         *self.rules.lock().unwrap() = config.rules;
         *self.parameters.lock().unwrap() = config.parameters;
-        Ok(rule_count)
+        rule_count
     }
 
     pub fn device_ids(&self) -> Vec<String> {
