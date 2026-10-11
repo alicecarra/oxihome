@@ -17,7 +17,7 @@ pub async fn node_list(nodes: Vec<NodeOverview>) -> Result<impl View> {
         if nodes.is_empty() {
             <p class="text-muted-foreground">"No nodes yet."</p>
         }
-        <div class="space-y-4">
+        <div class="grid items-start gap-4 sm:grid-cols-2 xl:grid-cols-3">
             for node in nodes {
                 node_card(node: node)
             }

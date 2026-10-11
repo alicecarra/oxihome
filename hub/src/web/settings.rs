@@ -24,31 +24,33 @@ pub async fn settings(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         layout(
             title: "Oxihome settings",
-            <div class="mb-4">
-                <h1 class="text-xl font-semibold">"Names"</h1>
-                <p class="text-sm text-muted-foreground">
-                    "Friendly names shown on the nodes page. Leave a name empty to remove it."
-                </p>
-            </div>
-            if nodes.is_empty() {
-                <p class="text-muted-foreground">"No nodes yet."</p>
-            }
-            <div class="space-y-4">
-                for node in nodes {
-                    card(
-                        card_header(
-                            card_title((node.title))
-                            card_description((node.device_id))
-                        )
-                        card_content(
-                            <div class="divide-y divide-border">
-                                for row in node.rows {
-                                    name_form(row: row)
-                                }
-                            </div>
-                        )
-                    )
+            <div class="max-w-3xl">
+                <div class="mb-4">
+                    <h1 class="text-xl font-semibold">"Names"</h1>
+                    <p class="text-sm text-muted-foreground">
+                        "Friendly names shown on the nodes page. Leave a name empty to remove it."
+                    </p>
+                </div>
+                if nodes.is_empty() {
+                    <p class="text-muted-foreground">"No nodes yet."</p>
                 }
+                <div class="space-y-4">
+                    for node in nodes {
+                        card(
+                            card_header(
+                                card_title((node.title))
+                                card_description((node.device_id))
+                            )
+                            card_content(
+                                <div class="divide-y divide-border">
+                                    for row in node.rows {
+                                        name_form(row: row)
+                                    }
+                                </div>
+                            )
+                        )
+                    }
+                </div>
             </div>
         )
     })
