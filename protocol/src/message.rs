@@ -150,6 +150,12 @@ mod tests {
                 event: EventKind::Received,
                 data: Some(Value::Bytes(vec![0x20, 0xdf, 0x10, 0xef])),
             },
+            Payload::Event {
+                entity: 6,
+                channel: 0,
+                event: EventKind::Received,
+                data: Some(Value::Text("NEC 00 45".into())),
+            },
             Payload::Command {
                 entity: 2,
                 channel: 0,
@@ -177,6 +183,14 @@ mod tests {
         for payload in payloads {
             roundtrip(payload);
         }
+    }
+
+    #[test]
+    fn text_values_are_plain_json_strings() {
+        let json = serde_json::to_string(&Value::Text("NEC 00 45".into())).unwrap();
+        assert_eq!(json, r#"{"Text":"NEC 00 45"}"#);
+        let json = serde_json::to_string(&ValueType::Text { max_length: 1024 }).unwrap();
+        assert_eq!(json, r#"{"Text":{"max_length":1024}}"#);
     }
 
     #[test]

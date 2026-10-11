@@ -37,7 +37,11 @@ pub enum ValueType {
     },
     Enum(Vec<String>),
     Color(ColorModel),
-    /// E.g. raw IR code.
+    /// Free text, e.g. a received IR code or a chat message; `max_length` in bytes of UTF-8.
+    Text {
+        max_length: u16,
+    },
+    /// Binary data.
     Bytes,
 }
 
@@ -48,6 +52,7 @@ pub enum Value {
     Float(f32),
     Enum(String),
     Color(Color),
+    Text(String),
     Bytes(Vec<u8>),
 }
 
