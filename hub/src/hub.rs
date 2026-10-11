@@ -14,7 +14,7 @@ use crate::config::{ConfigFile, FILES, HomeConfig, read_file, write_file};
 use crate::events::{EventRecord, Events};
 use crate::mqtt::Mqtt;
 use crate::names::{NameTarget, Names};
-use crate::notifications::{Notification, Notifications};
+use crate::notifications::{self, Notification, Notifications};
 use crate::parameters::NodeParameters;
 use crate::registry::{NodeEvent, Registry};
 use crate::rules::{Rule, Rules};
@@ -389,5 +389,21 @@ impl Hub {
 
     pub fn notifications_since(&self, id: u64) -> Vec<Notification> {
         self.notifications.lock().unwrap().since(id)
+    }
+
+    /// The node's friendly name, or its id.
+    pub fn node_name(&self, device_id: &str) -> String {
+        self.names
+            .lock()
+            .unwrap()
+            .get(&NameTarget::Node(device_id.to_string()))
+            .map_or_else(|| device_id.to_string(), String::from)
+    }
+
+    pub fn notify_node_event(&self, event: &NodeEvent) {
+        let name = self.node_name(event.device_id());
+        if let Some((title, message)) = notifications::for_node_event(event, &name) {
+            self.notify(title, message, event.device_id().to_string());
+        }
     }
 }

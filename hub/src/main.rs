@@ -127,6 +127,7 @@ async fn main() -> anyhow::Result<()> {
                     }
                     for node_event in node_events {
                         println!("{node_event}");
+                        hub.notify_node_event(&node_event);
                         if let NodeEvent::Unknown(device_id) = node_event {
                             let mqtt = hub.mqtt();
                             mqtt.publish(
@@ -151,6 +152,7 @@ async fn main() -> anyhow::Result<()> {
             _ = presence_check.tick() => {
                 for node_event in hub.check_presence(Instant::now()) {
                     println!("{node_event}");
+                    hub.notify_node_event(&node_event);
                 }
             }
             result = &mut web_server => {

@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+use crate::registry::NodeEvent;
+
 const CAPACITY: usize = 50;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -47,9 +49,65 @@ impl Notifications {
     }
 }
 
+/// Title and message of the toast for a node event, if it deserves one. `Registered` is left out
+/// because every node registers when the hub starts.
+pub fn for_node_event(event: &NodeEvent, name: &str) -> Option<(String, String)> {
+    match event {
+        NodeEvent::Offline(_) => {
+            Some((format!("{name} offline"), "Stopped sending messages".into()))
+        }
+        NodeEvent::Online(_) => Some((
+            format!("{name} back online"),
+            "Sending messages again".into(),
+        )),
+        NodeEvent::Rebooted {
+            previous_uptime,
+            uptime,
+            ..
+        } => Some((
+            format!("{name} rebooted"),
+            format!("Uptime {previous_uptime} s -> {uptime} s"),
+        )),
+        NodeEvent::Registered { .. } | NodeEvent::Unknown(_) => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn node_events_that_become_toasts() {
+        let offline = for_node_event(&NodeEvent::Offline("sim".into()), "Bedroom").unwrap();
+        assert_eq!(offline.0, "Bedroom offline");
+
+        let rebooted = for_node_event(
+            &NodeEvent::Rebooted {
+                device_id: "sim".into(),
+                previous_uptime: 3485,
+                uptime: 2,
+            },
+            "Test board",
+        )
+        .unwrap();
+        assert_eq!(
+            rebooted,
+            ("Test board rebooted".into(), "Uptime 3485 s -> 2 s".into())
+        );
+
+        assert!(for_node_event(&NodeEvent::Unknown("sim".into()), "sim").is_none());
+        assert!(
+            for_node_event(
+                &NodeEvent::Registered {
+                    device_id: "sim".into(),
+                    firmware_version: "0.4.0".into(),
+                    entity_count: 2,
+                },
+                "sim"
+            )
+            .is_none()
+        );
+    }
 
     fn push(notifications: &mut Notifications, title: &str) -> u64 {
         notifications.push(title.into(), "message".into(), "test".into())

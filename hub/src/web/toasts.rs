@@ -29,7 +29,7 @@ async fn toast(notification: Notification) -> Result<impl View> {
     Ok(view! {
         <div
             class="flex items-start gap-3 rounded-lg border border-border bg-card p-3 text-card-foreground shadow-sm"
-            ("hx-on--load")="setTimeout(() => this.remove(), 6000)"
+            ("hx-on--load")="setTimeout(() => this.remove(), 15000)"
         >
             <div class="flex-1">
                 <p class="text-sm font-semibold">(notification.title)</p>

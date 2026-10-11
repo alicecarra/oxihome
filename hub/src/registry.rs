@@ -47,6 +47,19 @@ pub enum NodeEvent {
     Unknown(String),
 }
 
+impl NodeEvent {
+    pub fn device_id(&self) -> &str {
+        match self {
+            NodeEvent::Registered { device_id, .. } | NodeEvent::Rebooted { device_id, .. } => {
+                device_id
+            }
+            NodeEvent::Online(device_id)
+            | NodeEvent::Offline(device_id)
+            | NodeEvent::Unknown(device_id) => device_id,
+        }
+    }
+}
+
 impl fmt::Display for NodeEvent {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         match self {

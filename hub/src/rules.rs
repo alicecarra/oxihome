@@ -91,7 +91,14 @@ pub async fn run(hub: Arc<Hub>, rule: Rule) {
     for action in &rule.then {
         match perform(&hub, action, &rule.name).await {
             Ok(outcome) => println!("rule \"{}\": {action} -> {outcome}", rule.name),
-            Err(error) => println!("rule \"{}\": {action} failed: {error}", rule.name),
+            Err(error) => {
+                println!("rule \"{}\": {action} failed: {error}", rule.name);
+                hub.notify(
+                    "Rule failed".into(),
+                    format!("{}: {action}: {error}", rule.name),
+                    rule.name.clone(),
+                );
+            }
         }
     }
 }
