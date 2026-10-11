@@ -7,6 +7,7 @@ use oxihome_protocol::{
     Message, Payload, Quantity, QueryKind, Unit, Value, ValueType,
 };
 
+use crate::buzzer::{self, Buzzer};
 use crate::climate::Climate;
 use crate::settings::Settings;
 use crate::transport::{Transport, TransportEvent};
@@ -15,6 +16,7 @@ pub const LED_ENTITY: u8 = 1;
 pub const BUTTON_ENTITY: u8 = 2;
 pub const CLIMATE_ENTITY: u8 = 3;
 pub const EXTERNAL_LED_ENTITY: u8 = 4;
+pub const BUZZER_ENTITY: u8 = 5;
 const MAIN_CHANNEL: u8 = 0;
 const TEMPERATURE_CHANNEL: u8 = 0;
 const HUMIDITY_CHANNEL: u8 = 1;
@@ -31,6 +33,7 @@ pub struct Node<T: Transport> {
     led: PinDriver<'static, Output>,
     external_led: PinDriver<'static, Output>,
     climate: Climate,
+    buzzer: Buzzer,
     settings: Settings,
     next_message_id: u32,
     /// Last command per sender, to answer duplicates without running them again.
@@ -44,6 +47,7 @@ impl<T: Transport> Node<T> {
         led: PinDriver<'static, Output>,
         external_led: PinDriver<'static, Output>,
         climate: Climate,
+        buzzer: Buzzer,
         settings: Settings,
     ) -> Self {
         Self {
@@ -52,6 +56,7 @@ impl<T: Transport> Node<T> {
             led,
             external_led,
             climate,
+            buzzer,
             settings,
             next_message_id: 0,
             last_commands: HashMap::new(),
@@ -65,7 +70,7 @@ impl<T: Transport> Node<T> {
                 TransportEvent::Received(bytes) => self.handle_bytes(&bytes)?,
             }
         }
-        Ok(())
+        self.buzzer.poll()
     }
 
     pub fn handle_button(&mut self, event: EventKind) -> anyhow::Result<()> {
@@ -190,11 +195,11 @@ impl<T: Transport> Node<T> {
             Payload::Query {
                 what:
                     QueryKind::State {
-                        entity: Some(BUTTON_ENTITY),
+                        entity: Some(entity @ (BUTTON_ENTITY | BUZZER_ENTITY)),
                     },
             } => self.send_error(
                 ErrorCode::InvalidOperation,
-                format!("entity {BUTTON_ENTITY} has no state"),
+                format!("entity {entity} has no state"),
                 reply_to,
             ),
             Payload::Query {
@@ -239,7 +244,28 @@ impl<T: Transport> Node<T> {
                 ErrorCode::InvalidValue,
                 format!("expected Bool, got {value:?}"),
             )),
-            (LED_ENTITY | BUTTON_ENTITY | EXTERNAL_LED_ENTITY, MAIN_CHANNEL, op) => Some((
+            (BUZZER_ENTITY, MAIN_CHANNEL, CommandOp::Invoke(Some(Value::Enum(pattern)))) => {
+                match self.buzzer.play(&pattern) {
+                    Ok(true) => None,
+                    Ok(false) => Some((
+                        ErrorCode::InvalidValue,
+                        format!(
+                            "unknown pattern {pattern}, expected one of {:?}",
+                            buzzer::PATTERNS
+                        ),
+                    )),
+                    Err(error) => Some((ErrorCode::Internal, format!("buzzer: {error}"))),
+                }
+            }
+            (BUZZER_ENTITY, MAIN_CHANNEL, CommandOp::Invoke(value)) => Some((
+                ErrorCode::InvalidValue,
+                format!("expected a pattern, got {value:?}"),
+            )),
+            (
+                LED_ENTITY | BUTTON_ENTITY | EXTERNAL_LED_ENTITY | BUZZER_ENTITY,
+                MAIN_CHANNEL,
+                op,
+            ) => Some((
                 ErrorCode::InvalidOperation,
                 format!("{op:?} not allowed on entity {entity} channel {channel}"),
             )),
@@ -247,7 +273,11 @@ impl<T: Transport> Node<T> {
                 ErrorCode::InvalidOperation,
                 format!("{op:?} not allowed on entity {entity} channel {channel}"),
             )),
-            (LED_ENTITY | BUTTON_ENTITY | CLIMATE_ENTITY | EXTERNAL_LED_ENTITY, _, _) => Some((
+            (
+                LED_ENTITY | BUTTON_ENTITY | CLIMATE_ENTITY | EXTERNAL_LED_ENTITY | BUZZER_ENTITY,
+                _,
+                _,
+            ) => Some((
                 ErrorCode::UnknownChannel,
                 format!("entity {entity} has no channel {channel}"),
             )),
@@ -267,10 +297,10 @@ impl<T: Transport> Node<T> {
                 ack,
             },
         );
-        if entity == management::ENTITY {
-            self.send_management_state(None)
-        } else {
-            self.send_led_state(entity, None)
+        match entity {
+            management::ENTITY => self.send_management_state(None),
+            BUZZER_ENTITY => Ok(()),
+            _ => self.send_led_state(entity, None),
         }
     }
 
@@ -360,6 +390,21 @@ impl<T: Transport> Node<T> {
                 ],
             },
             led_descriptor(EXTERNAL_LED_ENTITY),
+            EntityDescriptor {
+                id: BUZZER_ENTITY,
+                channels: vec![Channel {
+                    id: MAIN_CHANNEL,
+                    access: Access::Trigger,
+                    value: Some(ValueType::Enum(
+                        buzzer::PATTERNS
+                            .iter()
+                            .map(|pattern| pattern.to_string())
+                            .collect(),
+                    )),
+                    quantity: None,
+                    unit: None,
+                }],
+            },
         ];
 
         self.send(

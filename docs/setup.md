@@ -87,10 +87,14 @@ ESP32 DevKit V1 (30 pins), `esp32-08d1f9ca41e4`. Entities the firmware declares:
 | 2 | BOOT button, events `Press`, `LongPress` | GPIO0 |
 | 3 | DHT11 module: channel 0 temperature (°C), channel 1 humidity (%), read every 30 s | GPIO4 (D4) |
 | 4 | External LED on the breadboard, `Bool` | GPIO18 (D18) |
+| 5 | Active buzzer, `Trigger` with the patterns `Short`, `Long` and `Alarm` | GPIO19 (D19) |
 
 DHT11 module: `+` to 3V3, `-` to GND, `S` to D4 (the module has its pull-up). External LED: D18 →
-220–330 Ω resistor → LED long leg; short leg (flat side) to GND. Free pins to use next: 19, 23, 25,
-26, 27, 32, 33 (21 and 22 are kept for I2C); avoid 0, 2, 12 and 15 (boot) and 6–11 (flash).
+220–330 Ω resistor → LED long leg; short leg (flat side) to GND. Active buzzer (sealed black bottom;
+the passive one, with a green board underneath, stays silent on a steady voltage): `+` to D19, the
+other leg to GND. For a louder beep, drive it from 5 V through the kit's PN2222: D19 → 1 kΩ → base,
+emitter to GND, collector to the buzzer's other leg, `+` to VIN. Free pins to use next: 23, 25, 26,
+27, 32, 33 (21 and 22 are kept for I2C); avoid 0, 2, 12 and 15 (boot) and 6–11 (flash).
 
 ## MQTT broker
 

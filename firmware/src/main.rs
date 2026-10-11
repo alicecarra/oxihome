@@ -1,4 +1,5 @@
 mod button;
+mod buzzer;
 mod climate;
 mod config;
 mod node;
@@ -16,6 +17,7 @@ use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use oxihome_protocol::management::{HEARTBEAT_INTERVAL, WIFI_CHECK_INTERVAL};
 
 use button::Button;
+use buzzer::Buzzer;
 use climate::Climate;
 use config::CONFIG;
 use node::Node;
@@ -37,6 +39,7 @@ fn main() -> anyhow::Result<()> {
     let external_led = PinDriver::output(pins.gpio18)?;
     let mut button = Button::new(PinDriver::input(pins.gpio0, Pull::Up)?);
     let climate = Climate::new(PinDriver::input_output_od(pins.gpio4, Pull::Floating)?)?;
+    let buzzer = Buzzer::new(PinDriver::output(pins.gpio19)?)?;
 
     let device_id = device_id()?;
     log::info!("Oxihome node {device_id} started");
@@ -51,7 +54,15 @@ fn main() -> anyhow::Result<()> {
         CONFIG.wifi_password,
     )?;
     let transport = MqttTransport::new(CONFIG.mqtt_url, &device_id)?;
-    let mut node = Node::new(device_id, transport, led, external_led, climate, settings);
+    let mut node = Node::new(
+        device_id,
+        transport,
+        led,
+        external_led,
+        climate,
+        buzzer,
+        settings,
+    );
 
     let mut last_wifi_check = Instant::now();
     let mut last_heartbeat = Instant::now();
