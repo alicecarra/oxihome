@@ -2,6 +2,7 @@ mod button;
 mod buzzer;
 mod climate;
 mod config;
+mod ir;
 mod node;
 mod settings;
 mod transport;
@@ -20,6 +21,7 @@ use button::Button;
 use buzzer::Buzzer;
 use climate::Climate;
 use config::CONFIG;
+use ir::IrReceiver;
 use node::Node;
 use settings::Settings;
 use transport::MqttTransport;
@@ -40,6 +42,7 @@ fn main() -> anyhow::Result<()> {
     let mut button = Button::new(PinDriver::input(pins.gpio0, Pull::Up)?);
     let climate = Climate::new(PinDriver::input_output_od(pins.gpio4, Pull::Floating)?)?;
     let buzzer = Buzzer::new(PinDriver::output(pins.gpio19)?)?;
+    let ir = IrReceiver::new(pins.gpio23)?;
 
     let device_id = device_id()?;
     log::info!("Oxihome node {device_id} started");
@@ -61,6 +64,7 @@ fn main() -> anyhow::Result<()> {
         external_led,
         climate,
         buzzer,
+        ir,
         settings,
     );
 

@@ -9,6 +9,7 @@ use oxihome_protocol::{
 
 use crate::buzzer::{self, Buzzer};
 use crate::climate::Climate;
+use crate::ir::IrReceiver;
 use crate::settings::Settings;
 use crate::transport::{Transport, TransportEvent};
 
@@ -17,6 +18,7 @@ pub const BUTTON_ENTITY: u8 = 2;
 pub const CLIMATE_ENTITY: u8 = 3;
 pub const EXTERNAL_LED_ENTITY: u8 = 4;
 pub const BUZZER_ENTITY: u8 = 5;
+pub const IR_ENTITY: u8 = 6;
 const MAIN_CHANNEL: u8 = 0;
 const TEMPERATURE_CHANNEL: u8 = 0;
 const HUMIDITY_CHANNEL: u8 = 1;
@@ -34,6 +36,7 @@ pub struct Node<T: Transport> {
     external_led: PinDriver<'static, Output>,
     climate: Climate,
     buzzer: Buzzer,
+    ir: IrReceiver,
     settings: Settings,
     next_message_id: u32,
     /// Last command per sender, to answer duplicates without running them again.
@@ -48,6 +51,7 @@ impl<T: Transport> Node<T> {
         external_led: PinDriver<'static, Output>,
         climate: Climate,
         buzzer: Buzzer,
+        ir: IrReceiver,
         settings: Settings,
     ) -> Self {
         Self {
@@ -57,6 +61,7 @@ impl<T: Transport> Node<T> {
             external_led,
             climate,
             buzzer,
+            ir,
             settings,
             next_message_id: 0,
             last_commands: HashMap::new(),
@@ -69,6 +74,19 @@ impl<T: Transport> Node<T> {
                 TransportEvent::Connected => self.announce()?,
                 TransportEvent::Received(bytes) => self.handle_bytes(&bytes)?,
             }
+        }
+        if let Some(code) = self.ir.poll() {
+            log::info!("IR: {code}");
+            // Text in `Bytes` until the protocol has a text value.
+            self.send(
+                Payload::Event {
+                    entity: IR_ENTITY,
+                    channel: MAIN_CHANNEL,
+                    event: EventKind::Received,
+                    data: Some(Value::Bytes(code.into_bytes())),
+                },
+                None,
+            )?;
         }
         self.buzzer.poll()
     }
@@ -195,7 +213,7 @@ impl<T: Transport> Node<T> {
             Payload::Query {
                 what:
                     QueryKind::State {
-                        entity: Some(entity @ (BUTTON_ENTITY | BUZZER_ENTITY)),
+                        entity: Some(entity @ (BUTTON_ENTITY | BUZZER_ENTITY | IR_ENTITY)),
                     },
             } => self.send_error(
                 ErrorCode::InvalidOperation,
@@ -262,7 +280,7 @@ impl<T: Transport> Node<T> {
                 format!("expected a pattern, got {value:?}"),
             )),
             (
-                LED_ENTITY | BUTTON_ENTITY | EXTERNAL_LED_ENTITY | BUZZER_ENTITY,
+                LED_ENTITY | BUTTON_ENTITY | EXTERNAL_LED_ENTITY | BUZZER_ENTITY | IR_ENTITY,
                 MAIN_CHANNEL,
                 op,
             ) => Some((
@@ -274,7 +292,8 @@ impl<T: Transport> Node<T> {
                 format!("{op:?} not allowed on entity {entity} channel {channel}"),
             )),
             (
-                LED_ENTITY | BUTTON_ENTITY | CLIMATE_ENTITY | EXTERNAL_LED_ENTITY | BUZZER_ENTITY,
+                LED_ENTITY | BUTTON_ENTITY | CLIMATE_ENTITY | EXTERNAL_LED_ENTITY | BUZZER_ENTITY
+                | IR_ENTITY,
                 _,
                 _,
             ) => Some((
@@ -401,6 +420,16 @@ impl<T: Transport> Node<T> {
                             .map(|pattern| pattern.to_string())
                             .collect(),
                     )),
+                    quantity: None,
+                    unit: None,
+                }],
+            },
+            EntityDescriptor {
+                id: IR_ENTITY,
+                channels: vec![Channel {
+                    id: MAIN_CHANNEL,
+                    access: Access::Event,
+                    value: Some(ValueType::Bytes),
                     quantity: None,
                     unit: None,
                 }],
