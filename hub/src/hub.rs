@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Instant, SystemTime};
@@ -8,7 +9,7 @@ use oxihome_protocol::{Message, Payload, Value};
 
 use crate::commands::Commands;
 use crate::config::names::{NameTarget, Names};
-use crate::config::rules::{Rule, Rules};
+use crate::config::rules::{Rule, RuleRun, Rules};
 use crate::config::{ConfigFile, FILES, HomeConfig, read_file, write_file};
 use crate::mqtt::Mqtt;
 use crate::node::events::{EventRecord, Events};
@@ -35,6 +36,8 @@ pub struct Hub {
     config_directory: PathBuf,
     names: Mutex<Names>,
     rules: Mutex<Rules>,
+    /// Last run of each rule, by name.
+    rule_runs: Mutex<HashMap<String, RuleRun>>,
     parameters: Mutex<NodeParameters>,
     notifications: Mutex<Notifications>,
     commands: Commands,
@@ -55,6 +58,7 @@ impl Hub {
             config_directory,
             names: Mutex::new(config.names),
             rules: Mutex::new(config.rules),
+            rule_runs: Mutex::default(),
             parameters: Mutex::new(config.parameters),
             notifications: Mutex::default(),
             commands: Commands::default(),
@@ -199,6 +203,18 @@ impl Hub {
             .into_iter()
             .cloned()
             .collect()
+    }
+
+    pub fn rules(&self) -> Vec<Rule> {
+        self.rules.lock().unwrap().all().to_vec()
+    }
+
+    pub fn record_rule_run(&self, name: &str, run: RuleRun) {
+        self.rule_runs.lock().unwrap().insert(name.to_string(), run);
+    }
+
+    pub fn rule_runs(&self) -> HashMap<String, RuleRun> {
+        self.rule_runs.lock().unwrap().clone()
     }
 
     pub fn value(&self, device_id: &str, entity: u8, channel: u8) -> Option<Value> {

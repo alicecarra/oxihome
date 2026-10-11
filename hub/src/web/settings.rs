@@ -163,7 +163,7 @@ struct Editor {
 async fn config_editor(editor: Editor) -> Result<impl View> {
     let invalid = editor.error.is_some();
     Ok(view! {
-        <form class="space-y-2" hx-post="/config/save" hx-target="this" hx-swap="outerHTML">
+        <form id=(editor.file.clone()) class="space-y-2" hx-post="/config/save" hx-target="this" hx-swap="outerHTML">
             <div class="flex items-center justify-between">
                 <code class="font-mono text-sm font-medium">(editor.file.clone())</code>
                 button(variant: ButtonVariant::Secondary, size: ButtonSize::Sm, "Save")

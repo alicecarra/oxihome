@@ -1,5 +1,6 @@
 use std::fmt;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::bail;
 use oxihome_protocol::{EventKind, Value};
@@ -62,6 +63,13 @@ impl fmt::Display for Action {
     }
 }
 
+/// How the last run of a rule went; `errors` is empty when every action worked.
+#[derive(Debug, Clone)]
+pub struct RuleRun {
+    pub at: Instant,
+    pub errors: Vec<String>,
+}
+
 #[derive(Default, Deserialize)]
 pub struct Rules {
     #[serde(default)]
@@ -71,6 +79,10 @@ pub struct Rules {
 impl Rules {
     pub fn len(&self) -> usize {
         self.rules.len()
+    }
+
+    pub fn all(&self) -> &[Rule] {
+        &self.rules
     }
 
     pub fn matching(&self, event: &EventRecord) -> Vec<&Rule> {
@@ -88,6 +100,8 @@ impl Rules {
 
 /// Runs the actions in order; a failed action does not stop the next ones.
 pub async fn run(hub: Arc<Hub>, rule: Rule) {
+    let at = Instant::now();
+    let mut errors = Vec::new();
     for action in &rule.then {
         match perform(&hub, action, &rule.name).await {
             Ok(outcome) => println!("rule \"{}\": {action} -> {outcome}", rule.name),
@@ -98,9 +112,11 @@ pub async fn run(hub: Arc<Hub>, rule: Rule) {
                     format!("{}: {action}: {error}", rule.name),
                     rule.name.clone(),
                 );
+                errors.push(format!("{action}: {error}"));
             }
         }
     }
+    hub.record_rule_run(&rule.name, RuleRun { at, errors });
 }
 
 /// Returns what happened, for the log.

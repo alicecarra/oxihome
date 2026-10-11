@@ -3,6 +3,7 @@ mod home;
 mod layout;
 mod nodes;
 mod overview;
+mod rules;
 mod settings;
 mod toasts;
 
@@ -27,6 +28,7 @@ pub fn router(hub: Arc<Hub>) -> Router {
     Router::builder()
         .page(home::home)
         .page(home::nodes_fragment)
+        .page(rules::rules)
         .page(settings::settings)
         .route(home::set)
         .route(settings::reload)
