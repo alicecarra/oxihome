@@ -11,6 +11,7 @@ use tokio::sync::oneshot;
 use crate::events::{EventRecord, Events};
 use crate::mqtt::Mqtt;
 use crate::names::{NameTarget, Names};
+use crate::notifications::{Notification, Notifications};
 use crate::registry::{NodeEvent, Registry};
 use crate::state::{ChannelUpdate, State};
 
@@ -23,6 +24,7 @@ pub struct Hub {
     state: Mutex<State>,
     events: Mutex<Events>,
     names: Mutex<Names>,
+    notifications: Mutex<Notifications>,
     /// Commands waiting for their `Ack` or `Error`, by message id.
     pending_commands: Mutex<HashMap<u32, PendingCommand>>,
 }
@@ -65,6 +67,7 @@ impl Hub {
             state: Mutex::default(),
             events: Mutex::default(),
             names: Mutex::new(names),
+            notifications: Mutex::default(),
             pending_commands: Mutex::default(),
         }
     }
@@ -207,5 +210,28 @@ impl Hub {
     pub fn rename(&self, target: NameTarget, name: &str) -> anyhow::Result<()> {
         self.names.lock().unwrap().set(target, name)?;
         Ok(())
+    }
+
+    pub fn value(&self, device_id: &str, entity: u8, channel: u8) -> Option<Value> {
+        self.state
+            .lock()
+            .unwrap()
+            .value(device_id, entity, channel)
+            .cloned()
+    }
+
+    pub fn notify(&self, title: String, message: String, source: String) {
+        self.notifications
+            .lock()
+            .unwrap()
+            .push(title, message, source);
+    }
+
+    pub fn last_notification_id(&self) -> u64 {
+        self.notifications.lock().unwrap().last_id()
+    }
+
+    pub fn notifications_since(&self, id: u64) -> Vec<Notification> {
+        self.notifications.lock().unwrap().since(id)
     }
 }

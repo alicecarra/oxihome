@@ -2,6 +2,7 @@ mod home;
 mod layout;
 mod parts;
 mod settings;
+mod toasts;
 
 use std::sync::Arc;
 
@@ -27,6 +28,7 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .page(settings::settings)
         .route(home::set)
         .route(settings::rename)
+        .route(toasts::toasts)
         .route(htmx_script)
         .route(stylesheet)
         .app_context(hub)

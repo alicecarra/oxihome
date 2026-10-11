@@ -5,7 +5,9 @@ mod events;
 mod hub;
 mod mqtt;
 mod names;
+mod notifications;
 mod registry;
+mod rules;
 mod state;
 mod web;
 
@@ -21,6 +23,7 @@ use hub::Hub;
 use mqtt::{Incoming, Mqtt};
 use names::Names;
 use registry::NodeEvent;
+use rules::Rules;
 
 const PRESENCE_CHECK_INTERVAL: Duration = Duration::from_secs(10);
 
@@ -28,7 +31,13 @@ const PRESENCE_CHECK_INTERVAL: Duration = Duration::from_secs(10);
 struct Config {
     mqtt: MqttConfig,
     database: DatabaseConfig,
+    rules: RulesConfig,
     http: HttpConfig,
+}
+
+#[derive(Deserialize)]
+struct RulesConfig {
+    path: String,
 }
 
 #[derive(Deserialize)]
@@ -58,6 +67,8 @@ async fn main() -> anyhow::Result<()> {
 
     let names = Names::open(&config.database.path)
         .with_context(|| format!("opening {}", config.database.path))?;
+    let rules = Rules::load(&config.rules.path)?;
+    println!("{} rules loaded from {}", rules.len(), config.rules.path);
     let (mqtt, mut incoming) = Mqtt::connect(&config.mqtt.host, config.mqtt.port);
     let hub = Arc::new(Hub::new(mqtt, names));
 
@@ -96,6 +107,9 @@ async fn main() -> anyhow::Result<()> {
                     }
                     if let Some(event) = event {
                         println!("{event}");
+                        for rule in rules.matching(&event) {
+                            tokio::spawn(rules::run(hub.clone(), rule.clone()));
+                        }
                     }
                 }
             },

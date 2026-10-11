@@ -1,11 +1,19 @@
+use std::sync::Arc;
+
 use topcoat::{
     Result,
+    context::{Cx, app_context},
     view::{Child, View, component, view},
 };
 
+use super::toasts::toast_poller;
+use crate::hub::Hub;
+
 /// The document around every page.
 #[component]
-pub async fn layout(title: &str, #[default] child: Child<'_>) -> Result<impl View> {
+pub async fn layout(cx: &Cx, title: &str, #[default] child: Child<'_>) -> Result<impl View> {
+    let hub: &Arc<Hub> = app_context(cx);
+    let since = hub.last_notification_id();
     Ok(view! {
         <!DOCTYPE html>
         <html>
@@ -25,6 +33,8 @@ pub async fn layout(title: &str, #[default] child: Child<'_>) -> Result<impl Vie
                 </header>
                 <div id="status" class="mb-4"></div>
                 (child)
+                <div id="toasts" class="fixed right-4 bottom-4 z-50 flex w-80 flex-col gap-2"></div>
+                toast_poller(since: since)
             </body>
         </html>
     })

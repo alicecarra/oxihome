@@ -1,0 +1,9 @@
+[[rules]]
+name = "Living room button toggles bedroom lamp"
+when = { device = "sim-living-room", entity = 2, channel = 0, event = "Press" }
+then = [{ toggle = { device = "sim-bedroom", entity = 1, channel = 0 } }]
+
+[[rules]]
+name = "Test board button held down"
+when = { device = "esp32-08d1f9ca41e4", entity = 2, channel = 0, event = "LongPress" }
+then = [{ notify = { title = "Test board", message = "BOOT button held down" } }]

@@ -97,6 +97,18 @@ cargo run -p oxihome-hub -- hub/hub.toml
 Only one hub can run per broker: both use the MQTT client id `oxihome-hub` and keep disconnecting
 each other.
 
+Rules are read at start from the file set in `[rules] path` (default `hub/rules.toml`). For now a
+rule reacts to an event of a channel and sets or toggles boolean channels, or shows a notification
+as a toast on the web interface (`notify = { title = "...", message = "..." }`). E.g. the
+simulator's living room button toggles the bedroom lamp:
+
+```toml
+[[rules]]
+name = "Living room button toggles bedroom lamp"
+when = { device = "sim-living-room", entity = 2, channel = 0, event = "Press" }
+then = [{ toggle = { device = "sim-bedroom", entity = 1, channel = 0 } }]
+```
+
 Friendly names for nodes, entities and channels are edited on `/settings` and stored in the SQLite
 file set in `[database] path` (default `hub/hub.sqlite`, ignored by git). It is created on first run.
 
