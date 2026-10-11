@@ -137,6 +137,19 @@ internet access. To update it, change the version and download again:
 curl -sSfL -o hub/static/htmx.min.js https://cdn.jsdelivr.net/npm/htmx.org@2.0.10/dist/htmx.min.js
 ```
 
+## Simulator
+
+Simulated nodes that talk to the broker like real boards, to work on the hub without hardware.
+Each node in `simulator/simulator.toml` gets its own MQTT connection and a list of entity profiles:
+`lamp` (switchable `Bool`), `button` (events) and `climate_sensor` (temperature and humidity).
+
+```sh
+cargo run -p oxihome-simulator -- simulator/simulator.toml
+```
+
+Type `help` for the commands: `press <node> <entity>`, `offline <node>`, `online <node>`,
+`reboot <node>`, `list`, `quit`.
+
 ## Client
 
 Talks to nodes over MQTT or the USB serial port. Type `help` for the commands, e.g. `set 1 0 true`

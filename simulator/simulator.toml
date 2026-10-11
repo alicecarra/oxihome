@@ -1,0 +1,11 @@
+[mqtt]
+host = "localhost"
+port = 1883
+
+[[nodes]]
+id = "sim-living-room"
+entities = ["lamp", "button", "climate_sensor"]
+
+[[nodes]]
+id = "sim-bedroom"
+entities = ["lamp"]

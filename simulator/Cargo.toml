@@ -1,0 +1,12 @@
+[package]
+name = "oxihome-simulator"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+oxihome-protocol = { path = "../protocol" }
+rumqttc = "0.25"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["io-std", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
+toml = "1"

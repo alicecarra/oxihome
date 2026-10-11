@@ -1163,6 +1163,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxihome-simulator"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "oxihome-protocol",
+ "rumqttc",
+ "serde",
+ "tokio",
+ "toml",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
