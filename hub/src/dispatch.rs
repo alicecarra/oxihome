@@ -5,10 +5,10 @@ use std::time::Instant;
 
 use oxihome_protocol::{Message, Payload, QueryKind, management};
 
+use crate::config::rules;
 use crate::hub::Hub;
-use crate::parameters;
-use crate::registry::NodeEvent;
-use crate::rules;
+use crate::node::parameters;
+use crate::node::registry::NodeEvent;
 
 /// (Re)connected to the broker: ask every node to introduce itself and report its state.
 pub async fn on_connected(hub: &Hub) -> anyhow::Result<()> {

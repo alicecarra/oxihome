@@ -5,8 +5,8 @@ use anyhow::bail;
 use oxihome_protocol::{EventKind, Value};
 use serde::Deserialize;
 
-use crate::events::EventRecord;
 use crate::hub::Hub;
+use crate::node::events::EventRecord;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Rule {

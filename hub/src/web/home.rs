@@ -10,8 +10,8 @@ use topcoat::{
 };
 
 use super::layout::layout;
+use super::nodes::node_list;
 use super::overview;
-use super::parts::node_list;
 use crate::hub::Hub;
 
 #[page("/")]

@@ -1,7 +1,8 @@
+mod format;
 mod home;
 mod layout;
+mod nodes;
 mod overview;
-mod parts;
 mod settings;
 mod toasts;
 

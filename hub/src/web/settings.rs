@@ -17,7 +17,7 @@ use crate::components::card::{card, card_content, card_description, card_header,
 use crate::components::textarea::textarea;
 use crate::config::FILES;
 use crate::hub::Hub;
-use crate::parameters;
+use crate::node::parameters;
 
 #[page("/settings")]
 pub async fn settings(cx: &Cx) -> Result<impl View> {

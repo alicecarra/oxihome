@@ -7,15 +7,15 @@ use oxihome_protocol::management::{self, Parameter};
 use oxihome_protocol::{Message, Payload, Value};
 
 use crate::commands::Commands;
+use crate::config::names::{NameTarget, Names};
+use crate::config::rules::{Rule, Rules};
 use crate::config::{ConfigFile, FILES, HomeConfig, read_file, write_file};
-use crate::events::{EventRecord, Events};
 use crate::mqtt::Mqtt;
-use crate::names::{NameTarget, Names};
+use crate::node::events::{EventRecord, Events};
+use crate::node::parameters::NodeParameters;
+use crate::node::registry::{NodeEvent, Registry};
+use crate::node::state::{ChannelUpdate, State};
 use crate::notifications::{self, Notification, Notifications};
-use crate::parameters::NodeParameters;
-use crate::registry::{NodeEvent, Registry};
-use crate::rules::{Rule, Rules};
-use crate::state::{ChannelUpdate, State};
 
 /// Read access for the web interface, see `Hub::snapshot`.
 pub struct Snapshot<'a> {

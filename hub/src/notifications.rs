@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::registry::NodeEvent;
+use crate::node::registry::NodeEvent;
 
 const CAPACITY: usize = 50;
 

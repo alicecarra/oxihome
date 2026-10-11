@@ -4,15 +4,10 @@ mod commands;
 mod components;
 mod config;
 mod dispatch;
-mod events;
 mod hub;
 mod mqtt;
-mod names;
+mod node;
 mod notifications;
-mod parameters;
-mod registry;
-mod rules;
-mod state;
 mod web;
 
 use std::path::PathBuf;
@@ -26,7 +21,7 @@ use tokio::net::TcpListener;
 use config::HomeConfig;
 use hub::Hub;
 use mqtt::{Incoming, Mqtt};
-use registry::DEFAULT_MISSED_HEARTBEATS;
+use node::registry::DEFAULT_MISSED_HEARTBEATS;
 
 const PRESENCE_CHECK_INTERVAL: Duration = Duration::from_secs(10);
 

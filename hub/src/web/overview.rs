@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 use oxihome_protocol::management::{self, PARAMETERS, Parameter};
 use oxihome_protocol::{Access, EventKind, Quantity, Unit, Value, ValueType};
 
+use crate::config::names::NameTarget;
 use crate::hub::{Hub, Snapshot};
-use crate::names::NameTarget;
 
 pub struct NodeOverview {
     pub device_id: String,

@@ -1,12 +1,15 @@
+pub mod names;
+pub mod rules;
+
 use std::path::Path;
 use std::time::SystemTime;
 
 use anyhow::Context;
 use serde::de::DeserializeOwned;
 
-use crate::names::Names;
-use crate::parameters::NodeParameters;
-use crate::rules::Rules;
+use crate::node::parameters::NodeParameters;
+use names::Names;
+use rules::Rules;
 
 /// The home's configuration: the files in the config directory.
 pub struct HomeConfig {
