@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
 use esp_idf_svc::hal::gpio::{Output, PinDriver};
+use oxihome_protocol::management::{self, PARAMETERS};
 use oxihome_protocol::{
     Access, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, ErrorCode, EventKind,
     Message, Payload, QueryKind, Value, ValueType,
 };
 
+use crate::settings::Settings;
 use crate::transport::{Transport, TransportEvent};
 
 pub const LED_ENTITY: u8 = 1;
@@ -22,17 +24,24 @@ pub struct Node<T: Transport> {
     device_id: String,
     transport: T,
     led: PinDriver<'static, Output>,
+    settings: Settings,
     next_message_id: u32,
     /// Last command per sender, to answer duplicates without running them again.
     last_commands: HashMap<String, HandledCommand>,
 }
 
 impl<T: Transport> Node<T> {
-    pub fn new(device_id: String, transport: T, led: PinDriver<'static, Output>) -> Self {
+    pub fn new(
+        device_id: String,
+        transport: T,
+        led: PinDriver<'static, Output>,
+        settings: Settings,
+    ) -> Self {
         Self {
             device_id,
             transport,
             led,
+            settings,
             next_message_id: 0,
             last_commands: HashMap::new(),
         }
@@ -78,8 +87,13 @@ impl<T: Transport> Node<T> {
         )
     }
 
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
     fn announce(&mut self) -> anyhow::Result<()> {
         self.send_hello(None)?;
+        self.send_management_state(None)?;
         self.send_led_state(None)
     }
 
@@ -119,9 +133,21 @@ impl<T: Transport> Node<T> {
                 what: QueryKind::Hello,
             } => self.send_hello(reply_to),
             Payload::Query {
+                what: QueryKind::State { entity: None },
+            } => {
+                self.send_management_state(reply_to)?;
+                self.send_led_state(reply_to)
+            }
+            Payload::Query {
                 what:
                     QueryKind::State {
-                        entity: None | Some(LED_ENTITY),
+                        entity: Some(management::ENTITY),
+                    },
+            } => self.send_management_state(reply_to),
+            Payload::Query {
+                what:
+                    QueryKind::State {
+                        entity: Some(LED_ENTITY),
                     },
             } => self.send_led_state(reply_to),
             Payload::Query {
@@ -163,6 +189,7 @@ impl<T: Transport> Node<T> {
         };
 
         let rejection = match (entity, channel, op) {
+            (management::ENTITY, channel, op) => self.configure(channel, op),
             (LED_ENTITY, MAIN_CHANNEL, CommandOp::Set(Value::Bool(on))) => {
                 let result = if on {
                     self.led.set_high()
@@ -202,11 +229,51 @@ impl<T: Transport> Node<T> {
                 ack,
             },
         );
-        self.send_led_state(None)
+        if entity == management::ENTITY {
+            self.send_management_state(None)
+        } else {
+            self.send_led_state(None)
+        }
+    }
+
+    fn configure(&mut self, channel: u8, op: CommandOp) -> Option<(ErrorCode, String)> {
+        let Some(parameter) = management::parameter(channel) else {
+            return Some((
+                ErrorCode::UnknownChannel,
+                format!("entity {} has no channel {channel}", management::ENTITY),
+            ));
+        };
+        match op {
+            CommandOp::Set(Value::Int(value)) if parameter.accepts(value) => {
+                match self.settings.set(parameter, value) {
+                    Ok(()) => {
+                        log::info!("{:?} = {value}", parameter.channel);
+                        None
+                    }
+                    Err(error) => Some((ErrorCode::Internal, format!("NVS: {error}"))),
+                }
+            }
+            CommandOp::Set(Value::Int(value)) => Some((
+                ErrorCode::InvalidValue,
+                format!("{value} outside {}..={}", parameter.min, parameter.max),
+            )),
+            CommandOp::Set(value) => Some((
+                ErrorCode::InvalidValue,
+                format!("expected Int, got {value:?}"),
+            )),
+            op => Some((
+                ErrorCode::InvalidOperation,
+                format!(
+                    "{op:?} not allowed on entity {} channel {channel}",
+                    management::ENTITY
+                ),
+            )),
+        }
     }
 
     fn send_hello(&mut self, reply_to: Option<u32>) -> anyhow::Result<()> {
         let entities = vec![
+            management::descriptor(),
             EntityDescriptor {
                 id: LED_ENTITY,
                 channels: vec![Channel {
@@ -233,6 +300,24 @@ impl<T: Transport> Node<T> {
             Payload::Hello {
                 fw_version: env!("CARGO_PKG_VERSION").into(),
                 entities,
+            },
+            reply_to,
+        )
+    }
+
+    fn send_management_state(&mut self, reply_to: Option<u32>) -> anyhow::Result<()> {
+        let values = PARAMETERS
+            .into_iter()
+            .map(|parameter| ChannelValue {
+                channel: parameter.channel.into(),
+                value: Value::Int(self.settings.get(parameter)),
+                confidence: Confidence::Confirmed,
+            })
+            .collect();
+        self.send(
+            Payload::State {
+                entity: management::ENTITY,
+                values,
             },
             reply_to,
         )
