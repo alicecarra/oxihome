@@ -10,6 +10,7 @@ use topcoat::{
 };
 
 use super::layout::layout;
+use super::overview;
 use super::parts::node_list;
 use crate::hub::Hub;
 
@@ -21,7 +22,7 @@ pub async fn home(cx: &Cx) -> Result<impl View> {
         layout(
             title: "Oxihome",
             <div id="nodes" hx-get="/nodes" hx-trigger="every 2s, refresh">
-                node_list(nodes: hub.overview())
+                node_list(nodes: overview::nodes(hub))
             </div>
         )
     })
@@ -30,7 +31,7 @@ pub async fn home(cx: &Cx) -> Result<impl View> {
 #[page("/nodes")]
 pub async fn nodes_fragment(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
-    Ok(view! { node_list(nodes: hub.overview()) })
+    Ok(view! { node_list(nodes: overview::nodes(hub)) })
 }
 
 #[derive(Deserialize)]

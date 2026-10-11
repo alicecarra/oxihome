@@ -11,18 +11,19 @@ use topcoat::{
 use super::layout::layout;
 use serde::Deserialize;
 
+use super::overview::{self, NodeParametersOverview, ParameterOverview};
 use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::card::{card, card_content, card_description, card_header, card_title};
 use crate::components::textarea::textarea;
 use crate::config::FILES;
-use crate::hub::{Hub, NodeParametersOverview, ParameterOverview};
+use crate::hub::Hub;
 use crate::parameters;
 
 #[page("/settings")]
 pub async fn settings(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
     let directory = hub.config_directory().display().to_string();
-    let nodes = hub.parameters_overview();
+    let nodes = overview::parameters(hub);
     let editors: Vec<Editor> = FILES
         .iter()
         .map(|file| match hub.config_file(file) {

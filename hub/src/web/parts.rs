@@ -6,10 +6,10 @@ use topcoat::{
     view::{Child, View, attributes, component, view},
 };
 
+use super::overview::{ChannelOverview, NodeOverview};
 use crate::components::badge::{BadgeVariant, badge};
 use crate::components::card::{card, card_content, card_description, card_header, card_title};
 use crate::components::switch::switch;
-use crate::hub::{ChannelOverview, NodeOverview};
 
 #[component]
 pub async fn node_list(nodes: Vec<NodeOverview>) -> Result<impl View> {
