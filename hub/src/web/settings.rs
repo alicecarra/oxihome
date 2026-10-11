@@ -9,6 +9,7 @@ use topcoat::{
 };
 
 use super::layout::layout;
+use super::parts::default_channel_name;
 use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::card::{card, card_content, card_description, card_header, card_title};
 use crate::components::input::input;
@@ -68,6 +69,8 @@ struct NameRow {
     channel: Option<u8>,
     label: String,
     name: Option<String>,
+    /// What is shown when the name is empty.
+    placeholder: String,
 }
 
 /// One form for the node, one per entity and one per channel.
@@ -78,6 +81,7 @@ fn node_names(node: NodeOverview) -> NodeNames {
         channel: None,
         label: "Node".into(),
         name: node.name.clone(),
+        placeholder: node.device_id.clone(),
     }];
     let mut previous_entity = None;
     for channel in node.channels {
@@ -89,6 +93,7 @@ fn node_names(node: NodeOverview) -> NodeNames {
                 channel: None,
                 label: format!("Entity {}", channel.entity),
                 name: channel.entity_name,
+                placeholder: format!("entity {}", channel.entity),
             });
         }
         rows.push(NameRow {
@@ -97,6 +102,7 @@ fn node_names(node: NodeOverview) -> NodeNames {
             channel: Some(channel.channel),
             label: format!("Channel {}", channel.channel),
             name: channel.channel_name,
+            placeholder: default_channel_name(channel.channel, channel.quantity),
         });
     }
     NodeNames {
@@ -135,6 +141,7 @@ async fn name_form(row: NameRow) -> Result<impl View> {
                 type="text"
                 name="name"
                 value=(row.name.unwrap_or_default())
+                placeholder=(row.placeholder)
             })
             <input type="hidden" name="device_id" value=(row.device_id)>
             if let Some(entity) = row.entity {

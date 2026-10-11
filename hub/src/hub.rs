@@ -3,7 +3,9 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::bail;
-use oxihome_protocol::{Access, CommandOp, EventKind, Message, Payload, Value, ValueType};
+use oxihome_protocol::{
+    Access, CommandOp, EventKind, Message, Payload, Quantity, Unit, Value, ValueType,
+};
 use tokio::sync::oneshot;
 
 use crate::events::{EventRecord, Events};
@@ -51,6 +53,8 @@ pub struct ChannelOverview {
     pub value: Option<Value>,
     pub last_event: Option<(EventKind, Duration)>,
     pub switchable: bool,
+    pub quantity: Option<Quantity>,
+    pub unit: Option<Unit>,
 }
 
 impl Hub {
@@ -191,6 +195,8 @@ impl Hub {
                                 .map(|(kind, at)| (kind, now - at)),
                             switchable: channel.value == Some(ValueType::Bool)
                                 && matches!(channel.access, Access::Write | Access::ReadWrite),
+                            quantity: channel.quantity,
+                            unit: channel.unit,
                         })
                     })
                     .collect(),
