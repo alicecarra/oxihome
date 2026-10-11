@@ -1,5 +1,7 @@
 //! Node management entity.
 
+use crate::{Access, Channel, EntityDescriptor, Unit, ValueType};
+
 pub const ENTITY: u8 = 0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,6 +16,10 @@ pub enum ManagementChannel {
     /// `Int` (s): periodic `State` interval.
     ReportInterval = 3,
     // 4: reserved for local bindings.
+    /// `Int` (s): `Heartbeat` interval.
+    HeartbeatInterval = 5,
+    /// `Int` (s): Wi-Fi connection check interval.
+    WifiCheckInterval = 6,
 }
 
 impl From<ManagementChannel> for u8 {
@@ -32,8 +38,69 @@ impl TryFrom<u8> for ManagementChannel {
             1 => Ok(Self::Ota),
             2 => Ok(Self::Reboot),
             3 => Ok(Self::ReportInterval),
+            5 => Ok(Self::HeartbeatInterval),
+            6 => Ok(Self::WifiCheckInterval),
             unknown => Err(unknown),
         }
+    }
+}
+
+/// Operation parameter: an `Int` channel in seconds that the node stores.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Parameter {
+    pub channel: ManagementChannel,
+    pub default: i32,
+    pub min: i32,
+    pub max: i32,
+}
+
+pub const HEARTBEAT_INTERVAL: Parameter = Parameter {
+    channel: ManagementChannel::HeartbeatInterval,
+    default: 30,
+    min: 5,
+    max: 300,
+};
+
+pub const WIFI_CHECK_INTERVAL: Parameter = Parameter {
+    channel: ManagementChannel::WifiCheckInterval,
+    default: 5,
+    min: 1,
+    max: 60,
+};
+
+pub const PARAMETERS: [Parameter; 2] = [HEARTBEAT_INTERVAL, WIFI_CHECK_INTERVAL];
+
+impl Parameter {
+    pub fn accepts(&self, value: i32) -> bool {
+        (self.min..=self.max).contains(&value)
+    }
+
+    pub fn descriptor(&self) -> Channel {
+        Channel {
+            id: self.channel.into(),
+            access: Access::ReadWrite,
+            value: Some(ValueType::Int {
+                min: self.min,
+                max: self.max,
+                step: 1,
+            }),
+            quantity: None,
+            unit: Some(Unit::Second),
+        }
+    }
+}
+
+pub fn parameter(channel: u8) -> Option<Parameter> {
+    PARAMETERS
+        .into_iter()
+        .find(|parameter| u8::from(parameter.channel) == channel)
+}
+
+/// The management entity as announced in `Hello`.
+pub fn descriptor() -> EntityDescriptor {
+    EntityDescriptor {
+        id: ENTITY,
+        channels: PARAMETERS.iter().map(Parameter::descriptor).collect(),
     }
 }
 
@@ -48,9 +115,21 @@ mod tests {
             ManagementChannel::Ota,
             ManagementChannel::Reboot,
             ManagementChannel::ReportInterval,
+            ManagementChannel::HeartbeatInterval,
+            ManagementChannel::WifiCheckInterval,
         ] {
             assert_eq!(ManagementChannel::try_from(u8::from(channel)), Ok(channel));
         }
         assert_eq!(ManagementChannel::try_from(4), Err(4));
+        assert_eq!(ManagementChannel::try_from(7), Err(7));
+    }
+
+    #[test]
+    fn parameter_defaults_are_accepted() {
+        for parameter in PARAMETERS {
+            assert!(parameter.accepts(parameter.default));
+            assert!(!parameter.accepts(parameter.min - 1));
+            assert!(!parameter.accepts(parameter.max + 1));
+        }
     }
 }
