@@ -2,6 +2,7 @@
 #[allow(dead_code)]
 mod components;
 mod config;
+mod dispatch;
 mod events;
 mod hub;
 mod mqtt;
@@ -15,18 +16,16 @@ mod web;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{Context, ensure};
-use oxihome_protocol::management;
-use oxihome_protocol::{Payload, QueryKind};
 use serde::Deserialize;
 use tokio::net::TcpListener;
 
 use config::HomeConfig;
 use hub::Hub;
 use mqtt::{Incoming, Mqtt};
-use registry::{DEFAULT_MISSED_HEARTBEATS, NodeEvent};
+use registry::DEFAULT_MISSED_HEARTBEATS;
 
 const PRESENCE_CHECK_INTERVAL: Duration = Duration::from_secs(10);
 
@@ -110,51 +109,11 @@ async fn main() -> anyhow::Result<()> {
             Some(event) = incoming.recv() => match event {
                 Incoming::Connected => {
                     println!("connected to {}:{}", config.mqtt.host, config.mqtt.port);
-                    hub.mqtt().broadcast(Payload::Query { what: QueryKind::Hello }).await?;
-                    hub.mqtt().broadcast(Payload::Query { what: QueryKind::State { entity: None } }).await?;
+                    dispatch::on_connected(&hub).await?;
                 }
-                Incoming::Message(message) => {
-                    let (node_events, updates, event) = hub.handle(&message, Instant::now());
-                    let reports_parameters = matches!(
-                        message.payload,
-                        Payload::State { entity: management::ENTITY, .. }
-                    );
-                    let came_back = node_events
-                        .iter()
-                        .any(|node_event| matches!(node_event, NodeEvent::Online(_)));
-                    if reports_parameters || came_back {
-                        tokio::spawn(parameters::apply(hub.clone(), message.src.clone()));
-                    }
-                    for node_event in node_events {
-                        println!("{node_event}");
-                        hub.notify_node_event(&node_event);
-                        if let NodeEvent::Unknown(device_id) = node_event {
-                            let mqtt = hub.mqtt();
-                            mqtt.publish(
-                                mqtt.next_message_id(),
-                                Some(&device_id),
-                                Payload::Query { what: QueryKind::Hello },
-                            )
-                            .await?;
-                        }
-                    }
-                    for update in updates {
-                        println!("{update}");
-                    }
-                    if let Some(event) = event {
-                        println!("{event}");
-                        for rule in hub.matching_rules(&event) {
-                            tokio::spawn(rules::run(hub.clone(), rule));
-                        }
-                    }
-                }
+                Incoming::Message(message) => dispatch::on_message(&hub, &message).await?,
             },
-            _ = presence_check.tick() => {
-                for node_event in hub.check_presence(Instant::now()) {
-                    println!("{node_event}");
-                    hub.notify_node_event(&node_event);
-                }
-            }
+            _ = presence_check.tick() => dispatch::on_presence_check(&hub),
             result = &mut web_server => {
                 return Ok(result??);
             }
