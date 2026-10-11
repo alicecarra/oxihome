@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use oxihome_protocol::{Message, Payload};
+use oxihome_protocol::Message;
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -153,96 +153,95 @@ async fn run_node(
     mqtt: MqttConfig,
     mut controls: mpsc::Receiver<Control>,
 ) {
-    let up_topic = format!("oxihome/{}/up", node.device_id);
-    let down_topic = format!("oxihome/{}/down", node.device_id);
+    let device_id = node.device_id().to_string();
+    let up_topic = format!("oxihome/{device_id}/up");
+    let down_topic = format!("oxihome/{device_id}/down");
     let mut online = true;
 
     loop {
         if !online {
             match controls.recv().await {
                 Some(Control::Online) => online = true,
-                Some(_) => println!("{} is offline", node.device_id),
+                Some(_) => println!("{} is offline", device_id),
                 None => return,
             }
             continue;
         }
 
-        let options = MqttOptions::new(node.device_id.clone(), mqtt.host.clone(), mqtt.port);
+        let options = MqttOptions::new(device_id.clone(), mqtt.host.clone(), mqtt.port);
         let (client, mut event_loop) = AsyncClient::new(options, 32);
         let mut report = tokio::time::interval(REPORT_INTERVAL);
         report.tick().await;
 
         loop {
-            let outgoing: Vec<(Payload, Option<u32>)> = tokio::select! {
+            let outgoing: Vec<Message> = tokio::select! {
                 event = event_loop.poll() => match event {
                     Ok(Event::Incoming(Packet::ConnAck(_))) => {
-                        println!("{} connected", node.device_id);
+                        println!("{} connected", device_id);
                         for topic in [down_topic.as_str(), "oxihome/broadcast/down"] {
                             if let Err(error) = client.subscribe(topic, QoS::AtLeastOnce).await {
-                                println!("{} subscribe failed: {error}", node.device_id);
+                                println!("{} subscribe failed: {error}", device_id);
                             }
                         }
-                        announcement(&node)
+                        node.announcement()
                     }
                     Ok(Event::Incoming(Packet::Publish(publish))) => {
                         match Message::from_json(&String::from_utf8_lossy(&publish.payload)) {
-                            Ok(message) => node.handle(&message, Instant::now()),
+                            Ok(message) => node.handle(&message),
                             Err(error) => {
-                                println!("{} invalid message: {error}", node.device_id);
+                                println!("{} invalid message: {error}", device_id);
                                 Vec::new()
                             }
                         }
                     }
                     Ok(_) => Vec::new(),
                     Err(error) => {
-                        println!("{} connection error: {error}", node.device_id);
+                        println!("{} connection error: {error}", device_id);
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         Vec::new()
                     }
                 },
                 _ = report.tick() => {
-                    let now = Instant::now();
-                    let mut payloads = vec![node.heartbeat(now)];
-                    payloads.extend(node.sensor_states(now));
-                    payloads.into_iter().map(|payload| (payload, None)).collect()
+                    let mut messages = vec![node.heartbeat(Instant::now())];
+                    messages.extend(node.sensor_states());
+                    messages
                 }
                 control = controls.recv() => match control {
                     Some(Control::Press(entity)) => match node.press(entity) {
-                        Some(event) => vec![(event, None)],
+                        Some(event) => vec![event],
                         None => {
-                            println!("{} entity {entity} is not a button", node.device_id);
+                            println!("{} entity {entity} is not a button", device_id);
                             Vec::new()
                         }
                     },
                     Some(Control::Reboot) => {
-                        println!("{} rebooting", node.device_id);
+                        println!("{} rebooting", device_id);
                         node.reboot(Instant::now());
-                        announcement(&node)
+                        node.announcement()
                     }
                     Some(Control::Offline) => {
-                        println!("{} going offline", node.device_id);
+                        println!("{} going offline", device_id);
                         let _ = client.disconnect().await;
                         online = false;
                         break;
                     }
                     Some(Control::Climate { temperature, humidity }) => {
-                        let states = node.set_climate(temperature, humidity, Instant::now());
+                        let states = node.set_climate(temperature, humidity);
                         if states.is_empty() {
-                            println!("{} has no climate sensor", node.device_id);
+                            println!("{} has no climate sensor", device_id);
                         }
-                        states.into_iter().map(|payload| (payload, None)).collect()
+                        states
                     }
                     Some(Control::Online) => Vec::new(),
                     None => return,
                 },
             };
 
-            for (payload, reply_to) in outgoing {
-                let message = node.message(payload, reply_to);
+            for message in outgoing {
                 let json = match message.to_json() {
                     Ok(json) => json,
                     Err(error) => {
-                        println!("{} encoding failed: {error}", node.device_id);
+                        println!("{} encoding failed: {error}", device_id);
                         continue;
                     }
                 };
@@ -250,19 +249,9 @@ async fn run_node(
                     .publish(up_topic.as_str(), QoS::AtLeastOnce, false, json)
                     .await
                 {
-                    println!("{} publish failed: {error}", node.device_id);
+                    println!("{} publish failed: {error}", device_id);
                 }
             }
         }
     }
-}
-
-/// What a node sends after connecting or rebooting.
-fn announcement(node: &SimulatedNode) -> Vec<(Payload, Option<u32>)> {
-    let mut payloads = vec![node.hello()];
-    payloads.extend(node.states(Instant::now()));
-    payloads
-        .into_iter()
-        .map(|payload| (payload, None))
-        .collect()
 }

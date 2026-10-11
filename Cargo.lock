@@ -1215,6 +1215,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxihome-node"
+version = "0.1.0"
+dependencies = [
+ "oxihome-protocol",
+]
+
+[[package]]
 name = "oxihome-protocol"
 version = "0.4.1"
 dependencies = [
@@ -1227,6 +1234,7 @@ name = "oxihome-simulator"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "oxihome-node",
  "oxihome-protocol",
  "rumqttc",
  "serde",

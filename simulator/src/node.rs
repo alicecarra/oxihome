@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use oxihome_node::{Device, NodeCore, Rejection};
 use oxihome_protocol::{
-    Access, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, ErrorCode, EventKind,
-    Message, Payload, Quantity, QueryKind, Unit, Value, ValueType,
+    Access, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, EventKind, Message,
+    Quantity, Unit, Value, ValueType,
 };
 use serde::Deserialize;
 
@@ -18,9 +19,14 @@ pub enum Profile {
     ClimateSensor,
 }
 
-/// A node's behaviour, without the network: messages in, payloads out.
+/// A node's behaviour, without the network: messages in, messages out.
 pub struct SimulatedNode {
-    pub device_id: String,
+    core: NodeCore,
+    device: SimulatedDevice,
+}
+
+/// What the simulated hardware holds; the protocol side is `oxihome-node`'s.
+struct SimulatedDevice {
     /// Entity ids start at 1, in configuration order.
     entities: Vec<(u8, Profile)>,
     lamps: HashMap<u8, bool>,
@@ -28,7 +34,6 @@ pub struct SimulatedNode {
     fixed_temperature: Option<f32>,
     fixed_humidity: Option<f32>,
     booted_at: Instant,
-    next_message_id: u32,
 }
 
 impl SimulatedNode {
@@ -44,178 +49,78 @@ impl SimulatedNode {
             .map(|(id, _)| (*id, false))
             .collect();
         Self {
-            device_id,
-            entities,
-            lamps,
-            fixed_temperature: None,
-            fixed_humidity: None,
-            booted_at: now,
-            next_message_id: 0,
+            core: NodeCore::new(
+                device_id,
+                format!("simulator {}", env!("CARGO_PKG_VERSION")),
+            ),
+            device: SimulatedDevice {
+                entities,
+                lamps,
+                fixed_temperature: None,
+                fixed_humidity: None,
+                booted_at: now,
+            },
         }
+    }
+
+    pub fn device_id(&self) -> &str {
+        self.core.device_id()
     }
 
     /// Like a power cycle: lamps off, uptime and message ids from zero.
     pub fn reboot(&mut self, now: Instant) {
-        self.booted_at = now;
-        self.next_message_id = 0;
-        for on in self.lamps.values_mut() {
+        self.core.reset();
+        self.device.booted_at = now;
+        for on in self.device.lamps.values_mut() {
             *on = false;
         }
     }
 
-    pub fn hello(&self) -> Payload {
-        Payload::Hello {
-            fw_version: format!("simulator {}", env!("CARGO_PKG_VERSION")),
-            entities: self
-                .entities
-                .iter()
-                .map(|(id, profile)| EntityDescriptor {
-                    id: *id,
-                    channels: channels(*profile),
-                })
-                .collect(),
-        }
+    /// The answers to a message from the hub.
+    pub fn handle(&mut self, message: &Message) -> Vec<Message> {
+        self.core.handle(&mut self.device, message)
     }
 
-    pub fn heartbeat(&self, now: Instant) -> Payload {
-        Payload::Heartbeat {
-            uptime_s: (now - self.booted_at).as_secs() as u32,
-            rssi: Some(-55),
-            battery: None,
-        }
+    /// What the node sends after connecting or rebooting.
+    pub fn announcement(&mut self) -> Vec<Message> {
+        self.core.announcement(&self.device)
     }
 
-    /// One `State` per entity that has values.
-    pub fn states(&self, now: Instant) -> Vec<Payload> {
-        self.entities
-            .iter()
-            .filter_map(|(id, _)| self.state(*id, now))
-            .collect()
+    pub fn heartbeat(&mut self, now: Instant) -> Message {
+        let uptime_s = (now - self.device.booted_at).as_secs() as u32;
+        self.core.heartbeat(uptime_s, Some(-55), None)
     }
 
-    pub fn sensor_states(&self, now: Instant) -> Vec<Payload> {
-        self.entities
+    pub fn sensor_states(&mut self) -> Vec<Message> {
+        let sensors: Vec<u8> = self
+            .device
+            .entities
             .iter()
             .filter(|(_, profile)| *profile == Profile::ClimateSensor)
-            .filter_map(|(id, _)| self.state(*id, now))
+            .map(|(id, _)| *id)
+            .collect();
+        sensors
+            .into_iter()
+            .filter_map(|entity| self.core.state(&self.device, entity))
             .collect()
     }
 
     /// Fixes the climate readings (`None` goes back to the wave) and returns the new states,
     /// empty when the node has no climate sensor.
-    pub fn set_climate(
-        &mut self,
-        temperature: Option<f32>,
-        humidity: Option<f32>,
-        now: Instant,
-    ) -> Vec<Payload> {
-        self.fixed_temperature = temperature;
-        self.fixed_humidity = humidity;
-        self.sensor_states(now)
+    pub fn set_climate(&mut self, temperature: Option<f32>, humidity: Option<f32>) -> Vec<Message> {
+        self.device.fixed_temperature = temperature;
+        self.device.fixed_humidity = humidity;
+        self.sensor_states()
     }
 
     /// `None` when the entity is not a button.
-    pub fn press(&self, entity: u8) -> Option<Payload> {
-        (self.profile(entity) == Some(Profile::Button)).then_some(Payload::Event {
-            entity,
-            channel: 0,
-            event: EventKind::Press,
-            data: None,
-        })
+    pub fn press(&mut self, entity: u8) -> Option<Message> {
+        (self.device.profile(entity) == Some(Profile::Button))
+            .then(|| self.core.event(entity, 0, EventKind::Press, None))
     }
+}
 
-    /// Answers to a message from the hub, each with its `reply_to`.
-    pub fn handle(&mut self, message: &Message, now: Instant) -> Vec<(Payload, Option<u32>)> {
-        if message
-            .dst
-            .as_ref()
-            .is_some_and(|dst| *dst != self.device_id)
-        {
-            return Vec::new();
-        }
-        let reply_to = Some(message.msg_id);
-        let reply = |payloads: Vec<Payload>| {
-            payloads
-                .into_iter()
-                .map(|payload| (payload, reply_to))
-                .collect()
-        };
-
-        match &message.payload {
-            Payload::Command {
-                entity,
-                channel,
-                op,
-            } => reply(self.command(*entity, *channel, op, now)),
-            Payload::Query {
-                what: QueryKind::Hello,
-            } => reply(vec![self.hello()]),
-            Payload::Query {
-                what: QueryKind::State { entity: None },
-            } => reply(self.states(now)),
-            Payload::Query {
-                what: QueryKind::State {
-                    entity: Some(entity),
-                },
-            } => reply(vec![
-                match (self.profile(*entity), self.state(*entity, now)) {
-                    (None, _) => {
-                        error(ErrorCode::UnknownEntity, format!("unknown entity {entity}"))
-                    }
-                    (Some(_), None) => error(
-                        ErrorCode::InvalidOperation,
-                        format!("entity {entity} has no state"),
-                    ),
-                    (Some(_), Some(state)) => state,
-                },
-            ]),
-            other => reply(vec![error(
-                ErrorCode::Unsupported,
-                format!("unsupported message: {other:?}"),
-            )]),
-        }
-    }
-
-    pub fn message(&mut self, payload: Payload, reply_to: Option<u32>) -> Message {
-        let mut message = Message::new(self.device_id.clone(), self.next_message_id, payload);
-        if let Some(request) = reply_to {
-            message = message.replying_to(request);
-        }
-        self.next_message_id = self.next_message_id.wrapping_add(1);
-        message
-    }
-
-    fn command(&mut self, entity: u8, channel: u8, op: &CommandOp, now: Instant) -> Vec<Payload> {
-        let Some(profile) = self.profile(entity) else {
-            return vec![error(
-                ErrorCode::UnknownEntity,
-                format!("unknown entity {entity}"),
-            )];
-        };
-        if channel >= channels(profile).len() as u8 {
-            return vec![error(
-                ErrorCode::UnknownChannel,
-                format!("entity {entity} has no channel {channel}"),
-            )];
-        }
-        match (profile, op) {
-            (Profile::Lamp, CommandOp::Set(Value::Bool(on))) => {
-                self.lamps.insert(entity, *on);
-                let mut answers = vec![Payload::Ack { ok: true }];
-                answers.extend(self.state(entity, now));
-                answers
-            }
-            (Profile::Lamp, CommandOp::Set(value)) => vec![error(
-                ErrorCode::InvalidValue,
-                format!("expected Bool, got {value:?}"),
-            )],
-            _ => vec![error(
-                ErrorCode::InvalidOperation,
-                format!("{op:?} not allowed on entity {entity} channel {channel}"),
-            )],
-        }
-    }
-
+impl SimulatedDevice {
     fn profile(&self, entity: u8) -> Option<Profile> {
         self.entities
             .iter()
@@ -223,8 +128,8 @@ impl SimulatedNode {
             .map(|(_, profile)| *profile)
     }
 
-    fn state(&self, entity: u8, now: Instant) -> Option<Payload> {
-        let values = match self.profile(entity)? {
+    fn values_at(&self, entity: u8, now: Instant) -> Option<Vec<ChannelValue>> {
+        Some(match self.profile(entity)? {
             Profile::Lamp => vec![confirmed(0, Value::Bool(self.lamps[&entity]))],
             Profile::Button => return None,
             Profile::ClimateSensor => {
@@ -240,8 +145,31 @@ impl SimulatedNode {
                     confirmed(1, Value::Float(humidity)),
                 ]
             }
-        };
-        Some(Payload::State { entity, values })
+        })
+    }
+}
+
+impl Device for SimulatedDevice {
+    fn entities(&self) -> Vec<EntityDescriptor> {
+        self.entities
+            .iter()
+            .map(|(id, profile)| EntityDescriptor {
+                id: *id,
+                channels: channels(*profile),
+            })
+            .collect()
+    }
+
+    fn state(&self, entity: u8) -> Option<Vec<ChannelValue>> {
+        self.values_at(entity, Instant::now())
+    }
+
+    /// Only lamps take commands, and `oxihome-node` already checked the value is a `Bool`.
+    fn command(&mut self, entity: u8, _channel: u8, op: &CommandOp) -> Result<(), Rejection> {
+        if let CommandOp::Set(Value::Bool(on)) = op {
+            self.lamps.insert(entity, *on);
+        }
+        Ok(())
     }
 }
 
@@ -296,13 +224,6 @@ fn confirmed(channel: u8, value: Value) -> ChannelValue {
     }
 }
 
-fn error(code: ErrorCode, detail: String) -> Payload {
-    Payload::Error {
-        code: code.into(),
-        detail: Some(detail),
-    }
-}
-
 /// A smooth value around `center`, rounded to 0.1.
 fn wave(seconds: f32, center: f32, amplitude: f32, period_seconds: f32) -> f32 {
     let value = center + amplitude * (seconds / period_seconds * std::f32::consts::TAU).sin();
@@ -312,6 +233,8 @@ fn wave(seconds: f32, center: f32, amplitude: f32, period_seconds: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
+
+    use oxihome_protocol::{ErrorCode, Payload, QueryKind};
 
     use super::*;
 
@@ -337,22 +260,28 @@ mod tests {
         })
     }
 
-    fn error_code(answers: &[(Payload, Option<u32>)]) -> Option<u16> {
+    fn error_code(answers: &[Message]) -> Option<u16> {
         match answers {
-            [(Payload::Error { code, .. }, Some(7))] => Some(*code),
+            [
+                Message {
+                    reply_to: Some(7),
+                    payload: Payload::Error { code, .. },
+                    ..
+                },
+            ] => Some(*code),
             _ => None,
         }
     }
 
     #[test]
     fn lamp_set_answers_ack_and_state() {
-        let now = Instant::now();
-        let mut node = node(now);
-        let answers = node.handle(&set(1, Value::Bool(true)), now);
+        let mut node = node(Instant::now());
+        let answers = node.handle(&set(1, Value::Bool(true)));
 
-        assert_eq!(answers[0], (Payload::Ack { ok: true }, Some(7)));
+        assert_eq!(answers[0].payload, Payload::Ack { ok: true });
+        assert_eq!(answers[0].reply_to, Some(7));
         assert_eq!(
-            answers[1].0,
+            answers[1].payload,
             Payload::State {
                 entity: 1,
                 values: vec![confirmed(0, Value::Bool(true))],
@@ -362,15 +291,13 @@ mod tests {
 
     #[test]
     fn wrong_value_type_is_invalid_value() {
-        let now = Instant::now();
-        let answers = node(now).handle(&set(1, Value::Int(3)), now);
+        let answers = node(Instant::now()).handle(&set(1, Value::Int(3)));
         assert_eq!(error_code(&answers), Some(ErrorCode::InvalidValue.into()));
     }
 
     #[test]
     fn setting_a_sensor_is_invalid_operation() {
-        let now = Instant::now();
-        let answers = node(now).handle(&set(3, Value::Float(1.0)), now);
+        let answers = node(Instant::now()).handle(&set(3, Value::Float(1.0)));
         assert_eq!(
             error_code(&answers),
             Some(ErrorCode::InvalidOperation.into())
@@ -379,10 +306,9 @@ mod tests {
 
     #[test]
     fn unknown_entity_and_channel() {
-        let now = Instant::now();
-        let mut node = node(now);
+        let mut node = node(Instant::now());
         assert_eq!(
-            error_code(&node.handle(&set(9, Value::Bool(true)), now)),
+            error_code(&node.handle(&set(9, Value::Bool(true)))),
             Some(ErrorCode::UnknownEntity.into())
         );
         let command = from_hub(Payload::Command {
@@ -391,23 +317,22 @@ mod tests {
             op: CommandOp::Set(Value::Bool(true)),
         });
         assert_eq!(
-            error_code(&node.handle(&command, now)),
+            error_code(&node.handle(&command)),
             Some(ErrorCode::UnknownChannel.into())
         );
     }
 
     #[test]
     fn query_state_returns_every_entity_with_values() {
-        let now = Instant::now();
         let query = from_hub(Payload::Query {
             what: QueryKind::State { entity: None },
         });
-        let answers = node(now).handle(&query, now);
+        let answers = node(Instant::now()).handle(&query);
 
         let entities: Vec<u8> = answers
             .iter()
-            .filter_map(|(payload, _)| match payload {
-                Payload::State { entity, .. } => Some(*entity),
+            .filter_map(|message| match message.payload {
+                Payload::State { entity, .. } => Some(entity),
                 _ => None,
             })
             .collect();
@@ -416,42 +341,39 @@ mod tests {
 
     #[test]
     fn messages_for_other_nodes_are_ignored() {
-        let now = Instant::now();
         let mut message = set(1, Value::Bool(true));
         message.dst = Some("someone-else".into());
-        assert!(node(now).handle(&message, now).is_empty());
+        assert!(node(Instant::now()).handle(&message).is_empty());
     }
 
     #[test]
-    fn reboot_resets_uptime_and_lamps() {
+    fn reboot_resets_uptime_lamps_and_message_ids() {
         let start = Instant::now();
         let mut node = node(start);
-        node.handle(&set(1, Value::Bool(true)), start);
+        node.handle(&set(1, Value::Bool(true)));
         let later = start + Duration::from_secs(100);
 
         node.reboot(later);
 
+        let heartbeat = node.heartbeat(later);
+        assert_eq!(heartbeat.msg_id, 0);
         assert_eq!(
-            node.heartbeat(later),
+            heartbeat.payload,
             Payload::Heartbeat {
                 uptime_s: 0,
                 rssi: Some(-55),
                 battery: None,
             }
         );
-        assert_eq!(node.message(Payload::Ack { ok: true }, None).msg_id, 0);
         assert_eq!(
-            node.state(1, later),
-            Some(Payload::State {
-                entity: 1,
-                values: vec![confirmed(0, Value::Bool(false))],
-            })
+            node.device.values_at(1, later),
+            Some(vec![confirmed(0, Value::Bool(false))])
         );
     }
 
     #[test]
     fn only_buttons_press() {
-        let node = node(Instant::now());
+        let mut node = node(Instant::now());
         assert!(node.press(2).is_some());
         assert!(node.press(1).is_none());
     }
@@ -460,16 +382,13 @@ mod tests {
     fn fixed_climate_replaces_the_wave_until_auto() {
         let now = Instant::now();
         let mut node = node(now);
-        let climate = |states: Vec<Payload>| match states.as_slice() {
-            [Payload::State { entity: 3, values }] => values.clone(),
-            other => panic!("unexpected {other:?}"),
-        };
-        let values = climate(node.set_climate(Some(30.0), None, now));
+        node.set_climate(Some(30.0), None);
+        let values = node.device.values_at(3, now).unwrap();
         assert_eq!(values[0], confirmed(0, Value::Float(30.0)));
         assert_eq!(values[1], confirmed(1, Value::Float(50.0)));
-        let values = climate(node.sensor_states(now));
-        assert_eq!(values[0], confirmed(0, Value::Float(30.0)));
-        let values = climate(node.set_climate(None, None, now));
+        assert_eq!(node.set_climate(Some(30.0), None).len(), 1);
+        node.set_climate(None, None);
+        let values = node.device.values_at(3, now).unwrap();
         assert_eq!(values[0], confirmed(0, Value::Float(22.0)));
     }
 }

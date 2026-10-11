@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
+oxihome-node = { path = "../node" }
 oxihome-protocol = { path = "../protocol" }
 rumqttc = "0.25"
 serde = { version = "1", features = ["derive"] }

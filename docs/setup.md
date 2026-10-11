@@ -242,6 +242,20 @@ curl -sSfL -o hub/static/htmx.min.js https://cdn.jsdelivr.net/npm/htmx.org@2.0.1
 curl -sSfL -o hub/static/htmx-ext-sse.min.js https://cdn.jsdelivr.net/npm/htmx-ext-sse@2.2.4/dist/sse.min.js
 ```
 
+## Node library
+
+`node/` (`oxihome-node`) is what every node does, whatever it runs on: it answers the hub's queries,
+numbers messages, answers a repeated command with the same `Ack` without running it again, and
+checks each command against the entities the node declares (unknown entity or channel, `Access`,
+value type, `Int`/`Float` range, `Enum` option, `Text` length) before the node sees it. A node
+implements the `Device` trait (its entities, the state of an entity, running a checked command) and
+`NodeCore` turns messages from the hub into answers. No network and no clock, so it builds for the
+boards too. The simulator uses it; the firmware and an MQTT runtime for software nodes come next.
+
+```sh
+cargo test -p oxihome-node
+```
+
 ## Simulator
 
 Simulated nodes that talk to the broker like real boards, to work on the hub without hardware.
