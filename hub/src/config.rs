@@ -4,20 +4,28 @@ use anyhow::Context;
 use serde::de::DeserializeOwned;
 
 use crate::names::Names;
+use crate::parameters::NodeParameters;
 use crate::rules::Rules;
 
 /// The home's configuration: the files in the config directory.
 pub struct HomeConfig {
     pub names: Names,
     pub rules: Rules,
+    pub parameters: NodeParameters,
 }
 
 impl HomeConfig {
     /// A missing file counts as empty.
     pub fn load(directory: &Path) -> anyhow::Result<Self> {
+        let path = directory.join("nodes.toml");
+        let parameters: NodeParameters = read(&path)?;
+        parameters
+            .validate()
+            .with_context(|| format!("{}", path.display()))?;
         Ok(Self {
             names: read(&directory.join("names.toml"))?,
             rules: read(&directory.join("rules.toml"))?,
+            parameters,
         })
     }
 }

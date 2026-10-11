@@ -8,3 +8,6 @@ dir = "hub/config"
 [http]
 host = "127.0.0.1"
 port = 8080
+
+[presence]
+missed_heartbeats = 3

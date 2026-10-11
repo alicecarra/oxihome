@@ -2,10 +2,10 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use oxihome_protocol::{EntityDescriptor, Message, Payload};
+use oxihome_protocol::management::{self, HEARTBEAT_INTERVAL};
+use oxihome_protocol::{EntityDescriptor, Message, Payload, Value};
 
-/// Three missed heartbeats (the firmware sends one every 30 s).
-pub const OFFLINE_AFTER: Duration = Duration::from_secs(90);
+pub const DEFAULT_MISSED_HEARTBEATS: u32 = 3;
 
 pub struct Node {
     pub firmware_version: String,
@@ -14,6 +14,20 @@ pub struct Node {
     last_seen: Instant,
     pub uptime_seconds: Option<u32>,
     pub rssi: Option<i8>,
+    /// From the node's `HeartbeatInterval`; the default until it reports one.
+    heartbeat_interval: Duration,
+}
+
+impl Node {
+    pub fn declares(&self, entity: u8, channel: u8) -> bool {
+        self.entities.iter().any(|descriptor| {
+            descriptor.id == entity && descriptor.channels.iter().any(|known| known.id == channel)
+        })
+    }
+
+    fn offline_after(&self, missed_heartbeats: u32) -> Duration {
+        self.heartbeat_interval * missed_heartbeats
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -61,18 +75,37 @@ impl fmt::Display for NodeEvent {
     }
 }
 
-#[derive(Default)]
 pub struct Registry {
     nodes: HashMap<String, Node>,
     asked_for_hello: HashSet<String>,
+    /// Heartbeats a node may miss before it counts as offline.
+    missed_heartbeats: u32,
+}
+
+impl Default for Registry {
+    fn default() -> Self {
+        Self::new(DEFAULT_MISSED_HEARTBEATS)
+    }
 }
 
 impl Registry {
+    pub fn new(missed_heartbeats: u32) -> Self {
+        Self {
+            nodes: HashMap::new(),
+            asked_for_hello: HashSet::new(),
+            missed_heartbeats,
+        }
+    }
+
     /// Sorted by device id.
     pub fn nodes(&self) -> Vec<(&String, &Node)> {
         let mut nodes: Vec<_> = self.nodes.iter().collect();
         nodes.sort_by_key(|(device_id, _)| *device_id);
         nodes
+    }
+
+    pub fn node(&self, device_id: &str) -> Option<&Node> {
+        self.nodes.get(device_id)
     }
 
     pub fn handle(&mut self, message: &Message, now: Instant) -> Vec<NodeEvent> {
@@ -83,10 +116,12 @@ impl Registry {
         {
             // A rebooted node sends `Hello` before its first heartbeat: keep the last
             // uptime so that heartbeat can still reveal the reboot.
-            let (uptime_seconds, rssi) = self
+            let (uptime_seconds, rssi, heartbeat_interval) = self
                 .nodes
                 .get(&message.src)
-                .map_or((None, None), |node| (node.uptime_seconds, node.rssi));
+                .map_or((None, None, default_heartbeat_interval()), |node| {
+                    (node.uptime_seconds, node.rssi, node.heartbeat_interval)
+                });
             self.nodes.insert(
                 message.src.clone(),
                 Node {
@@ -96,6 +131,7 @@ impl Registry {
                     last_seen: now,
                     uptime_seconds,
                     rssi,
+                    heartbeat_interval,
                 },
             );
             self.asked_for_hello.remove(&message.src);
@@ -122,6 +158,25 @@ impl Registry {
             events.push(NodeEvent::Online(message.src.clone()));
         }
 
+        if let Payload::State {
+            entity: management::ENTITY,
+            values,
+        } = &message.payload
+        {
+            let reported = values.iter().find_map(|channel_value| {
+                match (
+                    management::parameter(channel_value.channel),
+                    &channel_value.value,
+                ) {
+                    (Some(HEARTBEAT_INTERVAL), Value::Int(seconds)) => u64::try_from(*seconds).ok(),
+                    _ => None,
+                }
+            });
+            if let Some(seconds) = reported {
+                node.heartbeat_interval = Duration::from_secs(seconds);
+            }
+        }
+
         if let Payload::Heartbeat { uptime_s, rssi, .. } = &message.payload {
             node.rssi = *rssi;
             let previous = node.uptime_seconds.replace(*uptime_s);
@@ -139,7 +194,9 @@ impl Registry {
     pub fn check_presence(&mut self, now: Instant) -> Vec<NodeEvent> {
         self.nodes
             .iter_mut()
-            .filter(|(_, node)| node.online && now - node.last_seen >= OFFLINE_AFTER)
+            .filter(|(_, node)| {
+                node.online && now - node.last_seen >= node.offline_after(self.missed_heartbeats)
+            })
             .map(|(device_id, node)| {
                 node.online = false;
                 NodeEvent::Offline(device_id.clone())
@@ -148,9 +205,18 @@ impl Registry {
     }
 }
 
+fn default_heartbeat_interval() -> Duration {
+    Duration::from_secs(HEARTBEAT_INTERVAL.default.unsigned_abs().into())
+}
+
 #[cfg(test)]
 mod tests {
+    use oxihome_protocol::{ChannelValue, Confidence};
+
     use super::*;
+
+    /// Three heartbeats at the default interval.
+    const OFFLINE_AFTER: Duration = Duration::from_secs(90);
 
     const DEVICE: &str = "esp32-test";
 
@@ -181,6 +247,64 @@ mod tests {
             rssi: Some(-50),
             battery: None,
         })
+    }
+
+    fn heartbeat_interval(seconds: i32) -> Message {
+        message(Payload::State {
+            entity: management::ENTITY,
+            values: vec![ChannelValue {
+                channel: HEARTBEAT_INTERVAL.channel.into(),
+                value: Value::Int(seconds),
+                confidence: Confidence::Confirmed,
+            }],
+        })
+    }
+
+    #[test]
+    fn reported_heartbeat_interval_sets_the_offline_timeout() {
+        let mut registry = Registry::default();
+        let start = Instant::now();
+        registry.handle(&hello(), start);
+        registry.handle(&heartbeat_interval(10), start);
+
+        assert!(
+            registry
+                .check_presence(start + Duration::from_secs(29))
+                .is_empty()
+        );
+        assert_eq!(
+            registry.check_presence(start + Duration::from_secs(30)),
+            vec![NodeEvent::Offline(DEVICE.into())]
+        );
+    }
+
+    #[test]
+    fn missed_heartbeats_are_configurable() {
+        let mut registry = Registry::new(5);
+        let start = Instant::now();
+        registry.handle(&hello(), start);
+        registry.handle(&heartbeat_interval(10), start);
+
+        assert!(
+            registry
+                .check_presence(start + Duration::from_secs(49))
+                .is_empty()
+        );
+        assert_eq!(
+            registry.check_presence(start + Duration::from_secs(50)),
+            vec![NodeEvent::Offline(DEVICE.into())]
+        );
+    }
+
+    #[test]
+    fn hello_keeps_the_heartbeat_interval() {
+        let mut registry = Registry::default();
+        let start = Instant::now();
+        registry.handle(&hello(), start);
+        registry.handle(&heartbeat_interval(100), start);
+        registry.handle(&hello(), start);
+
+        assert!(registry.check_presence(start + OFFLINE_AFTER).is_empty());
     }
 
     #[test]

@@ -7,6 +7,7 @@ mod hub;
 mod mqtt;
 mod names;
 mod notifications;
+mod parameters;
 mod registry;
 mod rules;
 mod state;
@@ -16,7 +17,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::Context;
+use anyhow::{Context, ensure};
+use oxihome_protocol::management;
 use oxihome_protocol::{Payload, QueryKind};
 use serde::Deserialize;
 use tokio::net::TcpListener;
@@ -24,7 +26,7 @@ use tokio::net::TcpListener;
 use config::HomeConfig;
 use hub::Hub;
 use mqtt::{Incoming, Mqtt};
-use registry::NodeEvent;
+use registry::{DEFAULT_MISSED_HEARTBEATS, NodeEvent};
 
 const PRESENCE_CHECK_INTERVAL: Duration = Duration::from_secs(10);
 
@@ -33,6 +35,22 @@ struct Config {
     mqtt: MqttConfig,
     config: ConfigDirectory,
     http: HttpConfig,
+    #[serde(default)]
+    presence: PresenceConfig,
+}
+
+#[derive(Deserialize)]
+struct PresenceConfig {
+    /// A node is offline after this many heartbeat intervals without messages.
+    missed_heartbeats: u32,
+}
+
+impl Default for PresenceConfig {
+    fn default() -> Self {
+        Self {
+            missed_heartbeats: DEFAULT_MISSED_HEARTBEATS,
+        }
+    }
 }
 
 /// The home's configuration files (names, rules), reloadable from the web interface.
@@ -60,6 +78,10 @@ async fn main() -> anyhow::Result<()> {
         .context("usage: oxihome-hub <config.toml>")?;
     let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
     let config: Config = toml::from_str(&text).with_context(|| format!("parsing {path}"))?;
+    ensure!(
+        config.presence.missed_heartbeats >= 1,
+        "{path}: presence.missed_heartbeats must be at least 1"
+    );
 
     let home_config = HomeConfig::load(&config.config.dir)?;
     println!(
@@ -68,7 +90,12 @@ async fn main() -> anyhow::Result<()> {
         config.config.dir.display()
     );
     let (mqtt, mut incoming) = Mqtt::connect(&config.mqtt.host, config.mqtt.port);
-    let hub = Arc::new(Hub::new(mqtt, config.config.dir.clone(), home_config));
+    let hub = Arc::new(Hub::new(
+        mqtt,
+        config.presence.missed_heartbeats,
+        config.config.dir.clone(),
+        home_config,
+    ));
 
     let listener = TcpListener::bind((config.http.host.as_str(), config.http.port)).await?;
     println!(
@@ -88,6 +115,16 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Incoming::Message(message) => {
                     let (node_events, updates, event) = hub.handle(&message, Instant::now());
+                    let reports_parameters = matches!(
+                        message.payload,
+                        Payload::State { entity: management::ENTITY, .. }
+                    );
+                    let came_back = node_events
+                        .iter()
+                        .any(|node_event| matches!(node_event, NodeEvent::Online(_)));
+                    if reports_parameters || came_back {
+                        tokio::spawn(parameters::apply(hub.clone(), message.src.clone()));
+                    }
                     for node_event in node_events {
                         println!("{node_event}");
                         if let NodeEvent::Unknown(device_id) = node_event {

@@ -4,6 +4,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::bail;
+use oxihome_protocol::management::{self, PARAMETERS, Parameter};
 use oxihome_protocol::{
     Access, CommandOp, EventKind, Message, Payload, Quantity, Unit, Value, ValueType,
 };
@@ -14,6 +15,7 @@ use crate::events::{EventRecord, Events};
 use crate::mqtt::Mqtt;
 use crate::names::{NameTarget, Names};
 use crate::notifications::{Notification, Notifications};
+use crate::parameters::NodeParameters;
 use crate::registry::{NodeEvent, Registry};
 use crate::rules::{Rule, Rules};
 use crate::state::{ChannelUpdate, State};
@@ -29,6 +31,7 @@ pub struct Hub {
     config_directory: PathBuf,
     names: Mutex<Names>,
     rules: Mutex<Rules>,
+    parameters: Mutex<NodeParameters>,
     notifications: Mutex<Notifications>,
     /// Commands waiting for their `Ack` or `Error`, by message id.
     pending_commands: Mutex<HashMap<u32, PendingCommand>>,
@@ -51,6 +54,20 @@ pub struct NodeOverview {
     pub channels: Vec<ChannelOverview>,
 }
 
+pub struct NodeParametersOverview {
+    pub device_id: String,
+    pub name: Option<String>,
+    pub parameters: Vec<ParameterOverview>,
+}
+
+pub struct ParameterOverview {
+    pub parameter: Parameter,
+    /// As reported by the node.
+    pub current: Option<i32>,
+    /// From `nodes.toml`; `None` leaves the node's value alone.
+    pub desired: Option<i32>,
+}
+
 pub struct ChannelOverview {
     pub entity: u8,
     pub entity_name: Option<String>,
@@ -65,15 +82,21 @@ pub struct ChannelOverview {
 }
 
 impl Hub {
-    pub fn new(mqtt: Mqtt, config_directory: PathBuf, config: HomeConfig) -> Self {
+    pub fn new(
+        mqtt: Mqtt,
+        missed_heartbeats: u32,
+        config_directory: PathBuf,
+        config: HomeConfig,
+    ) -> Self {
         Self {
             mqtt,
-            registry: Mutex::default(),
+            registry: Mutex::new(Registry::new(missed_heartbeats)),
             state: Mutex::default(),
             events: Mutex::default(),
             config_directory,
             names: Mutex::new(config.names),
             rules: Mutex::new(config.rules),
+            parameters: Mutex::new(config.parameters),
             notifications: Mutex::default(),
             pending_commands: Mutex::default(),
         }
@@ -220,7 +243,86 @@ impl Hub {
         let rule_count = config.rules.len();
         *self.names.lock().unwrap() = config.names;
         *self.rules.lock().unwrap() = config.rules;
+        *self.parameters.lock().unwrap() = config.parameters;
         Ok(rule_count)
+    }
+
+    pub fn device_ids(&self) -> Vec<String> {
+        self.registry
+            .lock()
+            .unwrap()
+            .nodes()
+            .into_iter()
+            .map(|(device_id, _)| device_id.clone())
+            .collect()
+    }
+
+    /// Desired parameters the node declares but reports with another value; empty while offline.
+    pub fn parameter_differences(&self, device_id: &str) -> Vec<(Parameter, i32)> {
+        let state = self.state.lock().unwrap();
+        let registry = self.registry.lock().unwrap();
+        let Some(node) = registry.node(device_id).filter(|node| node.online) else {
+            return Vec::new();
+        };
+        self.parameters
+            .lock()
+            .unwrap()
+            .desired(device_id)
+            .into_iter()
+            .filter(|(parameter, value)| {
+                let channel = u8::from(parameter.channel);
+                node.declares(management::ENTITY, channel)
+                    && state.value(device_id, management::ENTITY, channel)
+                        != Some(&Value::Int(*value))
+            })
+            .collect()
+    }
+
+    /// Nodes that declare the management entity.
+    pub fn parameters_overview(&self) -> Vec<NodeParametersOverview> {
+        let state = self.state.lock().unwrap();
+        let registry = self.registry.lock().unwrap();
+        let names = self.names.lock().unwrap();
+        let parameters = self.parameters.lock().unwrap();
+        registry
+            .nodes()
+            .into_iter()
+            .filter(|(_, node)| {
+                node.entities
+                    .iter()
+                    .any(|entity| entity.id == management::ENTITY)
+            })
+            .map(|(device_id, node)| {
+                let desired = parameters.desired(device_id);
+                NodeParametersOverview {
+                    device_id: device_id.clone(),
+                    name: names
+                        .get(&NameTarget::Node(device_id.clone()))
+                        .map(String::from),
+                    parameters: PARAMETERS
+                        .into_iter()
+                        .filter(|parameter| {
+                            node.declares(management::ENTITY, parameter.channel.into())
+                        })
+                        .map(|parameter| ParameterOverview {
+                            parameter,
+                            current: match state.value(
+                                device_id,
+                                management::ENTITY,
+                                parameter.channel.into(),
+                            ) {
+                                Some(Value::Int(value)) => Some(*value),
+                                _ => None,
+                            },
+                            desired: desired
+                                .iter()
+                                .find(|(known, _)| *known == parameter)
+                                .map(|(_, value)| *value),
+                        })
+                        .collect(),
+                }
+            })
+            .collect()
     }
 
     pub fn config_directory(&self) -> &Path {

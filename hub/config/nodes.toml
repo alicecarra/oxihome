@@ -1,0 +1,6 @@
+# Desired operation parameters (seconds). The hub sets them on nodes that report another value.
+# Ranges: heartbeat_interval 5-300, wifi_check_interval 1-60. A missing key keeps the node's value.
+
+[nodes."esp32-08d1f9ca41e4"]
+heartbeat_interval = 30
+wifi_check_interval = 5

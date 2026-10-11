@@ -87,7 +87,8 @@ docker compose -f infra/compose.yaml up -d
 ## Hub
 
 Connects to the broker configured in `hub/hub.toml`, asks every node for its `Hello` and `State`,
-tracks which nodes are online (offline after 90 s without messages) and serves a web interface
+tracks which nodes are online (offline after `[presence] missed_heartbeats`, default 3, times the
+node's heartbeat interval without messages; changing it needs a hub restart) and serves a web interface
 (Topcoat) on the `[http]` address, by default <http://127.0.0.1:8080>:
 
 ```sh
@@ -119,6 +120,17 @@ configuration stays in use.
   name = "Living room button toggles bedroom lamp"
   when = { device = "sim-living-room", entity = 2, channel = 0, event = "Press" }
   then = [{ toggle = { device = "sim-bedroom", entity = 1, channel = 0 } }]
+  ```
+
+- `nodes.toml`: desired operation parameters of each node (seconds). The hub sends a `Set` when a
+  node reports another value: when it connects, comes back online, or after a reload. A parameter
+  left out keeps the node's value. Ranges: `heartbeat_interval` 5–300, `wifi_check_interval` 1–60.
+  `/settings` shows the node's value next to the desired one.
+
+  ```toml
+  [nodes."esp32-08d1f9ca41e4"]
+  heartbeat_interval = 30
+  wifi_check_interval = 5
   ```
 
 The page uses htmx: the node list refreshes every 2 s and the switches post to `/set` without
