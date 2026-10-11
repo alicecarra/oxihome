@@ -7,10 +7,11 @@ use topcoat::{
 };
 
 use super::format::{ago_label, channel_label, duration_label, entity_label, value_label};
-use super::overview::{ChannelOverview, NodeOverview};
+use super::overview::{ChannelOverview, Invocation, NodeOverview};
 use crate::components::badge::{BadgeVariant, badge};
 use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::card::{card, card_content, card_description, card_header, card_title};
+use crate::components::input::input;
 use crate::components::switch::switch;
 
 #[component]
@@ -93,11 +94,11 @@ async fn channel_row(device_id: String, channel: ChannelOverview) -> Result<impl
                 <p class="text-sm font-medium">(label.clone())</p>
                 match &channel.value {
                     Some(Value::Bool(active)) => status_dot(active: *active, if *active { "on" } else { "off" }),
-                    _ if channel.invocations.is_some() => {}
+                    _ if channel.invocation.is_some() => {}
                     _ => <p class="text-sm text-muted-foreground">(channel_state(&channel))</p>,
                 }
             </div>
-            if let Some(invocations) = channel.invocations.clone() {
+            if let Some(invocation) = channel.invocation.clone() {
                 <form
                     class="flex flex-wrap justify-end gap-2"
                     hx-post="/invoke"
@@ -106,21 +107,39 @@ async fn channel_row(device_id: String, channel: ChannelOverview) -> Result<impl
                     <input type="hidden" name="device_id" value=(device_id.clone())>
                     <input type="hidden" name="entity" value=(channel.entity.to_string())>
                     <input type="hidden" name="channel" value=(channel.channel.to_string())>
-                    for invocation in invocations {
-                        match invocation {
-                            Some(option) => button(
+                    match invocation {
+                        Invocation::Options(options) => for option in options {
+                            button(
                                 variant: ButtonVariant::Outline,
                                 size: ButtonSize::Sm,
                                 attrs: attributes! { type="submit" name="value" value=(option.clone()) },
                                 (option)
-                            ),
-                            None => button(
+                            )
+                        },
+                        Invocation::Text { max_length } => {
+                            // Kept while the node list refreshes, so typing is not lost.
+                            input(attrs: attributes! {
+                                id=(format!("text-{device_id}-{}-{}", channel.entity, channel.channel))
+                                hx-preserve="true"
+                                name="value"
+                                required=""
+                                maxlength=(max_length.to_string())
+                                aria-label=(label.clone())
+                                class="h-8 w-48"
+                            })
+                            button(
                                 variant: ButtonVariant::Outline,
                                 size: ButtonSize::Sm,
                                 attrs: attributes! { type="submit" },
-                                "Run"
-                            ),
-                        }
+                                "Send"
+                            )
+                        },
+                        Invocation::Plain => button(
+                            variant: ButtonVariant::Outline,
+                            size: ButtonSize::Sm,
+                            attrs: attributes! { type="submit" },
+                            "Run"
+                        ),
                     }
                 </form>
             }

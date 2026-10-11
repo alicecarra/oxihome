@@ -34,8 +34,14 @@ impl Node {
             .find(|known| known.id == channel)
     }
 
-    /// Whether the node declares a `Trigger` channel that takes this value.
-    pub fn check_invoke(&self, entity: u8, channel: u8, value: Option<&str>) -> Result<(), String> {
+    /// The value to send to a `Trigger` channel the node declares: an option of its `Enum`, a
+    /// `Text` up to its maximum length, or nothing for a channel without a value.
+    pub fn invoke_value(
+        &self,
+        entity: u8,
+        channel: u8,
+        value: Option<&str>,
+    ) -> Result<Option<Value>, String> {
         let Some(declared) = self.channel(entity, channel) else {
             return Err(format!("the node has no channel {entity}/{channel}"));
         };
@@ -43,22 +49,34 @@ impl Node {
             return Err(format!("channel {entity}/{channel} is not a Trigger"));
         }
         match (&declared.value, value) {
-            (None, None) => Ok(()),
+            (None, None) => Ok(None),
             (None, Some(value)) => Err(format!(
                 "channel {entity}/{channel} takes no value, got \"{value}\""
             )),
             (Some(ValueType::Enum(options)), Some(value))
                 if options.iter().any(|option| option == value) =>
             {
-                Ok(())
+                Ok(Some(Value::Enum(value.to_string())))
             }
             (Some(ValueType::Enum(options)), _) => Err(format!(
                 "{} is not one of {}",
                 value.map_or("no value".to_string(), |value| format!("\"{value}\"")),
                 options.join(", ")
             )),
+            (Some(ValueType::Text { max_length }), Some(value))
+                if value.len() <= usize::from(*max_length) =>
+            {
+                Ok(Some(Value::Text(value.to_string())))
+            }
+            (Some(ValueType::Text { max_length }), Some(value)) => Err(format!(
+                "text of {} bytes is longer than the {max_length} channel {entity}/{channel} takes",
+                value.len()
+            )),
+            (Some(ValueType::Text { .. }), None) => {
+                Err(format!("channel {entity}/{channel} needs a text"))
+            }
             (Some(other), _) => Err(format!(
-                "channel {entity}/{channel} takes {other:?}, not a name"
+                "channel {entity}/{channel} takes {other:?}, not a name or text"
             )),
         }
     }
@@ -324,6 +342,13 @@ mod tests {
                             unit: None,
                         },
                         Channel {
+                            id: 3,
+                            access: Access::Trigger,
+                            value: Some(ValueType::Text { max_length: 5 }),
+                            quantity: None,
+                            unit: None,
+                        },
+                        Channel {
                             id: 2,
                             access: Access::ReadWrite,
                             value: Some(ValueType::Bool),
@@ -341,30 +366,52 @@ mod tests {
     #[test]
     fn invoke_checks_the_declared_options() {
         let node = buzzer_node();
-        assert_eq!(node.check_invoke(5, 0, Some("Alarm")), Ok(()));
-        assert_eq!(node.check_invoke(5, 1, None), Ok(()));
         assert_eq!(
-            node.check_invoke(5, 0, Some("Siren")),
+            node.invoke_value(5, 0, Some("Alarm")),
+            Ok(Some(Value::Enum("Alarm".into())))
+        );
+        assert_eq!(node.invoke_value(5, 1, None), Ok(None));
+        assert_eq!(
+            node.invoke_value(5, 0, Some("Siren")),
             Err("\"Siren\" is not one of Short, Alarm".into())
         );
         assert_eq!(
-            node.check_invoke(5, 0, None),
+            node.invoke_value(5, 0, None),
             Err("no value is not one of Short, Alarm".into())
         );
         assert!(
-            node.check_invoke(5, 1, Some("Alarm"))
+            node.invoke_value(5, 1, Some("Alarm"))
                 .unwrap_err()
                 .contains("takes no value")
         );
         assert!(
-            node.check_invoke(5, 2, None)
+            node.invoke_value(5, 2, None)
                 .unwrap_err()
                 .contains("not a Trigger")
         );
         assert!(
-            node.check_invoke(6, 0, None)
+            node.invoke_value(6, 0, None)
                 .unwrap_err()
                 .contains("no channel 6/0")
+        );
+    }
+
+    #[test]
+    fn invoke_sends_text_up_to_the_declared_length() {
+        let node = buzzer_node();
+        assert_eq!(
+            node.invoke_value(5, 3, Some("hello")),
+            Ok(Some(Value::Text("hello".into())))
+        );
+        assert!(
+            node.invoke_value(5, 3, Some("hello!"))
+                .unwrap_err()
+                .contains("6 bytes is longer than the 5")
+        );
+        assert!(
+            node.invoke_value(5, 3, None)
+                .unwrap_err()
+                .contains("needs a text")
         );
     }
 

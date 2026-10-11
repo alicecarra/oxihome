@@ -160,8 +160,8 @@ impl Hub {
             .await
     }
 
-    /// Sends an `Invoke` and waits for the node's answer. Refused without sending when the
-    /// node is known and does not declare the value.
+    /// Sends an `Invoke` and waits for the node's answer. The node's declaration picks `Enum` or
+    /// `Text` and refuses values it does not take, without sending; an unknown node gets `Enum`.
     pub async fn invoke(
         &self,
         device_id: &str,
@@ -169,16 +169,17 @@ impl Hub {
         channel: u8,
         value: Option<String>,
     ) -> anyhow::Result<()> {
-        let check = self
+        let declared = self
             .registry
             .lock()
             .unwrap()
             .node(device_id)
-            .map(|node| node.check_invoke(entity, channel, value.as_deref()));
-        if let Some(Err(error)) = check {
-            bail!("{device_id}: {error}");
-        }
-        let value = value.map(Value::Enum);
+            .map(|node| node.invoke_value(entity, channel, value.as_deref()));
+        let value = match declared {
+            Some(Ok(value)) => value,
+            Some(Err(error)) => bail!("{device_id}: {error}"),
+            None => value.map(Value::Enum),
+        };
         self.commands
             .send(
                 &self.mqtt,

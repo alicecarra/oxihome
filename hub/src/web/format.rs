@@ -43,6 +43,7 @@ pub fn value_label(value: &Value, unit: Option<Unit>) -> String {
         Value::Int(number) => format!("{number}{suffix}"),
         Value::Float(number) => format!("{number:.1}{suffix}"),
         Value::Enum(option) => option.clone(),
+        Value::Text(text) => text.clone(),
         Value::Color(color) => format!("{color:?}"),
         Value::Bytes(bytes) => format!("{} bytes", bytes.len()),
     }

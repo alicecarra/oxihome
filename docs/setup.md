@@ -145,9 +145,10 @@ previous configuration stays in use.
 - `rules.toml`: a rule runs its actions when its trigger (`when`) fires. Actions set or toggle
   boolean channels, or show a notification as a toast on the web interface
   (`notify = { title = "...", message = "..." }`), or fire a `Trigger` channel such as the test
-  board buzzer (`invoke = { device = "...", entity = 5, channel = 0, value = "Alarm" }`). The
-  value must be one of the options the node declares in its `Hello`; while the node is online the hub
-  refuses other values without sending them, and `/rules` shows the problem under the action.
+  board buzzer (`invoke = { device = "...", entity = 5, channel = 0, value = "Alarm" }`). The node's
+  `Hello` decides what `value` is: one of the options of an `Enum` channel, or any text up to the
+  `max_length` of a `Text` channel. While the node is online the hub refuses other values without
+  sending them, and `/rules` shows the problem under the action.
   `enabled = false` turns a rule off. Triggers:
   - an event of a channel: `when = { device = "...", entity = 2, channel = 0, event = "Press" }`;
   - a local time, every day or on some days: `when = { at = "07:00", days = ["monday", "friday"] }`;
@@ -195,8 +196,9 @@ previous configuration stays in use.
   wifi_check_interval = 5
   ```
 
-The page uses htmx: the switches post to `/set` and the buttons of `Trigger` channels (one per
-option, such as the buzzer patterns) post to `/invoke`, without reloading the page, and the hub announces
+The page uses htmx: the switches post to `/set` and the controls of `Trigger` channels (a button per
+option, such as the buzzer patterns, or a text box for a `Text` channel) post to `/invoke`, without
+reloading the page, and the hub announces
 changes over server-sent events at `/events` (`nodes` when a value, event or presence changes,
 `notifications` for a new toast). The page fetches the node list and the toasts again when it hears
 them, and every 30 s as well, which also keeps the "3 s ago" labels moving. To watch the events:

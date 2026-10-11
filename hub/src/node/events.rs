@@ -27,14 +27,10 @@ impl fmt::Display for EventRecord {
     }
 }
 
-/// `Bytes` holding UTF-8 show as text: the IR receiver sends its codes that way until the
-/// protocol has a text value.
 pub fn data_label(data: &Value) -> String {
     match data {
-        Value::Bytes(bytes) => match std::str::from_utf8(bytes) {
-            Ok(text) => text.to_string(),
-            Err(_) => format!("{} bytes", bytes.len()),
-        },
+        Value::Text(text) | Value::Enum(text) => text.clone(),
+        Value::Bytes(bytes) => format!("{} bytes", bytes.len()),
         other => format!("{other:?}"),
     }
 }
@@ -137,13 +133,13 @@ mod tests {
     }
 
     #[test]
-    fn event_data_is_kept_and_text_bytes_show_as_text() {
+    fn event_data_is_kept_and_shown_as_text() {
         let mut events = Events::default();
         let received = message(Payload::Event {
             entity: 6,
             channel: 0,
             event: EventKind::Received,
-            data: Some(Value::Bytes(b"NEC 00 45".to_vec())),
+            data: Some(Value::Text("NEC 00 45".into())),
         });
         let record = events.apply(&received, Instant::now()).unwrap();
 
@@ -153,7 +149,7 @@ mod tests {
         );
         assert_eq!(
             events.last(DEVICE, 6, 0).and_then(|last| last.data.clone()),
-            Some(Value::Bytes(b"NEC 00 45".to_vec()))
+            Some(Value::Text("NEC 00 45".into()))
         );
         assert_eq!(data_label(&Value::Bytes(vec![0xFF, 0x00])), "2 bytes");
     }

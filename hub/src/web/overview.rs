@@ -52,8 +52,19 @@ pub struct ChannelOverview {
     pub switchable: bool,
     pub quantity: Option<Quantity>,
     pub unit: Option<Unit>,
-    /// For `Trigger` channels: one button per declared option, or a single one without a value.
-    pub invocations: Option<Vec<Option<String>>>,
+    /// `None` unless the channel is a `Trigger`.
+    pub invocation: Option<Invocation>,
+}
+
+/// How the node card fires a `Trigger` channel.
+#[derive(Clone)]
+pub enum Invocation {
+    /// One button per option of the `Enum`.
+    Options(Vec<String>),
+    /// A text box and a send button.
+    Text { max_length: u16 },
+    /// A single button, for a channel without a value.
+    Plain,
 }
 
 pub struct RuleOverview {
@@ -116,7 +127,7 @@ pub fn nodes(hub: &Hub) -> Vec<NodeOverview> {
                             && matches!(channel.access, Access::Write | Access::ReadWrite),
                         quantity: channel.quantity,
                         unit: channel.unit,
-                        invocations: invocations(channel),
+                        invocation: invocation(channel),
                     })
                 })
                 .collect(),
@@ -124,14 +135,17 @@ pub fn nodes(hub: &Hub) -> Vec<NodeOverview> {
         .collect()
 }
 
-fn invocations(channel: &Channel) -> Option<Vec<Option<String>>> {
+fn invocation(channel: &Channel) -> Option<Invocation> {
     if channel.access != Access::Trigger {
         return None;
     }
-    match &channel.value {
-        Some(ValueType::Enum(options)) => Some(options.iter().cloned().map(Some).collect()),
-        _ => Some(vec![None]),
-    }
+    Some(match &channel.value {
+        Some(ValueType::Enum(options)) => Invocation::Options(options.clone()),
+        Some(ValueType::Text { max_length }) => Invocation::Text {
+            max_length: *max_length,
+        },
+        _ => Invocation::Plain,
+    })
 }
 
 /// Nodes that declare the management entity, for the settings page.
@@ -383,7 +397,7 @@ fn action_warning(registry: &Registry, action: &Action) -> Option<String> {
     };
     registry
         .node(device)?
-        .check_invoke(*entity, *channel, value.as_deref())
+        .invoke_value(*entity, *channel, value.as_deref())
         .err()
 }
 
