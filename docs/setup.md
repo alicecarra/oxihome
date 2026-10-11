@@ -88,7 +88,7 @@ ESP32 DevKit V1 (30 pins), `esp32-08d1f9ca41e4`. Entities the firmware declares:
 | 3 | DHT11 module: channel 0 temperature (°C), channel 1 humidity (%), read every 30 s | GPIO4 (D4) |
 | 4 | External LED on the breadboard, `Bool` | GPIO18 (D18) |
 | 5 | Active buzzer, `Trigger` with the patterns `Short`, `Long` and `Alarm` | GPIO19 (D19) |
-| 6 | VS1838B IR receiver module, event `Received` with the code as text in `Bytes` | GPIO23 (D23) |
+| 6 | VS1838B IR receiver module, event `Received` with the code as `Text` | GPIO23 (D23) |
 
 DHT11 module: `+` to 3V3, `-` to GND, `S` to D4 (the module has its pull-up). External LED: D18 →
 220–330 Ω resistor → LED long leg; short leg (flat side) to GND. Active buzzer (sealed black bottom;
@@ -101,9 +101,8 @@ to 3V3 (not 5 V: the output follows the supply), `Y` to D23. Free pins to use ne
 The IR receiver is read by the RMT peripheral. NEC frames (most cheap remotes, including the kit's)
 arrive as `NEC 00 45` (8-bit address and command in hex) or `NEC 1234 45` (extended 16-bit
 address); a held key sends `NEC 00 45 repeat` about every 110 ms. Anything else arrives as
-`raw 9000 4500 560 …`, the mark and space durations in µs (at most 128). The code travels as UTF-8
-text inside `Bytes`, because the protocol has no text value yet; the hub shows it as text on the
-node card and in its log.
+`raw 9000 4500 560 …`, the mark and space durations in µs (at most 128). The code is a `Text` value
+(up to 1024 bytes); the hub shows it on the node card and in its log.
 
 ## MQTT broker
 

@@ -9,7 +9,7 @@ use oxihome_protocol::{
 
 use crate::buzzer::{self, Buzzer};
 use crate::climate::Climate;
-use crate::ir::IrReceiver;
+use crate::ir::{self, IrReceiver};
 use crate::settings::Settings;
 use crate::transport::{Transport, TransportEvent};
 
@@ -77,13 +77,12 @@ impl<T: Transport> Node<T> {
         }
         if let Some(code) = self.ir.poll() {
             log::info!("IR: {code}");
-            // Text in `Bytes` until the protocol has a text value.
             self.send(
                 Payload::Event {
                     entity: IR_ENTITY,
                     channel: MAIN_CHANNEL,
                     event: EventKind::Received,
-                    data: Some(Value::Bytes(code.into_bytes())),
+                    data: Some(Value::Text(code)),
                 },
                 None,
             )?;
@@ -429,7 +428,9 @@ impl<T: Transport> Node<T> {
                 channels: vec![Channel {
                     id: MAIN_CHANNEL,
                     access: Access::Event,
-                    value: Some(ValueType::Bytes),
+                    value: Some(ValueType::Text {
+                        max_length: ir::MAX_CODE_LENGTH,
+                    }),
                     quantity: None,
                     unit: None,
                 }],

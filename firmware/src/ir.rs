@@ -15,6 +15,8 @@ const FRAME_END: Duration = Duration::from_millis(12);
 /// Shorter frames are noise from lamps and sunlight.
 const MIN_DURATIONS: usize = 8;
 const MAX_RAW_DURATIONS: usize = 128;
+/// `raw` and 128 durations of up to 5 digits fit with room to spare.
+pub const MAX_CODE_LENGTH: u16 = 1024;
 
 /// VS1838B demodulating receiver, read by the RMT peripheral.
 pub struct IrReceiver {
