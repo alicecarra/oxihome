@@ -11,14 +11,14 @@ use topcoat::{
 use crate::hub::Hub;
 use crate::notifications::Notification;
 
-/// Polls for notifications newer than `since`; each answer replaces it with a newer `since`.
+/// Fetches notifications newer than `since` when one is announced; each answer replaces it with a newer `since`.
 #[component]
 pub async fn toast_poller(since: u64) -> Result<impl View> {
     Ok(view! {
         <div
             id="toast-poller"
             hx-get=(format!("/toasts?since={since}"))
-            hx-trigger="every 2s"
+            hx-trigger="sse:notifications, every 30s"
             hx-swap="outerHTML"
         ></div>
     })

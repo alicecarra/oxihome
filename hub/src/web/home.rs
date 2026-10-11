@@ -21,7 +21,7 @@ pub async fn home(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         layout(
             title: "Oxihome",
-            <div id="nodes" hx-get="/nodes" hx-trigger="every 2s, refresh">
+            <div id="nodes" hx-get="/nodes" hx-trigger="sse:nodes, every 30s, refresh">
                 node_list(nodes: overview::nodes(hub))
             </div>
         )

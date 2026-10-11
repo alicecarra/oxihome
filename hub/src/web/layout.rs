@@ -22,8 +22,9 @@ pub async fn layout(cx: &Cx, title: &str, #[default] child: Child<'_>) -> Result
                 <title>(title)</title>
                 <link rel="stylesheet" href="/static/app.css">
                 <script src="/static/htmx.min.js"></script>
+                <script src="/static/htmx-ext-sse.min.js"></script>
             </head>
-            <body class="mx-auto max-w-6xl p-6">
+            <body class="mx-auto max-w-6xl p-6" hx-ext="sse" sse-connect="/events">
                 <header class="mb-6 flex items-center justify-between">
                     <a href="/" class="text-2xl font-bold">"Oxihome Hub"</a>
                     <nav class="flex gap-4 text-sm text-muted-foreground">

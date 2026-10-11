@@ -8,6 +8,7 @@ use jiff::civil::DateTime;
 use jiff::tz::TimeZone;
 use oxihome_protocol::management::{self, Parameter};
 use oxihome_protocol::{Message, Payload, Value};
+use tokio::sync::broadcast;
 
 use crate::commands::Commands;
 use crate::config::names::{NameTarget, Names};
@@ -29,6 +30,22 @@ pub struct Snapshot<'a> {
     pub parameters: MutexGuard<'a, NodeParameters>,
 }
 
+/// What changed, announced to the pages listening on `/events`.
+#[derive(Debug, Clone, Copy)]
+pub enum Change {
+    Nodes,
+    Notifications,
+}
+
+impl Change {
+    pub fn event_name(self) -> &'static str {
+        match self {
+            Change::Nodes => "nodes",
+            Change::Notifications => "notifications",
+        }
+    }
+}
+
 /// Shared by the MQTT loop service and the web server.
 pub struct Hub {
     mqtt: Mqtt,
@@ -45,6 +62,7 @@ pub struct Hub {
     commands: Commands,
     /// Scheduled rules run in this zone's local time.
     time_zone: TimeZone,
+    changes: broadcast::Sender<Change>,
 }
 
 impl Hub {
@@ -68,6 +86,7 @@ impl Hub {
             notifications: Mutex::default(),
             commands: Commands::default(),
             time_zone,
+            changes: broadcast::channel(64).0,
         }
     }
 
@@ -97,11 +116,27 @@ impl Hub {
         let node_events = self.registry.lock().unwrap().handle(message, now);
         updates.extend(state.apply(message));
         let event = self.events.lock().unwrap().apply(message, now);
+        if !node_events.is_empty() || !updates.is_empty() || event.is_some() {
+            self.announce(Change::Nodes);
+        }
         (node_events, updates, event)
     }
 
     pub fn check_presence(&self, now: Instant) -> Vec<NodeEvent> {
-        self.registry.lock().unwrap().check_presence(now)
+        let node_events = self.registry.lock().unwrap().check_presence(now);
+        if !node_events.is_empty() {
+            self.announce(Change::Nodes);
+        }
+        node_events
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<Change> {
+        self.changes.subscribe()
+    }
+
+    /// Nobody listening is fine.
+    fn announce(&self, change: Change) {
+        let _ = self.changes.send(change);
     }
 
     /// Sends a `Set` and waits for the node's answer.
@@ -165,6 +200,7 @@ impl Hub {
         *self.names.lock().unwrap() = config.names;
         *self.rules.lock().unwrap() = config.rules;
         *self.parameters.lock().unwrap() = config.parameters;
+        self.announce(Change::Nodes);
         rule_count
     }
 
@@ -250,6 +286,7 @@ impl Hub {
             .lock()
             .unwrap()
             .push(title, message, source);
+        self.announce(Change::Notifications);
     }
 
     pub fn last_notification_id(&self) -> u64 {

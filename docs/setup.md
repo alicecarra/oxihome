@@ -136,9 +136,14 @@ previous configuration stays in use.
   wifi_check_interval = 5
   ```
 
-The page uses htmx: the node list refreshes every 2 s and the switches post to `/set` without
-reloading the page. `/set` answers with an empty body on success or the error message; a missing `value` means
-`false` (an unchecked switch sends nothing). The same
+The page uses htmx: the switches post to `/set` without reloading the page, and the hub announces
+changes over server-sent events at `/events` (`nodes` when a value, event or presence changes,
+`notifications` for a new toast). The page fetches the node list and the toasts again when it hears
+them, and every 30 s as well, which also keeps the "3 s ago" labels moving. To watch the events:
+`curl -N localhost:8080/events`.
+
+`/set` answers with an empty body on success or the error message; a missing `value` means `false`
+(an unchecked switch sends nothing). The same
 request from the command line:
 
 ```sh
@@ -166,11 +171,12 @@ topcoat ui add badge button card # copy components into src/components
 Avoid `dialog`, `alert_dialog`, `sheet`, `sidebar` and `tabs`: they need Topcoat's JavaScript
 runtime, which the hub does not use.
 
-htmx is vendored in `hub/static/htmx.min.js` and served by the hub, so the page works without
-internet access. To update it, change the version and download again:
+htmx and its SSE extension are vendored in `hub/static/` and served by the hub, so the page works
+without internet access. To update them, change the version and download again:
 
 ```sh
 curl -sSfL -o hub/static/htmx.min.js https://cdn.jsdelivr.net/npm/htmx.org@2.0.10/dist/htmx.min.js
+curl -sSfL -o hub/static/htmx-ext-sse.min.js https://cdn.jsdelivr.net/npm/htmx-ext-sse@2.2.4/dist/sse.min.js
 ```
 
 ## Simulator
