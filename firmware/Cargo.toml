@@ -1,6 +1,6 @@
 [package]
 name = "firmware"
-version = "0.4.0"
+version = "0.6.0"
 edition = "2024"
 resolver = "2"
 rust-version = "1.97"
@@ -35,6 +35,7 @@ anyhow = "1"
 toml-cfg = "0.2"
 oxihome-protocol = { path = "../protocol" }
 esp-idf-svc = { version = "0.53", features = ["critical-section"] }
+dht-sensor = "0.3"
 
 [build-dependencies]
 embuild = "0.33.5"

@@ -1,11 +1,12 @@
 mod button;
+mod climate;
 mod config;
 mod node;
 mod settings;
 mod transport;
 mod wifi;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::delay::FreeRtos;
@@ -15,12 +16,15 @@ use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use oxihome_protocol::management::{HEARTBEAT_INTERVAL, WIFI_CHECK_INTERVAL};
 
 use button::Button;
+use climate::Climate;
 use config::CONFIG;
 use node::Node;
 use settings::Settings;
 use transport::MqttTransport;
 
 const POLL_INTERVAL_MS: u32 = 10;
+/// The DHT11 needs at least 1 s between reads.
+const CLIMATE_READ_INTERVAL: Duration = Duration::from_secs(30);
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -30,7 +34,9 @@ fn main() -> anyhow::Result<()> {
     let pins = peripherals.pins;
 
     let led = PinDriver::output(pins.gpio2)?;
+    let external_led = PinDriver::output(pins.gpio18)?;
     let mut button = Button::new(PinDriver::input(pins.gpio0, Pull::Up)?);
+    let climate = Climate::new(PinDriver::input_output_od(pins.gpio4, Pull::Floating)?)?;
 
     let device_id = device_id()?;
     log::info!("Oxihome node {device_id} started");
@@ -45,10 +51,11 @@ fn main() -> anyhow::Result<()> {
         CONFIG.wifi_password,
     )?;
     let transport = MqttTransport::new(CONFIG.mqtt_url, &device_id)?;
-    let mut node = Node::new(device_id, transport, led, settings);
+    let mut node = Node::new(device_id, transport, led, external_led, climate, settings);
 
     let mut last_wifi_check = Instant::now();
     let mut last_heartbeat = Instant::now();
+    let mut last_climate_read: Option<Instant> = None;
     loop {
         if last_wifi_check.elapsed() >= node.settings().interval(WIFI_CHECK_INTERVAL) {
             wifi::ensure_connected(&mut wifi)?;
@@ -57,6 +64,10 @@ fn main() -> anyhow::Result<()> {
         if last_heartbeat.elapsed() >= node.settings().interval(HEARTBEAT_INTERVAL) {
             node.send_heartbeat(uptime_seconds(), wifi::rssi())?;
             last_heartbeat = Instant::now();
+        }
+        if last_climate_read.is_none_or(|last| last.elapsed() >= CLIMATE_READ_INTERVAL) {
+            node.read_climate()?;
+            last_climate_read = Some(Instant::now());
         }
         node.poll()?;
         if let Some(event) = button.poll() {

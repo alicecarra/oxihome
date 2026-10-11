@@ -4,15 +4,20 @@ use esp_idf_svc::hal::gpio::{Output, PinDriver};
 use oxihome_protocol::management::{self, PARAMETERS};
 use oxihome_protocol::{
     Access, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, ErrorCode, EventKind,
-    Message, Payload, QueryKind, Value, ValueType,
+    Message, Payload, Quantity, QueryKind, Unit, Value, ValueType,
 };
 
+use crate::climate::Climate;
 use crate::settings::Settings;
 use crate::transport::{Transport, TransportEvent};
 
 pub const LED_ENTITY: u8 = 1;
 pub const BUTTON_ENTITY: u8 = 2;
+pub const CLIMATE_ENTITY: u8 = 3;
+pub const EXTERNAL_LED_ENTITY: u8 = 4;
 const MAIN_CHANNEL: u8 = 0;
+const TEMPERATURE_CHANNEL: u8 = 0;
+const HUMIDITY_CHANNEL: u8 = 1;
 
 struct HandledCommand {
     message_id: u32,
@@ -24,6 +29,8 @@ pub struct Node<T: Transport> {
     device_id: String,
     transport: T,
     led: PinDriver<'static, Output>,
+    external_led: PinDriver<'static, Output>,
+    climate: Climate,
     settings: Settings,
     next_message_id: u32,
     /// Last command per sender, to answer duplicates without running them again.
@@ -35,12 +42,16 @@ impl<T: Transport> Node<T> {
         device_id: String,
         transport: T,
         led: PinDriver<'static, Output>,
+        external_led: PinDriver<'static, Output>,
+        climate: Climate,
         settings: Settings,
     ) -> Self {
         Self {
             device_id,
             transport,
             led,
+            external_led,
+            climate,
             settings,
             next_message_id: 0,
             last_commands: HashMap::new(),
@@ -71,7 +82,7 @@ impl<T: Transport> Node<T> {
         // Hardcoded local binding: press toggles the LED.
         if event == EventKind::Press {
             self.led.toggle()?;
-            self.send_led_state(None)?;
+            self.send_led_state(LED_ENTITY, None)?;
         }
         Ok(())
     }
@@ -87,6 +98,14 @@ impl<T: Transport> Node<T> {
         )
     }
 
+    /// Sends the reading as `State`; a failed read sends nothing.
+    pub fn read_climate(&mut self) -> anyhow::Result<()> {
+        match self.climate.read() {
+            Some(_) => self.send_climate_state(None),
+            None => Ok(()),
+        }
+    }
+
     pub fn settings(&self) -> &Settings {
         &self.settings
     }
@@ -94,7 +113,9 @@ impl<T: Transport> Node<T> {
     fn announce(&mut self) -> anyhow::Result<()> {
         self.send_hello(None)?;
         self.send_management_state(None)?;
-        self.send_led_state(None)
+        self.send_led_state(LED_ENTITY, None)?;
+        self.send_led_state(EXTERNAL_LED_ENTITY, None)?;
+        self.send_climate_state(None)
     }
 
     fn handle_bytes(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
@@ -136,7 +157,9 @@ impl<T: Transport> Node<T> {
                 what: QueryKind::State { entity: None },
             } => {
                 self.send_management_state(reply_to)?;
-                self.send_led_state(reply_to)
+                self.send_led_state(LED_ENTITY, reply_to)?;
+                self.send_led_state(EXTERNAL_LED_ENTITY, reply_to)?;
+                self.send_climate_state(reply_to)
             }
             Payload::Query {
                 what:
@@ -147,9 +170,23 @@ impl<T: Transport> Node<T> {
             Payload::Query {
                 what:
                     QueryKind::State {
-                        entity: Some(LED_ENTITY),
+                        entity: Some(entity @ (LED_ENTITY | EXTERNAL_LED_ENTITY)),
                     },
-            } => self.send_led_state(reply_to),
+            } => self.send_led_state(entity, reply_to),
+            Payload::Query {
+                what:
+                    QueryKind::State {
+                        entity: Some(CLIMATE_ENTITY),
+                    },
+            } if self.climate.last().is_none() => {
+                self.send_error(ErrorCode::Internal, "no DHT11 reading yet".into(), reply_to)
+            }
+            Payload::Query {
+                what:
+                    QueryKind::State {
+                        entity: Some(CLIMATE_ENTITY),
+                    },
+            } => self.send_climate_state(reply_to),
             Payload::Query {
                 what:
                     QueryKind::State {
@@ -190,26 +227,27 @@ impl<T: Transport> Node<T> {
 
         let rejection = match (entity, channel, op) {
             (management::ENTITY, channel, op) => self.configure(channel, op),
-            (LED_ENTITY, MAIN_CHANNEL, CommandOp::Set(Value::Bool(on))) => {
-                let result = if on {
-                    self.led.set_high()
-                } else {
-                    self.led.set_low()
-                };
+            (LED_ENTITY | EXTERNAL_LED_ENTITY, MAIN_CHANNEL, CommandOp::Set(Value::Bool(on))) => {
+                let pin = self.led_pin(entity);
+                let result = if on { pin.set_high() } else { pin.set_low() };
                 match result {
                     Ok(()) => None,
                     Err(error) => Some((ErrorCode::Internal, format!("LED: {error}"))),
                 }
             }
-            (LED_ENTITY, MAIN_CHANNEL, CommandOp::Set(value)) => Some((
+            (LED_ENTITY | EXTERNAL_LED_ENTITY, MAIN_CHANNEL, CommandOp::Set(value)) => Some((
                 ErrorCode::InvalidValue,
                 format!("expected Bool, got {value:?}"),
             )),
-            (LED_ENTITY | BUTTON_ENTITY, MAIN_CHANNEL, op) => Some((
+            (LED_ENTITY | BUTTON_ENTITY | EXTERNAL_LED_ENTITY, MAIN_CHANNEL, op) => Some((
                 ErrorCode::InvalidOperation,
                 format!("{op:?} not allowed on entity {entity} channel {channel}"),
             )),
-            (LED_ENTITY | BUTTON_ENTITY, _, _) => Some((
+            (CLIMATE_ENTITY, TEMPERATURE_CHANNEL | HUMIDITY_CHANNEL, op) => Some((
+                ErrorCode::InvalidOperation,
+                format!("{op:?} not allowed on entity {entity} channel {channel}"),
+            )),
+            (LED_ENTITY | BUTTON_ENTITY | CLIMATE_ENTITY | EXTERNAL_LED_ENTITY, _, _) => Some((
                 ErrorCode::UnknownChannel,
                 format!("entity {entity} has no channel {channel}"),
             )),
@@ -232,7 +270,16 @@ impl<T: Transport> Node<T> {
         if entity == management::ENTITY {
             self.send_management_state(None)
         } else {
-            self.send_led_state(None)
+            self.send_led_state(entity, None)
+        }
+    }
+
+    /// Only called with `LED_ENTITY` or `EXTERNAL_LED_ENTITY`.
+    fn led_pin(&mut self, entity: u8) -> &mut PinDriver<'static, Output> {
+        if entity == EXTERNAL_LED_ENTITY {
+            &mut self.external_led
+        } else {
+            &mut self.led
         }
     }
 
@@ -274,16 +321,7 @@ impl<T: Transport> Node<T> {
     fn send_hello(&mut self, reply_to: Option<u32>) -> anyhow::Result<()> {
         let entities = vec![
             management::descriptor(),
-            EntityDescriptor {
-                id: LED_ENTITY,
-                channels: vec![Channel {
-                    id: MAIN_CHANNEL,
-                    access: Access::ReadWrite,
-                    value: Some(ValueType::Bool),
-                    quantity: None,
-                    unit: None,
-                }],
-            },
+            led_descriptor(LED_ENTITY),
             EntityDescriptor {
                 id: BUTTON_ENTITY,
                 channels: vec![Channel {
@@ -294,6 +332,34 @@ impl<T: Transport> Node<T> {
                     unit: None,
                 }],
             },
+            EntityDescriptor {
+                id: CLIMATE_ENTITY,
+                channels: vec![
+                    Channel {
+                        id: TEMPERATURE_CHANNEL,
+                        access: Access::Read,
+                        value: Some(ValueType::Float {
+                            min: 0.0,
+                            max: 50.0,
+                            step: 1.0,
+                        }),
+                        quantity: Some(Quantity::Temperature),
+                        unit: Some(Unit::Celsius),
+                    },
+                    Channel {
+                        id: HUMIDITY_CHANNEL,
+                        access: Access::Read,
+                        value: Some(ValueType::Float {
+                            min: 20.0,
+                            max: 90.0,
+                            step: 1.0,
+                        }),
+                        quantity: Some(Quantity::Humidity),
+                        unit: Some(Unit::Percent),
+                    },
+                ],
+            },
+            led_descriptor(EXTERNAL_LED_ENTITY),
         ];
 
         self.send(
@@ -323,15 +389,41 @@ impl<T: Transport> Node<T> {
         )
     }
 
-    fn send_led_state(&mut self, reply_to: Option<u32>) -> anyhow::Result<()> {
+    fn send_led_state(&mut self, entity: u8, reply_to: Option<u32>) -> anyhow::Result<()> {
+        let on = self.led_pin(entity).is_set_high();
         self.send(
             Payload::State {
-                entity: LED_ENTITY,
+                entity,
                 values: vec![ChannelValue {
                     channel: MAIN_CHANNEL,
-                    value: Value::Bool(self.led.is_set_high()),
+                    value: Value::Bool(on),
                     confidence: Confidence::Confirmed,
                 }],
+            },
+            reply_to,
+        )
+    }
+
+    /// Nothing to send before the first good reading.
+    fn send_climate_state(&mut self, reply_to: Option<u32>) -> anyhow::Result<()> {
+        let Some(reading) = self.climate.last() else {
+            return Ok(());
+        };
+        self.send(
+            Payload::State {
+                entity: CLIMATE_ENTITY,
+                values: vec![
+                    ChannelValue {
+                        channel: TEMPERATURE_CHANNEL,
+                        value: Value::Float(reading.temperature.into()),
+                        confidence: Confidence::Confirmed,
+                    },
+                    ChannelValue {
+                        channel: HUMIDITY_CHANNEL,
+                        value: Value::Float(reading.relative_humidity.into()),
+                        confidence: Confidence::Confirmed,
+                    },
+                ],
             },
             reply_to,
         )
@@ -364,5 +456,18 @@ impl<T: Transport> Node<T> {
         }
         self.next_message_id = self.next_message_id.wrapping_add(1);
         Ok(message.to_json()?.into_bytes())
+    }
+}
+
+fn led_descriptor(entity: u8) -> EntityDescriptor {
+    EntityDescriptor {
+        id: entity,
+        channels: vec![Channel {
+            id: MAIN_CHANNEL,
+            access: Access::ReadWrite,
+            value: Some(ValueType::Bool),
+            quantity: None,
+            unit: None,
+        }],
     }
 }
