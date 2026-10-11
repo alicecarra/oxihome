@@ -59,6 +59,9 @@ pub async fn on_message(hub: &Arc<Hub>, message: &Message) -> anyhow::Result<()>
 
     for update in updates {
         println!("{update}");
+        for rule in hub.crossed_rules(&update) {
+            tokio::spawn(rules::run(hub.clone(), rule));
+        }
     }
 
     if let Some(event) = event {

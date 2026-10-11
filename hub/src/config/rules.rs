@@ -7,11 +7,12 @@ use croner::Cron;
 use croner::parser::{CronParser, Seconds, Year};
 use jiff::civil::{DateTime, Time, Weekday};
 use jiff::{ToSpan, Zoned};
-use oxihome_protocol::{EventKind, Value};
+use oxihome_protocol::{Confidence, EventKind, Value};
 use serde::Deserialize;
 
 use crate::hub::Hub;
 use crate::node::events::EventRecord;
+use crate::node::state::ChannelUpdate;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Rule {
@@ -28,13 +29,14 @@ pub enum Trigger {
     Event(EventTrigger),
     Schedule(ScheduleTrigger),
     Cron(CronTrigger),
+    Threshold(ThresholdTrigger),
 }
 
 impl Trigger {
     /// The first run strictly after `now`; `None` for event rules.
     pub fn next_run(&self, now: &Zoned) -> Option<Zoned> {
         match self {
-            Trigger::Event(_) => None,
+            Trigger::Event(_) | Trigger::Threshold(_) => None,
             Trigger::Schedule(trigger) => trigger.next_run(now),
             Trigger::Cron(trigger) => trigger.cron.find_next_occurrence(now, false).ok(),
         }
@@ -42,7 +44,7 @@ impl Trigger {
 
     fn is_due(&self, minute: DateTime) -> bool {
         match self {
-            Trigger::Event(_) => false,
+            Trigger::Event(_) | Trigger::Threshold(_) => false,
             Trigger::Schedule(trigger) => trigger.is_due(minute),
             Trigger::Cron(trigger) => trigger.cron.is_time_matching(&minute).unwrap_or(false),
         }
@@ -57,6 +59,8 @@ struct TriggerFields {
     entity: Option<u8>,
     channel: Option<u8>,
     event: Option<EventKind>,
+    above: Option<f32>,
+    below: Option<f32>,
     at: Option<Time>,
     #[serde(default)]
     days: Vec<Day>,
@@ -67,12 +71,49 @@ impl TryFrom<TriggerFields> for Trigger {
     type Error = String;
 
     fn try_from(fields: TriggerFields) -> Result<Self, String> {
-        let has_event_fields = fields.device.is_some()
+        let channel_kinds = [
+            fields.event.is_some(),
+            fields.above.is_some(),
+            fields.below.is_some(),
+        ]
+        .into_iter()
+        .filter(|present| *present)
+        .count();
+        let is_channel_trigger = channel_kinds > 0
+            || fields.device.is_some()
             || fields.entity.is_some()
-            || fields.channel.is_some()
-            || fields.event.is_some();
-        if has_event_fields && (fields.at.is_some() || fields.cron.is_some()) {
-            return Err("an event trigger cannot have `at` or `cron`".into());
+            || fields.channel.is_some();
+        if is_channel_trigger {
+            if fields.at.is_some() || fields.cron.is_some() || !fields.days.is_empty() {
+                return Err("a channel trigger cannot have `at`, `days` or `cron`".into());
+            }
+            if channel_kinds > 1 {
+                return Err("use only one of `event`, `above` and `below`".into());
+            }
+            let (Some(device), Some(entity), Some(channel)) =
+                (fields.device, fields.entity, fields.channel)
+            else {
+                return Err("a channel trigger needs `device`, `entity` and `channel`".into());
+            };
+            let limit = match (fields.event, fields.above, fields.below) {
+                (Some(event), _, _) => {
+                    return Ok(Trigger::Event(EventTrigger {
+                        device,
+                        entity,
+                        channel,
+                        event,
+                    }));
+                }
+                (_, Some(above), _) => Limit::Above(above),
+                (_, _, Some(below)) => Limit::Below(below),
+                _ => return Err("a channel trigger needs `event`, `above` or `below`".into()),
+            };
+            return Ok(Trigger::Threshold(ThresholdTrigger {
+                device,
+                entity,
+                channel,
+                limit,
+            }));
         }
         if fields.at.is_some() && fields.cron.is_some() {
             return Err("use either `at` or `cron`, not both".into());
@@ -90,23 +131,44 @@ impl TryFrom<TriggerFields> for Trigger {
         if !fields.days.is_empty() {
             return Err("`days` needs `at`".into());
         }
-        match (fields.device, fields.entity, fields.channel, fields.event) {
-            (Some(device), Some(entity), Some(channel), Some(event)) => {
-                Ok(Trigger::Event(EventTrigger {
-                    device,
-                    entity,
-                    channel,
-                    event,
-                }))
-            }
-            _ if has_event_fields => {
-                Err("an event trigger needs `device`, `entity`, `channel` and `event`".into())
-            }
-            _ => Err(
-                "`when` needs an event (`device`, `entity`, `channel`, `event`), `at` or `cron`"
-                    .into(),
-            ),
+        Err("`when` needs an event or a limit on a channel (`device`, `entity`, `channel`), `at` or `cron`".into())
+    }
+}
+
+/// Runs when a confirmed numeric value crosses the limit, not again while it stays past it.
+/// The first known value of the channel counts as a crossing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThresholdTrigger {
+    pub device: String,
+    pub entity: u8,
+    pub channel: u8,
+    pub limit: Limit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Limit {
+    Above(f32),
+    Below(f32),
+}
+
+impl Limit {
+    fn crossed(self, previous: Option<&Value>, value: &Value) -> bool {
+        let Some(now) = number(value) else {
+            return false;
+        };
+        let before = previous.and_then(number);
+        match self {
+            Limit::Above(limit) => now > limit && before.is_none_or(|before| before <= limit),
+            Limit::Below(limit) => now < limit && before.is_none_or(|before| before >= limit),
         }
+    }
+}
+
+fn number(value: &Value) -> Option<f32> {
+    match value {
+        Value::Int(number) => Some(*number as f32),
+        Value::Float(number) => Some(*number),
+        _ => None,
     }
 }
 
@@ -270,6 +332,23 @@ impl Rules {
                             && trigger.entity == event.entity
                             && trigger.channel == event.channel
                             && trigger.event == event.kind)
+            })
+            .collect()
+    }
+
+    pub fn crossed(&self, update: &ChannelUpdate) -> Vec<&Rule> {
+        if update.confidence != Confidence::Confirmed {
+            return Vec::new();
+        }
+        self.rules
+            .iter()
+            .filter(|rule| {
+                rule.enabled
+                    && matches!(&rule.when, Trigger::Threshold(trigger)
+                        if trigger.device == update.device_id
+                            && trigger.entity == update.entity
+                            && trigger.channel == update.channel
+                            && trigger.limit.crossed(update.previous.as_ref(), &update.value))
             })
             .collect()
     }
@@ -545,5 +624,112 @@ mod tests {
         assert!(error(r#"{ device = "sim-bedroom", entity = 1, channel = 0, event = "Press", at = "07:00" }"#).contains("cannot have"));
         assert!(error(r#"{ at = "07:00", day = ["monday"] }"#).contains("unknown field"));
         assert!(error("{}").contains("needs an event"));
+    }
+
+    const THRESHOLDS: &str = r#"
+        [[rules]]
+        name = "Hot"
+        when = { device = "sim-living-room", entity = 3, channel = 0, above = 28 }
+        then = []
+
+        [[rules]]
+        name = "Cooled down"
+        when = { device = "sim-living-room", entity = 3, channel = 0, below = 27 }
+        then = []
+
+        [[rules]]
+        name = "Disabled"
+        enabled = false
+        when = { device = "sim-living-room", entity = 3, channel = 0, above = 28 }
+        then = []
+    "#;
+
+    fn reading(value: Value, previous: Option<Value>) -> ChannelUpdate {
+        ChannelUpdate {
+            device_id: "sim-living-room".into(),
+            entity: 3,
+            channel: 0,
+            value,
+            confidence: Confidence::Confirmed,
+            previous,
+        }
+    }
+
+    fn crossed(update: ChannelUpdate) -> Vec<String> {
+        let rules: Rules = toml::from_str(THRESHOLDS).unwrap();
+        rules
+            .crossed(&update)
+            .into_iter()
+            .map(|rule| rule.name.clone())
+            .collect()
+    }
+
+    #[test]
+    fn limits_run_when_the_value_crosses_them() {
+        let float = Value::Float;
+        assert_eq!(crossed(reading(float(29.0), Some(float(27.5)))), ["Hot"]);
+        assert_eq!(
+            crossed(reading(float(26.0), Some(float(27.5)))),
+            ["Cooled down"]
+        );
+        assert_eq!(
+            crossed(reading(float(28.0), Some(float(27.0)))),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn staying_past_the_limit_runs_nothing() {
+        let float = Value::Float;
+        assert!(crossed(reading(float(30.0), Some(float(29.0)))).is_empty());
+        assert!(crossed(reading(float(25.0), Some(float(26.0)))).is_empty());
+    }
+
+    #[test]
+    fn hysteresis_band_runs_nothing() {
+        let float = Value::Float;
+        assert!(crossed(reading(float(27.5), Some(float(28.5)))).is_empty());
+        assert!(crossed(reading(float(27.5), Some(float(26.5)))).is_empty());
+    }
+
+    #[test]
+    fn first_known_value_counts_as_crossing() {
+        assert_eq!(crossed(reading(Value::Float(30.0), None)), ["Hot"]);
+        assert_eq!(crossed(reading(Value::Int(20), None)), ["Cooled down"]);
+    }
+
+    #[test]
+    fn assumed_and_non_numeric_values_run_nothing() {
+        let mut assumed = reading(Value::Float(30.0), Some(Value::Float(20.0)));
+        assumed.confidence = Confidence::Assumed;
+        assert!(crossed(assumed).is_empty());
+        assert!(crossed(reading(Value::Bool(true), None)).is_empty());
+    }
+
+    #[test]
+    fn threshold_triggers_parse_and_reject_mixtures() {
+        assert_eq!(
+            when(r#"{ device = "sim-living-room", entity = 3, channel = 1, below = 40.5 }"#),
+            Ok(Trigger::Threshold(ThresholdTrigger {
+                device: "sim-living-room".into(),
+                entity: 3,
+                channel: 1,
+                limit: Limit::Below(40.5),
+            }))
+        );
+        let error = |text: &str| when(text).unwrap_err();
+        assert!(
+            error(r#"{ device = "a", entity = 3, channel = 0, above = 28, below = 27 }"#)
+                .contains("only one of")
+        );
+        assert!(
+            error(r#"{ device = "a", entity = 3, channel = 0, above = 28, at = "07:00" }"#)
+                .contains("cannot have")
+        );
+        assert!(error(r#"{ above = 28 }"#).contains("needs `device`"));
+        assert!(
+            error(r#"{ device = "a", entity = 3, channel = 0 }"#)
+                .contains("needs `event`, `above` or `below`")
+        );
     }
 }

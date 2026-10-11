@@ -10,6 +10,8 @@ pub struct ChannelUpdate {
     pub channel: u8,
     pub value: Value,
     pub confidence: Confidence,
+    /// The value before this one, whatever its confidence; `None` for the first.
+    pub previous: Option<Value>,
 }
 
 impl fmt::Display for ChannelUpdate {
@@ -79,13 +81,14 @@ impl State {
         if self.values.get(&key) == Some(&current) {
             return None;
         }
-        self.values.insert(key, current);
+        let previous = self.values.insert(key, current).map(|(value, _)| value);
         Some(ChannelUpdate {
             device_id: device_id.to_string(),
             entity,
             channel,
             value,
             confidence,
+            previous,
         })
     }
 }
@@ -113,20 +116,21 @@ mod tests {
         )
     }
 
-    fn update(on: bool) -> ChannelUpdate {
+    fn update(on: bool, previous: Option<bool>) -> ChannelUpdate {
         ChannelUpdate {
             device_id: DEVICE.into(),
             entity: 1,
             channel: 0,
             value: Value::Bool(on),
             confidence: Confidence::Confirmed,
+            previous: previous.map(Value::Bool),
         }
     }
 
     #[test]
     fn first_value_is_reported() {
         let mut state = State::default();
-        assert_eq!(state.apply(&state_message(true)), vec![update(true)]);
+        assert_eq!(state.apply(&state_message(true)), vec![update(true, None)]);
     }
 
     #[test]
@@ -144,13 +148,19 @@ mod tests {
         let assumed = state.assume(DEVICE, 1, 0, Value::Bool(true)).unwrap();
         assert_eq!(assumed.confidence, Confidence::Assumed);
         assert_eq!(state.value(DEVICE, 1, 0), Some(&Value::Bool(true)));
-        assert_eq!(state.apply(&state_message(true)), vec![update(true)]);
+        assert_eq!(
+            state.apply(&state_message(true)),
+            vec![update(true, Some(true))]
+        );
     }
 
     #[test]
     fn changed_value_is_reported() {
         let mut state = State::default();
         state.apply(&state_message(true));
-        assert_eq!(state.apply(&state_message(false)), vec![update(false)]);
+        assert_eq!(
+            state.apply(&state_message(false)),
+            vec![update(false, Some(true))]
+        );
     }
 }

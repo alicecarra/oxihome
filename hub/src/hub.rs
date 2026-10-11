@@ -247,6 +247,16 @@ impl Hub {
             .collect()
     }
 
+    pub fn crossed_rules(&self, update: &ChannelUpdate) -> Vec<Rule> {
+        self.rules
+            .lock()
+            .unwrap()
+            .crossed(update)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
     pub fn due_rules(&self, minute: DateTime) -> Vec<Rule> {
         self.rules
             .lock()

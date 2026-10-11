@@ -6,10 +6,13 @@ use jiff::Zoned;
 use oxihome_protocol::management::{self, PARAMETERS, Parameter};
 use oxihome_protocol::{Access, EventKind, Quantity, Unit, Value, ValueType};
 
-use super::format::{channel_label, entity_label};
+use super::format::{channel_label, entity_label, value_label};
 use crate::config::names::{NameTarget, Names};
-use crate::config::rules::{Action, CronTrigger, Day, EventTrigger, ScheduleTrigger, Trigger};
+use crate::config::rules::{
+    Action, CronTrigger, Day, EventTrigger, Limit, ScheduleTrigger, ThresholdTrigger, Trigger,
+};
 use crate::hub::{Hub, Snapshot};
+use crate::node::registry::Registry;
 
 pub struct NodeOverview {
     pub device_id: String,
@@ -167,7 +170,7 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
     rules
         .into_iter()
         .map(|rule| RuleOverview {
-            trigger: trigger_description(&snapshot.names, &rule.when),
+            trigger: trigger_description(&snapshot.names, &snapshot.registry, &rule.when),
             next_run: rule
                 .when
                 .next_run(&local_now)
@@ -187,16 +190,23 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
         .collect()
 }
 
-fn trigger_description(names: &Names, trigger: &Trigger) -> String {
+fn trigger_description(names: &Names, registry: &Registry, trigger: &Trigger) -> String {
     match trigger {
         Trigger::Event(trigger) => event_description(names, trigger),
+        Trigger::Threshold(trigger) => threshold_description(names, registry, trigger),
         Trigger::Schedule(trigger) => schedule_description(trigger),
         Trigger::Cron(trigger) => cron_description(trigger),
     }
 }
 
 fn event_description(names: &Names, trigger: &EventTrigger) -> String {
-    let target = channel_description(names, &trigger.device, trigger.entity, trigger.channel);
+    let target = channel_description(
+        names,
+        &trigger.device,
+        trigger.entity,
+        trigger.channel,
+        None,
+    );
     format!("{target}: {:?}", trigger.event)
 }
 
@@ -209,6 +219,39 @@ const ALL_DAYS: [Day; 7] = [
     Day::Saturday,
     Day::Sunday,
 ];
+
+/// `Living room › Climate sensor: above 28.0 °C`, with the unit the node declares.
+fn threshold_description(names: &Names, registry: &Registry, trigger: &ThresholdTrigger) -> String {
+    let declared = registry
+        .node(&trigger.device)
+        .and_then(|node| {
+            node.entities
+                .iter()
+                .find(|entity| entity.id == trigger.entity)
+        })
+        .and_then(|entity| {
+            entity
+                .channels
+                .iter()
+                .find(|channel| channel.id == trigger.channel)
+        });
+    let target = channel_description(
+        names,
+        &trigger.device,
+        trigger.entity,
+        trigger.channel,
+        declared.and_then(|channel| channel.quantity),
+    );
+    let unit = declared.and_then(|channel| channel.unit);
+    let (word, limit) = match trigger.limit {
+        Limit::Above(limit) => ("above", limit),
+        Limit::Below(limit) => ("below", limit),
+    };
+    format!(
+        "{target}: {word} {}",
+        value_label(&Value::Float(limit), unit)
+    )
+}
 
 fn schedule_description(trigger: &ScheduleTrigger) -> String {
     let has_exactly = |days: &[Day]| {
@@ -263,7 +306,7 @@ fn action_description(names: &Names, action: &Action) -> String {
             value,
         } => format!(
             "Set {} to {}",
-            channel_description(names, device, *entity, *channel),
+            channel_description(names, device, *entity, *channel, None),
             if *value { "on" } else { "off" }
         ),
         Action::Toggle {
@@ -272,14 +315,20 @@ fn action_description(names: &Names, action: &Action) -> String {
             channel,
         } => format!(
             "Toggle {}",
-            channel_description(names, device, *entity, *channel)
+            channel_description(names, device, *entity, *channel, None)
         ),
         Action::Notify { title, message } => format!("Notify \"{title}\": {message}"),
     }
 }
 
 /// `Test board › LED`; the channel only shows when it is not the entity's first.
-fn channel_description(names: &Names, device_id: &str, entity: u8, channel: u8) -> String {
+fn channel_description(
+    names: &Names,
+    device_id: &str,
+    entity: u8,
+    channel: u8,
+    quantity: Option<Quantity>,
+) -> String {
     let name = |target: NameTarget| names.get(&target).map(String::from);
     let node =
         name(NameTarget::Node(device_id.to_string())).unwrap_or_else(|| device_id.to_string());
@@ -293,7 +342,7 @@ fn channel_description(names: &Names, device_id: &str, entity: u8, channel: u8) 
     let channel_name = channel_label(
         channel,
         &name(NameTarget::Channel(device_id.to_string(), entity, channel)),
-        None,
+        quantity,
     );
     format!("{node} › {entity_name} · {channel_name}")
 }
@@ -371,6 +420,39 @@ mod tests {
     }
 
     #[test]
+    fn threshold_description_uses_the_declared_unit() {
+        let mut registry = Registry::new(3);
+        let hello = oxihome_protocol::Message::new(
+            "esp32-test",
+            0,
+            oxihome_protocol::Payload::Hello {
+                fw_version: "0.6.0".into(),
+                entities: vec![oxihome_protocol::EntityDescriptor {
+                    id: 3,
+                    channels: vec![oxihome_protocol::Channel {
+                        id: 1,
+                        access: Access::Read,
+                        value: None,
+                        quantity: Some(Quantity::Humidity),
+                        unit: Some(Unit::Percent),
+                    }],
+                }],
+            },
+        );
+        registry.handle(&hello, Instant::now());
+        let trigger = ThresholdTrigger {
+            device: "esp32-test".into(),
+            entity: 3,
+            channel: 1,
+            limit: Limit::Above(85.0),
+        };
+        assert_eq!(
+            threshold_description(&names(), &registry, &trigger),
+            "Test board › entity 3 · Humidity: above 85.0 %"
+        );
+    }
+
+    #[test]
     fn cron_description_shows_the_expression() {
         let rules: crate::config::rules::Rules = toml::from_str(
             r#"
@@ -382,7 +464,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            trigger_description(&names(), &rules.all()[0].when),
+            trigger_description(&names(), &Registry::new(3), &rules.all()[0].when),
             "At every 30 minutes, of hour 8-22, on Monday, Tuesday, Wednesday, Thursday, and Friday (*/30 8-22 * * mon-fri)"
         );
     }

@@ -1,40 +1,56 @@
 [[rules]]
-name = "Living room button toggles bedroom lamp"
-when = { device = "sim-living-room", entity = 2, channel = 0, event = "Press" }
-then = [{ toggle = { device = "sim-bedroom", entity = 1, channel = 0 } }]
-
-[[rules]]
 name = "Test board button held down"
 when = { device = "esp32-08d1f9ca41e4", entity = 2, channel = 0, event = "LongPress" }
-then = [{ notify = { title = "Test board", message = "BOOT button held down" } }]
+then = [
+    { notify = { title = "Test board", message = "BOOT button held down" } },
+]
 
 [[rules]]
 name = "Disabled rule"
 enabled = false
 when = { device = "esp32-08d1f9ca41e4", entity = 2, channel = 0, event = "LongPress" }
-then = [{ notify = { title = "Disabled message", message = "why are you seeing this???" } }]
+then = [
+    { notify = { title = "Disabled message", message = "why are you seeing this???" } },
+]
 
-[[rules]]
-name = "Bedroom lamp off at night"
-when = { at = "23:00" }
-then = [{ set = { device = "sim-bedroom", entity = 1, channel = 0, value = false } }]
 
 [[rules]]
 name = "Test board LED on for waking up"
-when = { at = "07:00", days = ["monday", "tuesday", "wednesday", "thursday", "friday"] }
-then = [{ set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = true } }]
-
-[[rules]]
-name = "Test board LED off late on weeknights"
-when = { cron = "30 23 * * mon-fri" }
-then = [{ set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = false } }]
+when = { at = "07:00", days = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+] }
+then = [
+    { set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = true } },
+]
 
 [[rules]]
 name = "Test board LED blinks: on at even minutes"
 when = { cron = "*/2 * * * *" }
-then = [{ set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = true } }]
+then = [
+    { set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = true } },
+]
 
 [[rules]]
 name = "Test board LED blinks: off at odd minutes"
 when = { cron = "1-59/2 * * * *" }
-then = [{ set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = false } }]
+then = [
+    { set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = false } },
+]
+
+[[rules]]
+name = "Living room hot: external LED on"
+when = { device = "sim-living-room", entity = 3, channel = 0, above = 28 }
+then = [
+    { set = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0, value = true } },
+]
+
+[[rules]]
+name = "Living room cooled down: external LED off"
+when = { device = "sim-living-room", entity = 3, channel = 0, below = 27 }
+then = [
+    { set = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0, value = false } },
+]

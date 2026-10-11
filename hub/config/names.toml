@@ -5,6 +5,8 @@
 name = "Test board"
 entities.1 = { name = "LED", channels.0 = "Power" }
 entities.2 = { name = "BOOT button", channels.0 = "Press" }
+entities.3 = { name = "Climate sensor" }
+entities.4 = { name = "External LED", channels.0 = "Power" }
 
 [nodes."sim-living-room"]
 name = "Living room (simulated)"
