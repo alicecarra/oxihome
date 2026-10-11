@@ -2,12 +2,13 @@
 
 use std::time::{Duration, Instant};
 
+use jiff::Zoned;
 use oxihome_protocol::management::{self, PARAMETERS, Parameter};
 use oxihome_protocol::{Access, EventKind, Quantity, Unit, Value, ValueType};
 
 use super::format::{channel_label, entity_label};
 use crate::config::names::{NameTarget, Names};
-use crate::config::rules::{Action, EventTrigger};
+use crate::config::rules::{Action, Day, EventTrigger, ScheduleTrigger, Trigger};
 use crate::hub::{Hub, Snapshot};
 
 pub struct NodeOverview {
@@ -52,6 +53,8 @@ pub struct RuleOverview {
     pub trigger: String,
     pub actions: Vec<String>,
     pub enabled: bool,
+    /// Scheduled rules only.
+    pub next_run: Option<String>,
     /// How long ago it ran and the errors of the actions that failed.
     pub last_run: Option<(Duration, Vec<String>)>,
 }
@@ -160,10 +163,17 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
     let mut runs = hub.rule_runs();
     let snapshot = hub.snapshot();
     let now = Instant::now();
+    let local_now = Zoned::now().with_time_zone(hub.time_zone().clone());
     rules
         .into_iter()
         .map(|rule| RuleOverview {
             trigger: trigger_description(&snapshot.names, &rule.when),
+            next_run: match &rule.when {
+                Trigger::Schedule(trigger) if rule.enabled => trigger
+                    .next_run(&local_now)
+                    .map(|run| next_run_description(&local_now, &run)),
+                _ => None,
+            },
             actions: rule
                 .then
                 .iter()
@@ -178,9 +188,64 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
         .collect()
 }
 
-fn trigger_description(names: &Names, trigger: &EventTrigger) -> String {
+fn trigger_description(names: &Names, trigger: &Trigger) -> String {
+    match trigger {
+        Trigger::Event(trigger) => event_description(names, trigger),
+        Trigger::Schedule(trigger) => schedule_description(trigger),
+    }
+}
+
+fn event_description(names: &Names, trigger: &EventTrigger) -> String {
     let target = channel_description(names, &trigger.device, trigger.entity, trigger.channel);
     format!("{target}: {:?}", trigger.event)
+}
+
+const ALL_DAYS: [Day; 7] = [
+    Day::Monday,
+    Day::Tuesday,
+    Day::Wednesday,
+    Day::Thursday,
+    Day::Friday,
+    Day::Saturday,
+    Day::Sunday,
+];
+
+fn schedule_description(trigger: &ScheduleTrigger) -> String {
+    let has_exactly = |days: &[Day]| {
+        trigger.days.iter().all(|day| days.contains(day))
+            && days.iter().all(|day| trigger.days.contains(day))
+    };
+    let days = if trigger.days.is_empty() || has_exactly(&ALL_DAYS) {
+        "Every day".to_string()
+    } else if has_exactly(&ALL_DAYS[..5]) {
+        "Weekdays".to_string()
+    } else if has_exactly(&[Day::Saturday, Day::Sunday]) {
+        "Weekends".to_string()
+    } else {
+        ALL_DAYS
+            .iter()
+            .filter(|day| trigger.days.contains(day))
+            .map(|day| format!("{day:?}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!("{days} at {}", trigger.at.strftime("%H:%M"))
+}
+
+/// `today 23:00`, `tomorrow 07:00` or `Monday 07:00`.
+fn next_run_description(now: &Zoned, run: &Zoned) -> String {
+    let day = if run.date() == now.date() {
+        "today".to_string()
+    } else if now
+        .date()
+        .tomorrow()
+        .is_ok_and(|tomorrow| tomorrow == run.date())
+    {
+        "tomorrow".to_string()
+    } else {
+        run.strftime("%A").to_string()
+    };
+    format!("{day} {}", run.strftime("%H:%M"))
 }
 
 fn action_description(names: &Names, action: &Action) -> String {
@@ -252,7 +317,7 @@ mod tests {
             event: EventKind::LongPress,
         };
         assert_eq!(
-            trigger_description(&names(), &trigger),
+            event_description(&names(), &trigger),
             "Test board › BOOT button: LongPress"
         );
     }
@@ -266,8 +331,56 @@ mod tests {
             event: EventKind::Press,
         };
         assert_eq!(
-            trigger_description(&names(), &trigger),
+            event_description(&names(), &trigger),
             "sim-unknown › entity 3: Press"
+        );
+    }
+
+    fn schedule(days: &[Day]) -> ScheduleTrigger {
+        ScheduleTrigger {
+            at: "07:00".parse().unwrap(),
+            days: days.to_vec(),
+        }
+    }
+
+    #[test]
+    fn schedule_descriptions() {
+        assert_eq!(schedule_description(&schedule(&[])), "Every day at 07:00");
+        assert_eq!(
+            schedule_description(&schedule(&ALL_DAYS)),
+            "Every day at 07:00"
+        );
+        assert_eq!(
+            schedule_description(&schedule(&ALL_DAYS[..5])),
+            "Weekdays at 07:00"
+        );
+        assert_eq!(
+            schedule_description(&schedule(&[Day::Sunday, Day::Saturday])),
+            "Weekends at 07:00"
+        );
+        assert_eq!(
+            schedule_description(&schedule(&[Day::Friday, Day::Monday])),
+            "Monday, Friday at 07:00"
+        );
+    }
+
+    #[test]
+    fn next_run_is_relative_to_today() {
+        let now: Zoned = "2026-10-11T22:00:00-03:00[America/Sao_Paulo]"
+            .parse()
+            .unwrap();
+        let run = |text: &str| next_run_description(&now, &text.parse().unwrap());
+        assert_eq!(
+            run("2026-10-11T23:00:00-03:00[America/Sao_Paulo]"),
+            "today 23:00"
+        );
+        assert_eq!(
+            run("2026-10-12T07:00:00-03:00[America/Sao_Paulo]"),
+            "tomorrow 07:00"
+        );
+        assert_eq!(
+            run("2026-10-14T07:00:00-03:00[America/Sao_Paulo]"),
+            "Wednesday 07:00"
         );
     }
 

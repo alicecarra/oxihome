@@ -11,3 +11,6 @@ port = 8080
 
 [presence]
 missed_heartbeats = 3
+
+[time]
+zone = "America/Sao_Paulo"

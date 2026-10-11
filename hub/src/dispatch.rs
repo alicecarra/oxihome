@@ -1,14 +1,16 @@
-//! What the hub does with each thing that happens: a broker connection, a message, a presence check.
+//! What the hub does with each thing that happens: a broker connection, a message, a presence check, a clock tick.
 
 use std::sync::Arc;
 use std::time::Instant;
 
+use jiff::Timestamp;
 use oxihome_protocol::{Message, Payload, QueryKind, management};
 
 use crate::config::rules;
 use crate::hub::Hub;
 use crate::node::parameters;
 use crate::node::registry::NodeEvent;
+use crate::schedule::Schedule;
 
 /// (Re)connected to the broker: ask every node to introduce itself and report its state.
 pub async fn on_connected(hub: &Hub) -> anyhow::Result<()> {
@@ -72,6 +74,15 @@ pub async fn on_message(hub: &Arc<Hub>, message: &Message) -> anyhow::Result<()>
 pub fn on_presence_check(hub: &Hub) {
     for node_event in hub.check_presence(Instant::now()) {
         on_node_event(hub, &node_event);
+    }
+}
+
+/// Runs the scheduled rules of each new local minute.
+pub fn on_clock_tick(hub: &Arc<Hub>, schedule: &mut Schedule) {
+    for minute in schedule.new_minutes(Timestamp::now()) {
+        for rule in hub.due_rules(minute) {
+            tokio::spawn(rules::run(hub.clone(), rule));
+        }
     }
 }
 

@@ -8,6 +8,7 @@ mod hub;
 mod mqtt;
 mod node;
 mod notifications;
+mod schedule;
 mod web;
 
 use std::path::PathBuf;
@@ -15,6 +16,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, ensure};
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
 use serde::Deserialize;
 use tokio::net::TcpListener;
 
@@ -22,8 +25,10 @@ use config::HomeConfig;
 use hub::Hub;
 use mqtt::{Incoming, Mqtt};
 use node::registry::DEFAULT_MISSED_HEARTBEATS;
+use schedule::Schedule;
 
 const PRESENCE_CHECK_INTERVAL: Duration = Duration::from_secs(10);
+const CLOCK_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Deserialize)]
 struct Config {
@@ -32,6 +37,14 @@ struct Config {
     http: HttpConfig,
     #[serde(default)]
     presence: PresenceConfig,
+    #[serde(default)]
+    time: TimeConfig,
+}
+
+#[derive(Default, Deserialize)]
+struct TimeConfig {
+    /// IANA name, e.g. "America/Sao_Paulo"; the system's zone when missing.
+    zone: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -78,6 +91,11 @@ async fn main() -> anyhow::Result<()> {
         "{path}: presence.missed_heartbeats must be at least 1"
     );
 
+    let time_zone = match &config.time.zone {
+        Some(name) => TimeZone::get(name).with_context(|| format!("{path}: time.zone"))?,
+        None => TimeZone::system(),
+    };
+
     let home_config = HomeConfig::load(&config.config.dir)?;
     println!(
         "{} rules loaded from {}",
@@ -90,6 +108,7 @@ async fn main() -> anyhow::Result<()> {
         config.presence.missed_heartbeats,
         config.config.dir.clone(),
         home_config,
+        time_zone,
     ));
 
     let listener = TcpListener::bind((config.http.host.as_str(), config.http.port)).await?;
@@ -100,6 +119,8 @@ async fn main() -> anyhow::Result<()> {
     let mut web_server = tokio::spawn(topcoat::serve(listener, web::router(hub.clone())));
 
     let mut presence_check = tokio::time::interval(PRESENCE_CHECK_INTERVAL);
+    let mut clock = tokio::time::interval(CLOCK_INTERVAL);
+    let mut schedule = Schedule::new(hub.time_zone(), Timestamp::now());
     loop {
         tokio::select! {
             Some(event) = incoming.recv() => match event {
@@ -110,6 +131,7 @@ async fn main() -> anyhow::Result<()> {
                 Incoming::Message(message) => dispatch::on_message(&hub, &message).await?,
             },
             _ = presence_check.tick() => dispatch::on_presence_check(&hub),
+            _ = clock.tick() => dispatch::on_clock_tick(&hub, &mut schedule),
             result = &mut web_server => {
                 return Ok(result??);
             }

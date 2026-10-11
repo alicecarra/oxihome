@@ -4,6 +4,8 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{Instant, SystemTime};
 
 use anyhow::bail;
+use jiff::civil::DateTime;
+use jiff::tz::TimeZone;
 use oxihome_protocol::management::{self, Parameter};
 use oxihome_protocol::{Message, Payload, Value};
 
@@ -41,6 +43,8 @@ pub struct Hub {
     parameters: Mutex<NodeParameters>,
     notifications: Mutex<Notifications>,
     commands: Commands,
+    /// Scheduled rules run in this zone's local time.
+    time_zone: TimeZone,
 }
 
 impl Hub {
@@ -49,6 +53,7 @@ impl Hub {
         missed_heartbeats: u32,
         config_directory: PathBuf,
         config: HomeConfig,
+        time_zone: TimeZone,
     ) -> Self {
         Self {
             mqtt,
@@ -62,6 +67,7 @@ impl Hub {
             parameters: Mutex::new(config.parameters),
             notifications: Mutex::default(),
             commands: Commands::default(),
+            time_zone,
         }
     }
 
@@ -203,6 +209,20 @@ impl Hub {
             .into_iter()
             .cloned()
             .collect()
+    }
+
+    pub fn due_rules(&self, minute: DateTime) -> Vec<Rule> {
+        self.rules
+            .lock()
+            .unwrap()
+            .due(minute)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    pub fn time_zone(&self) -> &TimeZone {
+        &self.time_zone
     }
 
     pub fn rules(&self) -> Vec<Rule> {

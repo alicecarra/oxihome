@@ -13,3 +13,13 @@ name = "Disabled rule"
 enabled = false
 when = { device = "esp32-08d1f9ca41e4", entity = 2, channel = 0, event = "LongPress" }
 then = [{ notify = { title = "Disabled message", message = "why are you seeing this???" } }]
+
+[[rules]]
+name = "Bedroom lamp off at night"
+when = { at = "23:00" }
+then = [{ set = { device = "sim-bedroom", entity = 1, channel = 0, value = false } }]
+
+[[rules]]
+name = "Test board LED on for waking up"
+when = { at = "07:00", days = ["monday", "tuesday", "wednesday", "thursday", "friday"] }
+then = [{ set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = true } }]

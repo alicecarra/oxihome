@@ -3,6 +3,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::bail;
+use jiff::civil::{DateTime, Time, Weekday};
+use jiff::{ToSpan, Zoned};
 use oxihome_protocol::{EventKind, Value};
 use serde::Deserialize;
 
@@ -14,8 +16,15 @@ pub struct Rule {
     pub name: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
-    pub when: EventTrigger,
+    pub when: Trigger,
     pub then: Vec<Action>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum Trigger {
+    Event(EventTrigger),
+    Schedule(ScheduleTrigger),
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -24,6 +33,65 @@ pub struct EventTrigger {
     pub entity: u8,
     pub channel: u8,
     pub event: EventKind,
+}
+
+/// Local time; no `days` means every day.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ScheduleTrigger {
+    pub at: Time,
+    #[serde(default)]
+    pub days: Vec<Day>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Day {
+    Monday,
+    Tuesday,
+    Wednesday,
+    Thursday,
+    Friday,
+    Saturday,
+    Sunday,
+}
+
+impl From<Day> for Weekday {
+    fn from(day: Day) -> Self {
+        match day {
+            Day::Monday => Weekday::Monday,
+            Day::Tuesday => Weekday::Tuesday,
+            Day::Wednesday => Weekday::Wednesday,
+            Day::Thursday => Weekday::Thursday,
+            Day::Friday => Weekday::Friday,
+            Day::Saturday => Weekday::Saturday,
+            Day::Sunday => Weekday::Sunday,
+        }
+    }
+}
+
+impl ScheduleTrigger {
+    fn runs_on(&self, weekday: Weekday) -> bool {
+        self.days.is_empty() || self.days.iter().any(|day| Weekday::from(*day) == weekday)
+    }
+
+    fn is_due(&self, minute: DateTime) -> bool {
+        self.at.hour() == minute.hour()
+            && self.at.minute() == minute.minute()
+            && self.runs_on(minute.weekday())
+    }
+
+    /// The first run strictly after `now`; `None` only if the time never exists in the zone.
+    pub fn next_run(&self, now: &Zoned) -> Option<Zoned> {
+        (0..=7)
+            .filter_map(|days| now.date().checked_add(days.days()).ok())
+            .filter(|date| self.runs_on(date.weekday()))
+            .filter_map(|date| {
+                date.to_datetime(self.at)
+                    .to_zoned(now.time_zone().clone())
+                    .ok()
+            })
+            .find(|run| run > now)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -92,10 +160,22 @@ impl Rules {
             .iter()
             .filter(|rule| {
                 rule.enabled
-                    && rule.when.device == event.device_id
-                    && rule.when.entity == event.entity
-                    && rule.when.channel == event.channel
-                    && rule.when.event == event.kind
+                    && matches!(&rule.when, Trigger::Event(trigger)
+                        if trigger.device == event.device_id
+                            && trigger.entity == event.entity
+                            && trigger.channel == event.channel
+                            && trigger.event == event.kind)
+            })
+            .collect()
+    }
+
+    /// Scheduled rules for a local minute (seconds are ignored).
+    pub fn due(&self, minute: DateTime) -> Vec<&Rule> {
+        self.rules
+            .iter()
+            .filter(|rule| {
+                rule.enabled
+                    && matches!(&rule.when, Trigger::Schedule(trigger) if trigger.is_due(minute))
             })
             .collect()
     }
@@ -242,5 +322,82 @@ mod tests {
     fn empty_file_has_no_rules() {
         let rules: Rules = toml::from_str("").unwrap();
         assert_eq!(rules.len(), 0);
+    }
+
+    const SCHEDULED: &str = r#"
+        [[rules]]
+        name = "Lights off at night"
+        when = { at = "23:00" }
+        then = [{ set = { device = "sim-bedroom", entity = 1, channel = 0, value = false } }]
+
+        [[rules]]
+        name = "Wake up"
+        when = { at = "07:00", days = ["monday", "tuesday", "wednesday", "thursday", "friday"] }
+        then = [{ set = { device = "sim-bedroom", entity = 1, channel = 0, value = true } }]
+    "#;
+
+    fn minute(text: &str) -> DateTime {
+        text.parse().unwrap()
+    }
+
+    fn names(rules: Vec<&Rule>) -> Vec<&str> {
+        rules.into_iter().map(|rule| rule.name.as_str()).collect()
+    }
+
+    #[test]
+    fn scheduled_rules_parse() {
+        let rules: Rules = toml::from_str(SCHEDULED).unwrap();
+        assert_eq!(
+            rules.rules[1].when,
+            Trigger::Schedule(ScheduleTrigger {
+                at: Time::constant(7, 0, 0, 0),
+                days: vec![
+                    Day::Monday,
+                    Day::Tuesday,
+                    Day::Wednesday,
+                    Day::Thursday,
+                    Day::Friday
+                ],
+            })
+        );
+    }
+
+    #[test]
+    fn rules_are_due_at_their_minute_and_days() {
+        let rules: Rules = toml::from_str(SCHEDULED).unwrap();
+        // 2026-10-12 is a Monday, 2026-10-17 a Saturday.
+        assert_eq!(
+            names(rules.due(minute("2026-10-12T23:00"))),
+            ["Lights off at night"]
+        );
+        assert_eq!(names(rules.due(minute("2026-10-12T07:00"))), ["Wake up"]);
+        assert!(rules.due(minute("2026-10-17T07:00")).is_empty());
+        assert!(rules.due(minute("2026-10-12T07:01")).is_empty());
+    }
+
+    #[test]
+    fn events_do_not_run_scheduled_rules() {
+        let rules: Rules = toml::from_str(SCHEDULED).unwrap();
+        assert!(rules.matching(&event(EventKind::Press, 2)).is_empty());
+        let rules: Rules = toml::from_str(EXAMPLE).unwrap();
+        assert!(rules.due(minute("2026-10-12T23:00")).is_empty());
+    }
+
+    #[test]
+    fn next_run_skips_to_the_next_allowed_day() {
+        let rules: Rules = toml::from_str(SCHEDULED).unwrap();
+        let Trigger::Schedule(wake_up) = &rules.rules[1].when else {
+            panic!("scheduled rule");
+        };
+        let friday_night: Zoned = "2026-10-16T22:00:00-03:00[America/Sao_Paulo]"
+            .parse()
+            .unwrap();
+        let run = wake_up.next_run(&friday_night).unwrap();
+        assert_eq!(run.datetime(), minute("2026-10-19T07:00"));
+        let monday_at_seven: Zoned = "2026-10-19T07:00:00-03:00[America/Sao_Paulo]"
+            .parse()
+            .unwrap();
+        let run = wake_up.next_run(&monday_at_seven).unwrap();
+        assert_eq!(run.datetime(), minute("2026-10-20T07:00"));
     }
 }

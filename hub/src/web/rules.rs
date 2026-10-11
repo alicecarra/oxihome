@@ -23,7 +23,7 @@ pub async fn rules(cx: &Cx) -> Result<impl View> {
             title: "Oxihome rules",
             <div class="max-w-3xl space-y-4">
                 <div class="flex items-center justify-between gap-4">
-                    <p class="text-sm text-muted-foreground">"Rules run when their event happens. They come from rules.toml."</p>
+                    <p class="text-sm text-muted-foreground">"Rules run when their event happens or at their time. They come from rules.toml."</p>
                     <a href="/settings#rules.toml" class="text-sm font-medium hover:underline">"Edit in Settings"</a>
                 </div>
                 if rules.is_empty() {
@@ -71,6 +71,10 @@ async fn rule_card(rule: RuleOverview) -> Result<impl View> {
                 <dl class="grid grid-cols-[3rem_1fr] gap-x-3 gap-y-2 text-sm">
                     <dt class="text-muted-foreground">"When"</dt>
                     <dd>(rule.trigger)</dd>
+                    if let Some(next_run) = rule.next_run {
+                        <dt class="text-muted-foreground">"Next"</dt>
+                        <dd>(next_run)</dd>
+                    }
                     <dt class="text-muted-foreground">"Then"</dt>
                     <dd>
                         <ul class="space-y-1">
