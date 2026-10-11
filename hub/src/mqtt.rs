@@ -83,17 +83,10 @@ impl Mqtt {
         destination: Option<&str>,
         payload: Payload,
     ) -> anyhow::Result<()> {
-        let message = Message {
-            version: 1,
-            msg_id: message_id,
-            src: SOURCE.into(),
-            dst: destination.map(String::from),
-            ttl: 1,
-            reply_to: None,
-            timestamp: None,
-            payload,
-            auth: None,
-        };
+        let mut message = Message::new(SOURCE, message_id, payload);
+        if let Some(device_id) = destination {
+            message = message.to(device_id);
+        }
         let topic = match destination {
             Some(device_id) => format!("oxihome/{device_id}/down"),
             None => BROADCAST_TOPIC.into(),

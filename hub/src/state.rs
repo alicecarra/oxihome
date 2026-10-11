@@ -99,15 +99,10 @@ mod tests {
     const DEVICE: &str = "esp32-test";
 
     fn state_message(on: bool) -> Message {
-        Message {
-            version: 1,
-            msg_id: 0,
-            src: DEVICE.into(),
-            dst: None,
-            ttl: 1,
-            reply_to: None,
-            timestamp: None,
-            payload: Payload::State {
+        Message::new(
+            DEVICE,
+            0,
+            Payload::State {
                 entity: 1,
                 values: vec![ChannelValue {
                     channel: 0,
@@ -115,8 +110,7 @@ mod tests {
                     confidence: Confidence::Confirmed,
                 }],
             },
-            auth: None,
-        }
+        )
     }
 
     fn update(on: bool) -> ChannelUpdate {

@@ -159,17 +159,10 @@ impl SimulatedNode {
     }
 
     pub fn message(&mut self, payload: Payload, reply_to: Option<u32>) -> Message {
-        let message = Message {
-            version: 1,
-            msg_id: self.next_message_id,
-            src: self.device_id.clone(),
-            dst: None,
-            ttl: 1,
-            reply_to,
-            timestamp: None,
-            payload,
-            auth: None,
-        };
+        let mut message = Message::new(self.device_id.clone(), self.next_message_id, payload);
+        if let Some(request) = reply_to {
+            message = message.replying_to(request);
+        }
         self.next_message_id = self.next_message_id.wrapping_add(1);
         message
     }
@@ -309,17 +302,7 @@ mod tests {
     }
 
     fn from_hub(payload: Payload) -> Message {
-        Message {
-            version: 1,
-            msg_id: 7,
-            src: "oxihome-hub".into(),
-            dst: Some(DEVICE.into()),
-            ttl: 1,
-            reply_to: None,
-            timestamp: None,
-            payload,
-            auth: None,
-        }
+        Message::new("oxihome-hub", 7, payload).to(DEVICE)
     }
 
     fn set(entity: u8, value: Value) -> Message {

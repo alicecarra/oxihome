@@ -24,6 +24,33 @@ pub struct Message {
 }
 
 impl Message {
+    /// Version 1, direct delivery (`ttl` 1), broadcast, no reply, timestamp or auth.
+    pub fn new(src: impl Into<String>, msg_id: u32, payload: Payload) -> Self {
+        Self {
+            version: 1,
+            msg_id,
+            src: src.into(),
+            dst: None,
+            ttl: 1,
+            reply_to: None,
+            timestamp: None,
+            payload,
+            auth: None,
+        }
+    }
+
+    /// Addressed to one device.
+    pub fn to(mut self, dst: impl Into<String>) -> Self {
+        self.dst = Some(dst.into());
+        self
+    }
+
+    /// An answer to the message `msg_id`.
+    pub fn replying_to(mut self, msg_id: u32) -> Self {
+        self.reply_to = Some(msg_id);
+        self
+    }
+
     pub fn to_json(&self) -> serde_json::Result<String> {
         serde_json::to_string(self)
     }
@@ -39,20 +66,23 @@ mod tests {
     use crate::*;
 
     fn roundtrip(payload: Payload) {
-        let msg = Message {
-            version: 1,
-            msg_id: 42,
-            src: "esp32-a1b2c3".into(),
-            dst: None,
-            ttl: 1,
-            reply_to: None,
-            timestamp: None,
-            payload,
-            auth: None,
-        };
+        let msg = Message::new("esp32-a1b2c3", 42, payload);
 
         let json = msg.to_json().unwrap();
         assert_eq!(Message::from_json(&json).unwrap(), msg, "{json}");
+    }
+
+    #[test]
+    fn constructor_defaults_and_builders() {
+        let msg = Message::new("hub", 7, Payload::Ack { ok: true });
+        assert_eq!(msg.version, 1);
+        assert_eq!(msg.ttl, 1);
+        assert_eq!((msg.dst.clone(), msg.reply_to), (None, None));
+        assert_eq!((msg.timestamp, msg.auth.clone()), (None, None));
+
+        let msg = msg.to("esp32-a1b2c3").replying_to(3);
+        assert_eq!(msg.dst.as_deref(), Some("esp32-a1b2c3"));
+        assert_eq!(msg.reply_to, Some(3));
     }
 
     #[test]

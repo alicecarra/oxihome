@@ -65,17 +65,7 @@ mod tests {
     const DEVICE: &str = "esp32-test";
 
     fn message(payload: Payload) -> Message {
-        Message {
-            version: 1,
-            msg_id: 0,
-            src: DEVICE.into(),
-            dst: None,
-            ttl: 1,
-            reply_to: None,
-            timestamp: None,
-            payload,
-            auth: None,
-        }
+        Message::new(DEVICE, 0, payload)
     }
 
     fn event(kind: EventKind) -> Message {
