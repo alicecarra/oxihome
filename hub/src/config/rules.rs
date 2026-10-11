@@ -12,6 +12,8 @@ use crate::node::events::EventRecord;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Rule {
     pub name: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     pub when: EventTrigger,
     pub then: Vec<Action>,
 }
@@ -89,7 +91,8 @@ impl Rules {
         self.rules
             .iter()
             .filter(|rule| {
-                rule.when.device == event.device_id
+                rule.enabled
+                    && rule.when.device == event.device_id
                     && rule.when.entity == event.entity
                     && rule.when.channel == event.channel
                     && rule.when.event == event.kind
@@ -146,6 +149,10 @@ async fn perform(hub: &Hub, action: &Action, rule_name: &str) -> anyhow::Result<
     Ok(value.to_string())
 }
 
+const fn default_true() -> bool {
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,6 +171,12 @@ mod tests {
             { set = { device = "sim-living-room", entity = 1, channel = 0, value = false } },
             { notify = { title = "Good night", message = "All lamps are off" } },
         ]
+
+        [[rules]]
+        name = "Disabled"
+        enabled = false
+        when = { device = "sim-living-room", entity = 2, channel = 0, event = "LongPress" }
+        then = [{ notify = { title = "Error", message = "if this is disabled, why are you seeing this?" } }]
     "#;
 
     fn event(kind: EventKind, entity: u8) -> EventRecord {
@@ -178,7 +191,7 @@ mod tests {
     #[test]
     fn example_file_parses() {
         let rules: Rules = toml::from_str(EXAMPLE).unwrap();
-        assert_eq!(rules.len(), 2);
+        assert_eq!(rules.len(), 3);
         assert_eq!(
             rules.rules[1].then[0],
             Action::Set {
@@ -215,6 +228,14 @@ mod tests {
         let rules: Rules = toml::from_str(EXAMPLE).unwrap();
         assert!(rules.matching(&event(EventKind::DoublePress, 2)).is_empty());
         assert!(rules.matching(&event(EventKind::Press, 3)).is_empty());
+    }
+
+    #[test]
+    fn disabled_rules_are_skipped() {
+        let rules: Rules = toml::from_str(EXAMPLE).unwrap();
+        let matched = rules.matching(&event(EventKind::LongPress, 2));
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].name, "Long press turns everything off");
     }
 
     #[test]

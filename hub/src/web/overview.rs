@@ -51,6 +51,7 @@ pub struct RuleOverview {
     pub name: String,
     pub trigger: String,
     pub actions: Vec<String>,
+    pub enabled: bool,
     /// How long ago it ran and the errors of the actions that failed.
     pub last_run: Option<(Duration, Vec<String>)>,
 }
@@ -172,6 +173,7 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
                 .remove(&rule.name)
                 .map(|run| (now - run.at, run.errors)),
             name: rule.name,
+            enabled: rule.enabled,
         })
         .collect()
 }

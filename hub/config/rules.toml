@@ -7,3 +7,9 @@ then = [{ toggle = { device = "sim-bedroom", entity = 1, channel = 0 } }]
 name = "Test board button held down"
 when = { device = "esp32-08d1f9ca41e4", entity = 2, channel = 0, event = "LongPress" }
 then = [{ notify = { title = "Test board", message = "BOOT button held down" } }]
+
+[[rules]]
+name = "Disabled rule"
+enabled = false
+when = { device = "esp32-08d1f9ca41e4", entity = 2, channel = 0, event = "LongPress" }
+then = [{ notify = { title = "Disabled message", message = "why are you seeing this???" } }]

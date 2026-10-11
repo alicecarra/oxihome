@@ -4,7 +4,7 @@ use topcoat::{
     Result,
     context::{Cx, app_context},
     router::page,
-    view::{View, component, view},
+    view::{View, attributes, component, view},
 };
 
 use super::format::ago_label;
@@ -39,19 +39,28 @@ pub async fn rules(cx: &Cx) -> Result<impl View> {
 
 #[component]
 async fn rule_card(rule: RuleOverview) -> Result<impl View> {
-    let (variant, status) = match &rule.last_run {
-        None => (BadgeVariant::Muted, "never ran".to_string()),
-        Some((ago, errors)) if errors.is_empty() => {
-            (BadgeVariant::Success, format!("ok · {}", ago_label(*ago)))
+    let (variant, status) = if !rule.enabled {
+        (BadgeVariant::Muted, "disabled".to_string())
+    } else {
+        match &rule.last_run {
+            None => (BadgeVariant::Muted, "never ran".to_string()),
+            Some((ago, errors)) if errors.is_empty() => {
+                (BadgeVariant::Success, format!("ok · {}", ago_label(*ago)))
+            }
+            Some((ago, _)) => (
+                BadgeVariant::Destructive,
+                format!("failed · {}", ago_label(*ago)),
+            ),
         }
-        Some((ago, _)) => (
-            BadgeVariant::Destructive,
-            format!("failed · {}", ago_label(*ago)),
-        ),
     };
     let errors = rule.last_run.map(|(_, errors)| errors).unwrap_or_default();
     Ok(view! {
         card(
+            attrs: attributes! {
+                if !rule.enabled {
+                    class="opacity-60"
+                }
+            },
             card_header(
                 <div class="flex items-center justify-between gap-2">
                     card_title((rule.name))
