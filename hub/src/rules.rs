@@ -1,8 +1,7 @@
 use std::fmt;
-use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Context, bail};
+use anyhow::bail;
 use oxihome_protocol::{EventKind, Value};
 use serde::Deserialize;
 
@@ -70,13 +69,6 @@ pub struct Rules {
 }
 
 impl Rules {
-    pub fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let path = path.as_ref();
-        let text =
-            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
-    }
-
     pub fn len(&self) -> usize {
         self.rules.len()
     }

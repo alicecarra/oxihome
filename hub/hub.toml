@@ -2,11 +2,8 @@
 host = "localhost"
 port = 1883
 
-[database]
-path = "hub/hub.sqlite"
-
-[rules]
-path = "hub/rules.toml"
+[config]
+dir = "hub/config"
 
 [http]
 host = "127.0.0.1"

@@ -97,20 +97,29 @@ cargo run -p oxihome-hub -- hub/hub.toml
 Only one hub can run per broker: both use the MQTT client id `oxihome-hub` and keep disconnecting
 each other.
 
-Rules are read at start from the file set in `[rules] path` (default `hub/rules.toml`). For now a
-rule reacts to an event of a channel and sets or toggles boolean channels, or shows a notification
-as a toast on the web interface (`notify = { title = "...", message = "..." }`). E.g. the
-simulator's living room button toggles the bedroom lamp:
+The home's configuration lives in TOML files in the directory set in `[config] dir` (default
+`hub/config/`, versioned in git). The hub reads them at start; after editing a file, press
+**Reload config** on `/settings`. A file with an error is reported there and the previous
+configuration stays in use.
 
-```toml
-[[rules]]
-name = "Living room button toggles bedroom lamp"
-when = { device = "sim-living-room", entity = 2, channel = 0, event = "Press" }
-then = [{ toggle = { device = "sim-bedroom", entity = 1, channel = 0 } }]
-```
+- `names.toml`: friendly names for nodes, entities and channels.
 
-Friendly names for nodes, entities and channels are edited on `/settings` and stored in the SQLite
-file set in `[database] path` (default `hub/hub.sqlite`, ignored by git). It is created on first run.
+  ```toml
+  [nodes."esp32-08d1f9ca41e4"]
+  name = "Test board"
+  entities.1 = { name = "LED", channels.0 = "Power" }
+  ```
+
+- `rules.toml`: a rule reacts to an event of a channel and sets or toggles boolean channels, or
+  shows a notification as a toast on the web interface (`notify = { title = "...", message = "..." }`).
+  E.g. the simulator's living room button toggles the bedroom lamp:
+
+  ```toml
+  [[rules]]
+  name = "Living room button toggles bedroom lamp"
+  when = { device = "sim-living-room", entity = 2, channel = 0, event = "Press" }
+  then = [{ toggle = { device = "sim-bedroom", entity = 1, channel = 0 } }]
+  ```
 
 The page uses htmx: the node list refreshes every 2 s and the switches post to `/set` without
 reloading the page. `/set` answers with an empty body on success or the error message; a missing `value` means

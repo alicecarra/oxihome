@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -8,11 +9,13 @@ use oxihome_protocol::{
 };
 use tokio::sync::oneshot;
 
+use crate::config::HomeConfig;
 use crate::events::{EventRecord, Events};
 use crate::mqtt::Mqtt;
 use crate::names::{NameTarget, Names};
 use crate::notifications::{Notification, Notifications};
 use crate::registry::{NodeEvent, Registry};
+use crate::rules::{Rule, Rules};
 use crate::state::{ChannelUpdate, State};
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
@@ -23,7 +26,9 @@ pub struct Hub {
     registry: Mutex<Registry>,
     state: Mutex<State>,
     events: Mutex<Events>,
+    config_directory: PathBuf,
     names: Mutex<Names>,
+    rules: Mutex<Rules>,
     notifications: Mutex<Notifications>,
     /// Commands waiting for their `Ack` or `Error`, by message id.
     pending_commands: Mutex<HashMap<u32, PendingCommand>>,
@@ -60,13 +65,15 @@ pub struct ChannelOverview {
 }
 
 impl Hub {
-    pub fn new(mqtt: Mqtt, names: Names) -> Self {
+    pub fn new(mqtt: Mqtt, config_directory: PathBuf, config: HomeConfig) -> Self {
         Self {
             mqtt,
             registry: Mutex::default(),
             state: Mutex::default(),
             events: Mutex::default(),
-            names: Mutex::new(names),
+            config_directory,
+            names: Mutex::new(config.names),
+            rules: Mutex::new(config.rules),
             notifications: Mutex::default(),
             pending_commands: Mutex::default(),
         }
@@ -207,9 +214,27 @@ impl Hub {
             .collect()
     }
 
-    pub fn rename(&self, target: NameTarget, name: &str) -> anyhow::Result<()> {
-        self.names.lock().unwrap().set(target, name)?;
-        Ok(())
+    /// Rereads the config directory; on error the current configuration stays.
+    pub fn reload_config(&self) -> anyhow::Result<usize> {
+        let config = HomeConfig::load(&self.config_directory)?;
+        let rule_count = config.rules.len();
+        *self.names.lock().unwrap() = config.names;
+        *self.rules.lock().unwrap() = config.rules;
+        Ok(rule_count)
+    }
+
+    pub fn config_directory(&self) -> &Path {
+        &self.config_directory
+    }
+
+    pub fn matching_rules(&self, event: &EventRecord) -> Vec<Rule> {
+        self.rules
+            .lock()
+            .unwrap()
+            .matching(event)
+            .into_iter()
+            .cloned()
+            .collect()
     }
 
     pub fn value(&self, device_id: &str, entity: u8, channel: u8) -> Option<Value> {

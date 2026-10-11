@@ -27,7 +27,7 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .page(home::nodes_fragment)
         .page(settings::settings)
         .route(home::set)
-        .route(settings::rename)
+        .route(settings::reload)
         .route(toasts::toasts)
         .route(htmx_script)
         .route(stylesheet)
