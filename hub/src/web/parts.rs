@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use oxihome_protocol::{Quantity, Unit, Value};
+use oxihome_protocol::{Quantity, Unit, Value, management};
 use topcoat::{
     Result,
     view::{Child, View, attributes, component, view},
@@ -29,6 +29,12 @@ pub async fn node_list(nodes: Vec<NodeOverview>) -> Result<impl View> {
 async fn node_card(node: NodeOverview) -> Result<impl View> {
     let title = node.name.clone().unwrap_or_else(|| node.device_id.clone());
     let description = node_description(&node);
+    // The management entity holds node parameters, not things in the home.
+    let channels: Vec<ChannelOverview> = node
+        .channels
+        .into_iter()
+        .filter(|channel| channel.entity != management::ENTITY)
+        .collect();
     Ok(view! {
         card(
             card_header(
@@ -40,7 +46,7 @@ async fn node_card(node: NodeOverview) -> Result<impl View> {
             )
             card_content(
                 <ul class="divide-y divide-border">
-                    for channel in node.channels {
+                    for channel in channels {
                         channel_row(device_id: node.device_id.clone(), channel: channel)
                     }
                 </ul>
