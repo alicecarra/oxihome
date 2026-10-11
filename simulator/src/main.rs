@@ -23,6 +23,8 @@ commands:
   offline <node>
   online <node>
   reboot <node>
+  climate <node> <temperature> [humidity]   fixed readings, sent right away
+  climate <node> auto                       back to the slow wave
   help
   quit";
 
@@ -49,6 +51,10 @@ enum Control {
     Offline,
     Online,
     Reboot,
+    Climate {
+        temperature: Option<f32>,
+        humidity: Option<f32>,
+    },
 }
 
 #[tokio::main]
@@ -104,6 +110,30 @@ async fn main() -> anyhow::Result<()> {
             ["offline", device_id] => (*device_id, Control::Offline),
             ["online", device_id] => (*device_id, Control::Online),
             ["reboot", device_id] => (*device_id, Control::Reboot),
+            ["climate", device_id, "auto"] => (
+                *device_id,
+                Control::Climate {
+                    temperature: None,
+                    humidity: None,
+                },
+            ),
+            ["climate", device_id, temperature, rest @ ..] if rest.len() <= 1 => {
+                let temperature = temperature.parse::<f32>();
+                let humidity = rest.first().map(|humidity| humidity.parse::<f32>());
+                match (temperature, humidity.transpose()) {
+                    (Ok(temperature), Ok(humidity)) => (
+                        *device_id,
+                        Control::Climate {
+                            temperature: Some(temperature),
+                            humidity,
+                        },
+                    ),
+                    _ => {
+                        println!("temperature and humidity must be numbers");
+                        continue;
+                    }
+                }
+            }
             _ => {
                 println!("unknown command, type `help`");
                 continue;
@@ -194,6 +224,13 @@ async fn run_node(
                         let _ = client.disconnect().await;
                         online = false;
                         break;
+                    }
+                    Some(Control::Climate { temperature, humidity }) => {
+                        let states = node.set_climate(temperature, humidity, Instant::now());
+                        if states.is_empty() {
+                            println!("{} has no climate sensor", node.device_id);
+                        }
+                        states.into_iter().map(|payload| (payload, None)).collect()
                     }
                     Some(Control::Online) => Vec::new(),
                     None => return,

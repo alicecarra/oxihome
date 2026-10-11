@@ -24,6 +24,9 @@ pub struct SimulatedNode {
     /// Entity ids start at 1, in configuration order.
     entities: Vec<(u8, Profile)>,
     lamps: HashMap<u8, bool>,
+    /// Set from the console; `None` follows the slow wave.
+    fixed_temperature: Option<f32>,
+    fixed_humidity: Option<f32>,
     booted_at: Instant,
     next_message_id: u32,
 }
@@ -44,6 +47,8 @@ impl SimulatedNode {
             device_id,
             entities,
             lamps,
+            fixed_temperature: None,
+            fixed_humidity: None,
             booted_at: now,
             next_message_id: 0,
         }
@@ -94,6 +99,19 @@ impl SimulatedNode {
             .filter(|(_, profile)| *profile == Profile::ClimateSensor)
             .filter_map(|(id, _)| self.state(*id, now))
             .collect()
+    }
+
+    /// Fixes the climate readings (`None` goes back to the wave) and returns the new states,
+    /// empty when the node has no climate sensor.
+    pub fn set_climate(
+        &mut self,
+        temperature: Option<f32>,
+        humidity: Option<f32>,
+        now: Instant,
+    ) -> Vec<Payload> {
+        self.fixed_temperature = temperature;
+        self.fixed_humidity = humidity;
+        self.sensor_states(now)
     }
 
     /// `None` when the entity is not a button.
@@ -211,9 +229,15 @@ impl SimulatedNode {
             Profile::Button => return None,
             Profile::ClimateSensor => {
                 let seconds = (now - self.booted_at).as_secs_f32();
+                let temperature = self
+                    .fixed_temperature
+                    .unwrap_or_else(|| wave(seconds, 22.0, 2.0, 300.0));
+                let humidity = self
+                    .fixed_humidity
+                    .unwrap_or_else(|| wave(seconds, 50.0, 5.0, 420.0));
                 vec![
-                    confirmed(0, Value::Float(wave(seconds, 22.0, 2.0, 300.0))),
-                    confirmed(1, Value::Float(wave(seconds, 50.0, 5.0, 420.0))),
+                    confirmed(0, Value::Float(temperature)),
+                    confirmed(1, Value::Float(humidity)),
                 ]
             }
         };
@@ -430,5 +454,22 @@ mod tests {
         let node = node(Instant::now());
         assert!(node.press(2).is_some());
         assert!(node.press(1).is_none());
+    }
+
+    #[test]
+    fn fixed_climate_replaces_the_wave_until_auto() {
+        let now = Instant::now();
+        let mut node = node(now);
+        let climate = |states: Vec<Payload>| match states.as_slice() {
+            [Payload::State { entity: 3, values }] => values.clone(),
+            other => panic!("unexpected {other:?}"),
+        };
+        let values = climate(node.set_climate(Some(30.0), None, now));
+        assert_eq!(values[0], confirmed(0, Value::Float(30.0)));
+        assert_eq!(values[1], confirmed(1, Value::Float(50.0)));
+        let values = climate(node.sensor_states(now));
+        assert_eq!(values[0], confirmed(0, Value::Float(30.0)));
+        let values = climate(node.set_climate(None, None, now));
+        assert_eq!(values[0], confirmed(0, Value::Float(22.0)));
     }
 }

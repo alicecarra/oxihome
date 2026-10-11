@@ -76,6 +76,22 @@ cp firmware/cfg.toml.example firmware/cfg.toml
 
 `mqtt_url` must use the LAN address of the machine running the broker, e.g. `mqtt://192.168.15.10:1883`.
 
+## Test board wiring
+
+ESP32 DevKit V1 (30 pins), `esp32-08d1f9ca41e4`. Entities the firmware declares:
+
+| Entity | What | Pin |
+|---|---|---|
+| 0 | Operation parameters (heartbeat and Wi-Fi check intervals) | - |
+| 1 | Onboard LED, `Bool`; the BOOT button toggles it locally | GPIO2 |
+| 2 | BOOT button, events `Press`, `LongPress` | GPIO0 |
+| 3 | DHT11 module: channel 0 temperature (°C), channel 1 humidity (%), read every 30 s | GPIO4 (D4) |
+| 4 | External LED on the breadboard, `Bool` | GPIO18 (D18) |
+
+DHT11 module: `+` to 3V3, `-` to GND, `S` to D4 (the module has its pull-up). External LED: D18 →
+220–330 Ω resistor → LED long leg; short leg (flat side) to GND. Free pins to use next: 19, 23, 25,
+26, 27, 32, 33 (21 and 22 are kept for I2C); avoid 0, 2, 12 and 15 (boot) and 6–11 (flash).
+
 ## MQTT broker
 
 Mosquitto 2 in Docker, anonymous access on port 1883 (see `infra/`):
@@ -114,15 +130,40 @@ previous configuration stays in use.
   entities.1 = { name = "LED", channels.0 = "Power" }
   ```
 
-- `rules.toml`: a rule reacts to an event of a channel and sets or toggles boolean channels, or
-  shows a notification as a toast on the web interface (`notify = { title = "...", message = "..." }`).
-  E.g. the simulator's living room button toggles the bedroom lamp:
+- `rules.toml`: a rule runs its actions when its trigger (`when`) fires. Actions set or toggle
+  boolean channels, or show a notification as a toast on the web interface
+  (`notify = { title = "...", message = "..." }`). `enabled = false` turns a rule off. Triggers:
+  - an event of a channel: `when = { device = "...", entity = 2, channel = 0, event = "Press" }`;
+  - a local time, every day or on some days: `when = { at = "07:00", days = ["monday", "friday"] }`;
+  - a numeric channel crossing a limit: `when = { device = "...", entity = 3, channel = 0, above = 28 }`
+    (or `below = 27`). It runs when a value confirmed by the node crosses the limit, not again while
+    the value stays past it; the first value the hub learns counts as a crossing. A pair of rules
+    (on above 28, off below 27) gives hysteresis;
+  - a cron expression, standard five fields (minute, hour, day of month, month, day of week):
+    `when = { cron = "*/30 8-22 * * mon-fri" }`. When both the day of month and the day of week
+    are restricted, either one matching is enough, as in classic cron.
+
+  Times are local, in the zone set in `[time] zone` of `hub/hub.toml` (an IANA name such as
+  `America/Sao_Paulo`; the system's zone when missing). Scheduled rules are checked once per minute:
+  the minute the hub starts does not run, minutes skipped by a short gap (up to 5 minutes, e.g. a
+  clock adjustment) run right after, and longer gaps (hub stopped or suspended) are not run late.
+  `/rules` lists the rules with their trigger, next run and last result. Examples:
 
   ```toml
   [[rules]]
   name = "Living room button toggles bedroom lamp"
   when = { device = "sim-living-room", entity = 2, channel = 0, event = "Press" }
   then = [{ toggle = { device = "sim-bedroom", entity = 1, channel = 0 } }]
+
+  [[rules]]
+  name = "Test board LED on for waking up"
+  when = { at = "07:00", days = ["monday", "tuesday", "wednesday", "thursday", "friday"] }
+  then = [{ set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = true } }]
+
+  [[rules]]
+  name = "Test board LED blinks: on at even minutes"
+  when = { cron = "*/2 * * * *" }
+  then = [{ set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = true } }]
   ```
 
 - `nodes.toml`: desired operation parameters of each node (seconds). The hub sends a `Set` when a
@@ -190,7 +231,11 @@ cargo run -p oxihome-simulator -- simulator/simulator.toml
 ```
 
 Type `help` for the commands: `press <node> <entity>`, `offline <node>`, `online <node>`,
-`reboot <node>`, `list`, `quit`.
+`reboot <node>`, `climate <node> <temperature> [humidity]`, `list`, `quit`.
+
+Climate sensors follow a slow wave (22 ± 2 °C, 50 ± 5 %). `climate sim-living-room 30 80` fixes
+the readings and sends them right away, to test rules with limits; a value left out keeps following
+the wave, and `climate sim-living-room auto` goes back to the wave for both.
 
 ## Raw MQTT messages
 
@@ -219,3 +264,15 @@ sudo usermod -aG uucp $USER
 ```
 
 Log out and back in for the group change to take effect.
+
+## Known issue: hub link crash
+
+Since 2026-10-11, `rust-lld` (rustc 1.99.0, b940084d7) crashes with a segmentation fault when linking
+`oxihome-hub`; the simulator links fine. `rustup update` found no newer stable. Linking with the GNU
+linker works:
+
+```sh
+RUSTFLAGS="-C link-arg=-fuse-ld=bfd" cargo build -p oxihome-hub
+```
+
+Changing `RUSTFLAGS` rebuilds every dependency once.
