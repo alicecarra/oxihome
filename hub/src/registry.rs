@@ -81,6 +81,12 @@ impl Registry {
             entities,
         } = &message.payload
         {
+            // A rebooted node sends `Hello` before its first heartbeat: keep the last
+            // uptime so that heartbeat can still reveal the reboot.
+            let (uptime_seconds, rssi) = self
+                .nodes
+                .get(&message.src)
+                .map_or((None, None), |node| (node.uptime_seconds, node.rssi));
             self.nodes.insert(
                 message.src.clone(),
                 Node {
@@ -88,8 +94,8 @@ impl Registry {
                     entities: entities.clone(),
                     online: true,
                     last_seen: now,
-                    uptime_seconds: None,
-                    rssi: None,
+                    uptime_seconds,
+                    rssi,
                 },
             );
             self.asked_for_hello.remove(&message.src);
@@ -246,6 +252,35 @@ mod tests {
                 uptime: 5,
             }]
         );
+    }
+
+    #[test]
+    fn reboot_is_detected_after_the_new_hello() {
+        let mut registry = Registry::default();
+        let now = Instant::now();
+        registry.handle(&hello(), now);
+        registry.handle(&heartbeat(100), now);
+        registry.handle(&hello(), now);
+
+        assert_eq!(
+            registry.handle(&heartbeat(2), now),
+            vec![NodeEvent::Rebooted {
+                device_id: DEVICE.into(),
+                previous_uptime: 100,
+                uptime: 2,
+            }]
+        );
+    }
+
+    #[test]
+    fn reconnecting_without_reboot_is_not_a_reboot() {
+        let mut registry = Registry::default();
+        let now = Instant::now();
+        registry.handle(&hello(), now);
+        registry.handle(&heartbeat(100), now);
+        registry.handle(&hello(), now);
+
+        assert!(registry.handle(&heartbeat(130), now).is_empty());
     }
 
     #[test]
