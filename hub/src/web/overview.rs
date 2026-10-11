@@ -8,7 +8,7 @@ use oxihome_protocol::{Access, EventKind, Quantity, Unit, Value, ValueType};
 
 use super::format::{channel_label, entity_label};
 use crate::config::names::{NameTarget, Names};
-use crate::config::rules::{Action, Day, EventTrigger, ScheduleTrigger, Trigger};
+use crate::config::rules::{Action, CronTrigger, Day, EventTrigger, ScheduleTrigger, Trigger};
 use crate::hub::{Hub, Snapshot};
 
 pub struct NodeOverview {
@@ -168,12 +168,11 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
         .into_iter()
         .map(|rule| RuleOverview {
             trigger: trigger_description(&snapshot.names, &rule.when),
-            next_run: match &rule.when {
-                Trigger::Schedule(trigger) if rule.enabled => trigger
-                    .next_run(&local_now)
-                    .map(|run| next_run_description(&local_now, &run)),
-                _ => None,
-            },
+            next_run: rule
+                .when
+                .next_run(&local_now)
+                .filter(|_| rule.enabled)
+                .map(|run| next_run_description(&local_now, &run)),
             actions: rule
                 .then
                 .iter()
@@ -192,6 +191,7 @@ fn trigger_description(names: &Names, trigger: &Trigger) -> String {
     match trigger {
         Trigger::Event(trigger) => event_description(names, trigger),
         Trigger::Schedule(trigger) => schedule_description(trigger),
+        Trigger::Cron(trigger) => cron_description(trigger),
     }
 }
 
@@ -230,6 +230,12 @@ fn schedule_description(trigger: &ScheduleTrigger) -> String {
             .join(", ")
     };
     format!("{days} at {}", trigger.at.strftime("%H:%M"))
+}
+
+/// Croner's English text, e.g. `At 07:00, on Monday, Tuesday.`, with the expression after it.
+fn cron_description(trigger: &CronTrigger) -> String {
+    let text = trigger.cron.describe();
+    format!("{} ({})", text.trim_end_matches('.'), trigger.expression)
 }
 
 /// `today 23:00`, `tomorrow 07:00` or `Monday 07:00`.
@@ -361,6 +367,23 @@ mod tests {
         assert_eq!(
             schedule_description(&schedule(&[Day::Friday, Day::Monday])),
             "Monday, Friday at 07:00"
+        );
+    }
+
+    #[test]
+    fn cron_description_shows_the_expression() {
+        let rules: crate::config::rules::Rules = toml::from_str(
+            r#"
+            [[rules]]
+            name = "Every half hour"
+            when = { cron = "*/30 8-22 * * mon-fri" }
+            then = []
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            trigger_description(&names(), &rules.all()[0].when),
+            "At every 30 minutes, of hour 8-22, on Monday, Tuesday, Wednesday, Thursday, and Friday (*/30 8-22 * * mon-fri)"
         );
     }
 

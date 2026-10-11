@@ -3,6 +3,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::bail;
+use croner::Cron;
+use croner::parser::{CronParser, Seconds, Year};
 use jiff::civil::{DateTime, Time, Weekday};
 use jiff::{ToSpan, Zoned};
 use oxihome_protocol::{EventKind, Value};
@@ -21,13 +23,94 @@ pub struct Rule {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(untagged)]
+#[serde(try_from = "TriggerFields")]
 pub enum Trigger {
     Event(EventTrigger),
     Schedule(ScheduleTrigger),
+    Cron(CronTrigger),
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+impl Trigger {
+    /// The first run strictly after `now`; `None` for event rules.
+    pub fn next_run(&self, now: &Zoned) -> Option<Zoned> {
+        match self {
+            Trigger::Event(_) => None,
+            Trigger::Schedule(trigger) => trigger.next_run(now),
+            Trigger::Cron(trigger) => trigger.cron.find_next_occurrence(now, false).ok(),
+        }
+    }
+
+    fn is_due(&self, minute: DateTime) -> bool {
+        match self {
+            Trigger::Event(_) => false,
+            Trigger::Schedule(trigger) => trigger.is_due(minute),
+            Trigger::Cron(trigger) => trigger.cron.is_time_matching(&minute).unwrap_or(false),
+        }
+    }
+}
+
+/// Every key a `when` may have; which ones are present picks the trigger.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TriggerFields {
+    device: Option<String>,
+    entity: Option<u8>,
+    channel: Option<u8>,
+    event: Option<EventKind>,
+    at: Option<Time>,
+    #[serde(default)]
+    days: Vec<Day>,
+    cron: Option<String>,
+}
+
+impl TryFrom<TriggerFields> for Trigger {
+    type Error = String;
+
+    fn try_from(fields: TriggerFields) -> Result<Self, String> {
+        let has_event_fields = fields.device.is_some()
+            || fields.entity.is_some()
+            || fields.channel.is_some()
+            || fields.event.is_some();
+        if has_event_fields && (fields.at.is_some() || fields.cron.is_some()) {
+            return Err("an event trigger cannot have `at` or `cron`".into());
+        }
+        if fields.at.is_some() && fields.cron.is_some() {
+            return Err("use either `at` or `cron`, not both".into());
+        }
+        if let Some(expression) = fields.cron {
+            if !fields.days.is_empty() {
+                return Err("`days` goes with `at`; put the days in the cron expression".into());
+            }
+            return Ok(Trigger::Cron(CronTrigger::parse(&expression)?));
+        }
+        if let Some(at) = fields.at {
+            let days = fields.days;
+            return Ok(Trigger::Schedule(ScheduleTrigger { at, days }));
+        }
+        if !fields.days.is_empty() {
+            return Err("`days` needs `at`".into());
+        }
+        match (fields.device, fields.entity, fields.channel, fields.event) {
+            (Some(device), Some(entity), Some(channel), Some(event)) => {
+                Ok(Trigger::Event(EventTrigger {
+                    device,
+                    entity,
+                    channel,
+                    event,
+                }))
+            }
+            _ if has_event_fields => {
+                Err("an event trigger needs `device`, `entity`, `channel` and `event`".into())
+            }
+            _ => Err(
+                "`when` needs an event (`device`, `entity`, `channel`, `event`), `at` or `cron`"
+                    .into(),
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct EventTrigger {
     pub device: String,
     pub entity: u8,
@@ -36,11 +119,33 @@ pub struct EventTrigger {
 }
 
 /// Local time; no `days` means every day.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ScheduleTrigger {
     pub at: Time,
-    #[serde(default)]
     pub days: Vec<Day>,
+}
+
+/// Standard five fields (minute, hour, day of month, month, day of week), in local time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CronTrigger {
+    pub expression: String,
+    pub cron: Box<Cron>,
+}
+
+impl CronTrigger {
+    fn parse(expression: &str) -> Result<Self, String> {
+        let parser = CronParser::builder()
+            .seconds(Seconds::Disallowed)
+            .year(Year::Disallowed)
+            .build();
+        parser
+            .parse(expression)
+            .map(|cron| Self {
+                expression: expression.to_string(),
+                cron: Box::new(cron),
+            })
+            .map_err(|error| format!("cron \"{expression}\": {error}"))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -80,8 +185,8 @@ impl ScheduleTrigger {
             && self.runs_on(minute.weekday())
     }
 
-    /// The first run strictly after `now`; `None` only if the time never exists in the zone.
-    pub fn next_run(&self, now: &Zoned) -> Option<Zoned> {
+    /// `None` only if the time never exists in the zone.
+    fn next_run(&self, now: &Zoned) -> Option<Zoned> {
         (0..=7)
             .filter_map(|days| now.date().checked_add(days.days()).ok())
             .filter(|date| self.runs_on(date.weekday()))
@@ -173,10 +278,7 @@ impl Rules {
     pub fn due(&self, minute: DateTime) -> Vec<&Rule> {
         self.rules
             .iter()
-            .filter(|rule| {
-                rule.enabled
-                    && matches!(&rule.when, Trigger::Schedule(trigger) if trigger.is_due(minute))
-            })
+            .filter(|rule| rule.enabled && rule.when.is_due(minute))
             .collect()
     }
 }
@@ -399,5 +501,49 @@ mod tests {
             .unwrap();
         let run = wake_up.next_run(&monday_at_seven).unwrap();
         assert_eq!(run.datetime(), minute("2026-10-20T07:00"));
+    }
+
+    fn when(text: &str) -> Result<Trigger, String> {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            when: Trigger,
+        }
+        toml::from_str::<Wrapper>(&format!("when = {text}"))
+            .map(|wrapper| wrapper.when)
+            .map_err(|error| error.message().to_string())
+    }
+
+    #[test]
+    fn cron_rules_are_due_when_the_expression_matches() {
+        let trigger = when(r#"{ cron = "*/30 8-22 * * mon-fri" }"#).unwrap();
+        assert!(trigger.is_due(minute("2026-10-12T08:30")));
+        assert!(trigger.is_due(minute("2026-10-12T22:00")));
+        assert!(!trigger.is_due(minute("2026-10-12T08:15")));
+        assert!(!trigger.is_due(minute("2026-10-12T23:00")));
+        assert!(!trigger.is_due(minute("2026-10-17T08:30")));
+    }
+
+    #[test]
+    fn cron_next_run_skips_the_weekend() {
+        let trigger = when(r#"{ cron = "0 7 * * 1-5" }"#).unwrap();
+        let friday_night: Zoned = "2026-10-16T22:00:00-03:00[America/Sao_Paulo]"
+            .parse()
+            .unwrap();
+        let run = trigger.next_run(&friday_night).unwrap();
+        assert_eq!(run.datetime(), minute("2026-10-19T07:00"));
+    }
+
+    #[test]
+    fn invalid_triggers_explain_what_is_wrong() {
+        let error = |text: &str| when(text).unwrap_err();
+        assert!(error(r#"{ cron = "61 * * * *" }"#).contains("cron \"61 * * * *\""));
+        assert!(error(r#"{ cron = "0 0 7 * * *" }"#).contains("cron"));
+        assert!(error(r#"{ at = "07:00", cron = "0 7 * * *" }"#).contains("not both"));
+        assert!(error(r#"{ cron = "0 7 * * *", days = ["monday"] }"#).contains("cron expression"));
+        assert!(error(r#"{ days = ["monday"] }"#).contains("needs `at`"));
+        assert!(error(r#"{ device = "sim-bedroom", event = "Press" }"#).contains("needs `device`"));
+        assert!(error(r#"{ device = "sim-bedroom", entity = 1, channel = 0, event = "Press", at = "07:00" }"#).contains("cannot have"));
+        assert!(error(r#"{ at = "07:00", day = ["monday"] }"#).contains("unknown field"));
+        assert!(error("{}").contains("needs an event"));
     }
 }

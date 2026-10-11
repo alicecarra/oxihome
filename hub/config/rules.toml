@@ -23,3 +23,18 @@ then = [{ set = { device = "sim-bedroom", entity = 1, channel = 0, value = false
 name = "Test board LED on for waking up"
 when = { at = "07:00", days = ["monday", "tuesday", "wednesday", "thursday", "friday"] }
 then = [{ set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = true } }]
+
+[[rules]]
+name = "Test board LED off late on weeknights"
+when = { cron = "30 23 * * mon-fri" }
+then = [{ set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = false } }]
+
+[[rules]]
+name = "Test board LED blinks: on at even minutes"
+when = { cron = "*/2 * * * *" }
+then = [{ set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = true } }]
+
+[[rules]]
+name = "Test board LED blinks: off at odd minutes"
+when = { cron = "1-59/2 * * * *" }
+then = [{ set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = false } }]
