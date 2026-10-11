@@ -186,18 +186,13 @@ cargo run -p oxihome-simulator -- simulator/simulator.toml
 Type `help` for the commands: `press <node> <entity>`, `offline <node>`, `online <node>`,
 `reboot <node>`, `list`, `quit`.
 
-## Client
+## Raw MQTT messages
 
-Talks to nodes over MQTT or the USB serial port. Type `help` for the commands, e.g. `set 1 0 true`
-turns the LED on.
+To see the JSON messages nodes and the hub exchange, subscribe inside the broker container:
 
 ```sh
-cargo run -p oxihome-client -- mqtt localhost esp32-08d1f9ca41e4
-cargo run -p oxihome-client -- serial /dev/serial/by-id/usb-1a86_*
+docker exec oxihome-mosquitto mosquitto_sub -t 'oxihome/#' -v
 ```
-
-The current firmware only speaks MQTT; serial mode needs a firmware that uses the UART transport.
-Close `espflash monitor` before using serial mode, only one program can hold the port.
 
 ## Editor
 
