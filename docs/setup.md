@@ -100,7 +100,10 @@ to 3V3 (not 5 V: the output follows the supply), `Y` to D23. Free pins to use ne
 
 The IR receiver is read by the RMT peripheral. NEC frames (most cheap remotes, including the kit's)
 arrive as `NEC 00 45` (8-bit address and command in hex) or `NEC 1234 45` (extended 16-bit
-address); a held key sends `NEC 00 45 repeat` about every 110 ms. Anything else arrives as
+address); a held key sends `NEC 00 45 repeat` about every 110 ms. Sony SIRC frames (12, 15 or 20
+bits) arrive as `SONY15 30 15` (length, address and command in hex); Sony remotes send each frame
+at least three times, so the same code again within 150 ms arrives as `SONY15 30 15 repeat`.
+Anything else arrives as
 `raw 9000 4500 560 …`, the mark and space durations in µs (at most 128). The code is a `Text` value
 (up to 1024 bytes); the hub shows it on the node card and in its log. The decoder tolerates a remote
 held at an angle: pulses under 250 µs are merged with their neighbours, the 4.5 ms header space may

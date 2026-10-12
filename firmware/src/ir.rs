@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use esp_idf_svc::hal::gpio::InputPin;
 use esp_idf_svc::hal::rmt::config::{MemoryAccess, ReceiveConfig, RxChannelConfig};
@@ -15,6 +15,9 @@ const FRAME_END: Duration = Duration::from_millis(12);
 /// Shorter frames are noise from lamps and sunlight.
 const MIN_DURATIONS: usize = 8;
 const MAX_RAW_DURATIONS: usize = 128;
+/// Sony remotes send every frame at least three times, 45 ms apart; the same code again within
+/// this is the key still held.
+const SONY_REPEAT_WINDOW: Duration = Duration::from_millis(150);
 /// `raw` and 128 durations of up to 5 digits fit with room to spare.
 pub const MAX_CODE_LENGTH: u16 = 1024;
 
@@ -23,6 +26,8 @@ pub struct IrReceiver {
     channel: RxChannelDriver<'static>,
     symbols: Vec<Symbol>,
     last_nec: Option<String>,
+    /// The last Sony code and when it arrived.
+    last_sony: Option<(String, Instant)>,
 }
 
 impl IrReceiver {
@@ -41,6 +46,7 @@ impl IrReceiver {
             channel,
             symbols: vec![Symbol::default(); MAX_SYMBOLS],
             last_nec: None,
+            last_sony: None,
         })
     }
 
@@ -80,6 +86,14 @@ impl IrReceiver {
         if let Some(code) = nec(&merged) {
             self.last_nec = Some(code.clone());
             return Some(code);
+        }
+        if let Some(code) = sony(&merged) {
+            let now = Instant::now();
+            let held = self.last_sony.as_ref().is_some_and(|(last, at)| {
+                *last == code && now.duration_since(*at) <= SONY_REPEAT_WINDOW
+            });
+            self.last_sony = Some((code.clone(), now));
+            return Some(if held { format!("{code} repeat") } else { code });
         }
         self.last_nec = None;
         let mut raw = String::from("raw");
@@ -159,5 +173,50 @@ fn nec_bits(bits: &[u32]) -> Option<String> {
             "NEC {:04X} {command:02X}",
             u16::from_le_bytes([address, address_check])
         )
+    })
+}
+
+/// Sony SIRC: a 2.4 ms header mark, then per bit a 0.6 ms space and a mark of 1.2 ms for 1 or
+/// 0.6 ms for 0, least significant bit first: 7 command bits, then 5 address bits (12-bit frames),
+/// 8 (15-bit) or 13 (20-bit, address and extension). `SONY15 30 15` is the length, the address and
+/// the command in hex. Noise before the header is skipped.
+fn sony(durations: &[u32]) -> Option<String> {
+    (0..durations.len())
+        .step_by(2)
+        .filter(|&index| (1800..=3000).contains(&durations[index]))
+        .find_map(|index| sony_bits(&durations[index + 1..]))
+}
+
+fn sony_bits(after_header: &[u32]) -> Option<String> {
+    let mut bits: Vec<bool> = Vec::new();
+    for pair in after_header.chunks(2) {
+        let [space, mark] = pair else {
+            break;
+        };
+        if !(300..=900).contains(space) {
+            return None;
+        }
+        match mark {
+            300..900 => bits.push(false),
+            900..=1500 => bits.push(true),
+            _ => return None,
+        }
+    }
+    if ![12, 15, 20].contains(&bits.len()) {
+        return None;
+    }
+    let value = |range: std::ops::Range<usize>| {
+        bits[range]
+            .iter()
+            .rev()
+            .fold(0u32, |value, bit| value << 1 | u32::from(*bit))
+    };
+    let command = value(0..7);
+    let address = value(7..bits.len());
+    let length = bits.len();
+    Some(if length == 20 {
+        format!("SONY{length} {address:04X} {command:02X}")
+    } else {
+        format!("SONY{length} {address:02X} {command:02X}")
     })
 }
