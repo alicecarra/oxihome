@@ -24,7 +24,7 @@ pub async fn rules(cx: &Cx) -> Result<impl View> {
             <div class="max-w-3xl space-y-4">
                 <div class="flex items-center justify-between gap-4">
                     <p class="text-sm text-muted-foreground">"Rules run when their event happens or at their time. They come from rules.toml."</p>
-                    <a href="/settings#rules.toml" class="text-sm font-medium hover:underline">"Edit in Settings"</a>
+                    <a href="/settings/rules.toml" class="text-sm font-medium hover:underline">"Edit in Settings"</a>
                 </div>
                 if rules.is_empty() {
                     <p class="text-muted-foreground">"No rules yet."</p>

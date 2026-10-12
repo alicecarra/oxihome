@@ -1,10 +1,11 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use jiff::Timestamp;
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::{content::Form, page, route},
+    router::{content::Form, page, path_param, route},
     view::{View, ViewExt, ViewHandle, attributes, component, view},
 };
 
@@ -18,25 +19,23 @@ use crate::config::FILES;
 use crate::hub::Hub;
 use crate::node::parameters;
 
+path_param!(file);
+
 #[page("/settings")]
 pub async fn settings(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
     let directory = hub.config_directory().display().to_string();
-    let editors: Vec<Editor> = FILES
+    let files: Vec<(&str, String)> = FILES
         .iter()
-        .map(|file| match hub.config_file(file) {
-            Ok(content) => Editor {
-                file: file.to_string(),
-                text: content.text,
-                modified: modified_field(content.modified),
-                error: None,
-            },
-            Err(error) => Editor {
-                file: file.to_string(),
-                text: String::new(),
-                modified: String::new(),
-                error: Some(format!("{error:#}")),
-            },
+        .map(|file| {
+            let modified = match hub.config_file(file) {
+                Ok(content) => content.modified.map_or_else(
+                    || "missing, counts as empty".to_string(),
+                    |modified| format!("modified {}", time_label(hub, modified)),
+                ),
+                Err(error) => format!("{error:#}"),
+            };
+            (*file, modified)
         })
         .collect();
 
@@ -46,25 +45,98 @@ pub async fn settings(cx: &Cx) -> Result<impl View> {
             <div class="max-w-3xl">
                 card(
                     card_header(
-                        card_title("Configuration")
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                            card_title("Configuration")
+                            <form hx-post="/reload" hx-target="#status">
+                                button(variant: ButtonVariant::Outline, size: ButtonSize::Sm, "Reload all")
+                            </form>
+                        </div>
                         card_description(
-                            (format!("Nodes (names and parameters), rules, remotes and panels live in TOML files in {directory}. Edit them here, or in an editor and then reload. Each node's page also edits its names and parameters."))
+                            (format!("Nodes (names and parameters), rules, remotes, panels and the dashboard live in TOML files in {directory}. Edit them here, or in an editor and then reload. Each node's page also edits its names and parameters."))
                         )
                     )
                     card_content(
-                        <div class="space-y-6">
-                            for editor in editors {
-                                config_editor(editor: editor)
+                        <ul class="divide-y divide-border">
+                            for (file, modified) in files {
+                                <li>
+                                    <a href=(format!("/settings/{file}")) class="flex items-center justify-between gap-4 py-3 hover:bg-foreground/5">
+                                        <div>
+                                            <p class="font-mono text-sm font-medium">(file)</p>
+                                            <p class="text-sm text-muted-foreground">(file_description(file))</p>
+                                        </div>
+                                        <p class="text-right text-xs text-muted-foreground">(modified)</p>
+                                    </a>
+                                </li>
                             }
-                        </div>
-                        <form class="mt-6" hx-post="/reload" hx-target="#status">
-                            button(variant: ButtonVariant::Outline, "Reload config from disk")
-                        </form>
+                        </ul>
                     )
                 )
             </div>
         )
     })
+}
+
+#[page("/settings/{file}")]
+pub async fn settings_file(cx: &Cx) -> Result<impl View> {
+    let hub: &Arc<Hub> = app_context(cx);
+    let file = path_param::<File>(cx).to_string();
+    let editor = FILES.contains(&file.as_str()).then(|| match hub.config_file(&file) {
+        Ok(content) => Editor {
+            file: file.clone(),
+            text: content.text,
+            modified: modified_field(content.modified),
+            error: None,
+        },
+        Err(error) => Editor {
+            file: file.clone(),
+            text: String::new(),
+            modified: String::new(),
+            error: Some(format!("{error:#}")),
+        },
+    });
+
+    Ok(view! {
+        layout(
+            title: "Oxihome settings",
+            <div class="max-w-3xl space-y-4">
+                <a href="/settings" class="text-sm text-muted-foreground hover:underline">"← Settings"</a>
+                match editor {
+                    None => <p class="text-muted-foreground">(format!("Unknown config file {file}."))</p>,
+                    Some(editor) => card(
+                        card_header(
+                            card_title(<span class="font-mono">(file.clone())</span>)
+                            card_description((file_description(&file)))
+                        )
+                        card_content(config_editor(editor: editor))
+                    ),
+                }
+            </div>
+        )
+    })
+}
+
+fn file_description(file: &str) -> &'static str {
+    match file {
+        "nodes.toml" => "Names of nodes, entities and channels, and the operation parameters the hub sets.",
+        "rules.toml" => "What happens on events, values, schedules, remote keys and panel buttons.",
+        "remotes.toml" => "Infrared remotes and the names of their keys.",
+        "panels.toml" => "Panels of buttons that run rules.",
+        "dashboard.toml" => "The blocks of the home page.",
+        _ => "",
+    }
+}
+
+/// Like `2026-10-12 14:30`, in the hub's time zone.
+fn time_label(hub: &Hub, time: SystemTime) -> String {
+    Timestamp::try_from(time).map_or_else(
+        |_| "unknown".to_string(),
+        |timestamp| {
+            timestamp
+                .to_zoned(hub.time_zone().clone())
+                .strftime("%Y-%m-%d %H:%M")
+                .to_string()
+        },
+    )
 }
 
 /// Answers with the content of `#status`; a success also shows a toast.
@@ -105,15 +177,14 @@ struct Editor {
 async fn config_editor(editor: Editor) -> Result<impl View> {
     let invalid = editor.error.is_some();
     Ok(view! {
-        <form id=(editor.file.clone()) class="space-y-2" hx-post="/config/save" hx-target="this" hx-swap="outerHTML">
-            <div class="flex items-center justify-between">
-                <code class="font-mono text-sm font-medium">(editor.file.clone())</code>
+        <form class="space-y-2" hx-post="/config/save" hx-target="this" hx-swap="outerHTML">
+            <div class="flex justify-end">
                 button(variant: ButtonVariant::Secondary, size: ButtonSize::Sm, "Save")
             </div>
             textarea(
                 attrs: attributes! {
                     name="text"
-                    class="min-h-48 font-mono text-sm"
+                    class="min-h-96 font-mono text-sm"
                     spellcheck="false"
                     if invalid {
                         aria-invalid="true"
@@ -146,13 +217,13 @@ pub async fn save(cx: &Cx, Form(form): Form<SaveForm>) -> Result<ViewHandle> {
     let result = hub.save_config_file(&form.file, &text, parse_modified(&form.modified));
 
     let editor = match result {
-        Ok(_) => {
+        Ok(rule_count) => {
             for device_id in hub.device_ids() {
                 tokio::spawn(parameters::apply(hub.clone(), device_id));
             }
             hub.notify(
                 format!("{} saved", form.file),
-                "Configuration reloaded".into(),
+                format!("All config reloaded ({rule_count} rules)"),
                 "settings".into(),
             );
             let modified = hub

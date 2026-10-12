@@ -47,6 +47,7 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .page(remotes::remotes_page)
         .page(remotes::remotes_fragment)
         .page(settings::settings)
+        .page(settings::settings_file)
         .route(home::set)
         .route(node::edit)
         .route(home::invoke)

@@ -51,7 +51,7 @@ pub async fn panel(cx: &Cx) -> Result<impl View> {
             <div class="space-y-4">
                 <div class="flex items-center justify-between gap-4">
                     <p class="text-sm text-muted-foreground">"Panels and buttons come from panels.toml; rules say what a button does with when = { panel = \"...\", button = \"...\" }."</p>
-                    <a href="/settings#panels.toml" class="text-sm font-medium whitespace-nowrap hover:underline">"Edit in Settings"</a>
+                    <a href="/settings/panels.toml" class="text-sm font-medium whitespace-nowrap hover:underline">"Edit in Settings"</a>
                 </div>
                 if panels.is_empty() {
                     <p class="text-muted-foreground">"No panels yet."</p>

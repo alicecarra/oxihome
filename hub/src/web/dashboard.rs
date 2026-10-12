@@ -109,7 +109,7 @@ async fn dashboard_blocks(blocks: Vec<BlockView>) -> Result<impl View> {
         if blocks.is_empty() {
             <p class="text-muted-foreground">
                 "No dashboard yet: add blocks to dashboard.toml in "
-                <a href="/settings#dashboard.toml" class="font-medium hover:underline">"Settings"</a>
+                <a href="/settings/dashboard.toml" class="font-medium hover:underline">"Settings"</a>
                 ", or see all nodes in "
                 <a href="/nodes" class="font-medium hover:underline">"Nodes"</a>
                 "."

@@ -28,7 +28,7 @@ pub async fn remotes_page(cx: &Cx) -> Result<impl View> {
             <div class="max-w-3xl space-y-4">
                 <div class="flex items-center justify-between gap-4">
                     <p class="text-sm text-muted-foreground">"Infrared remotes and the codes of their keys. Rules can use a key by name. They come from remotes.toml."</p>
-                    <a href="/settings#remotes.toml" class="text-sm font-medium whitespace-nowrap hover:underline">"Edit in Settings"</a>
+                    <a href="/settings/remotes.toml" class="text-sm font-medium whitespace-nowrap hover:underline">"Edit in Settings"</a>
                 </div>
                 <div id="remotes" hx-get="/remotes/fragment" hx-trigger="sse:nodes, refresh">
                     remotes_content(learning: learning(hub), remotes: remote_list(hub), default_remote: remote_to_offer(hub))
