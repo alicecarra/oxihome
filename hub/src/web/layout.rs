@@ -36,7 +36,7 @@ pub async fn layout(cx: &Cx, title: &str, #[default] child: Child<'_>) -> Result
         .collect();
     Ok(view! {
         <!DOCTYPE html>
-        <html>
+        <html class="dark">
             <head>
                 <meta charset="utf-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1">
