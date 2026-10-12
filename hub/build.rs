@@ -3,4 +3,8 @@ fn main() {
         .input("styles.css")
         .render()
         .unwrap();
+    topcoat::icon::iconify::BuildConfig::new()
+        .icon_set("tabler")
+        .stage()
+        .unwrap();
 }

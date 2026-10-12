@@ -2,6 +2,8 @@ mod dashboard;
 mod events;
 mod format;
 mod home;
+mod icons;
+mod lab;
 mod layout;
 mod node;
 mod nodes;
@@ -48,6 +50,7 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .page(remotes::remotes_fragment)
         .page(settings::settings)
         .page(settings::settings_file)
+        .page(lab::lab)
         .route(home::set)
         .route(node::edit)
         .route(home::invoke)
