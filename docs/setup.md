@@ -339,6 +339,44 @@ time of the last reading as `Text`. All read only; rules use them like any senso
 the `Precipitation` and `WindSpeed` quantities and the `Millimeter` and `KilometerPerHour` units
 for it.
 
+## Linux monitor
+
+`linux-monitor/` (`oxihome-linux-monitor`) is a software node with the state of the Linux machine
+it runs on; install it on each computer and each one becomes a node. It reads `sysinfo` and `/sys`
+and reports every 30 s with the heartbeat (the battery charge also goes in the heartbeat).
+
+```sh
+cp linux-monitor/linux-monitor.toml.example linux-monitor/linux-monitor.toml   # then pick disks and interfaces
+cargo run -p oxihome-linux-monitor -- linux-monitor/linux-monitor.toml
+```
+
+`linux-monitor/linux-monitor.toml` stays out of git because it is per machine. Without
+`[node] id` the node takes the hostname. The program prints the mount points and interfaces it
+finds when it starts.
+
+To keep it running on a machine, as a systemd user service (the binary and the config in
+`~/oxihome-linux-monitor`):
+
+```sh
+cp linux-monitor/oxihome-linux-monitor.service ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now oxihome-linux-monitor
+sudo loginctl enable-linger $USER   # starts at boot, without logging in
+```
+
+Copying a release binary built here works on another x86_64 machine with the same or a newer glibc
+(`objdump -T` shows the versions it needs).
+
+Entities, all read only: 1 CPU (usage %, load over 1, 5 and 15 minutes, average frequency MHz,
+temperature °C when a known sensor exists), 2 memory (used %, used, available and total GB, swap
+used %), 3 battery (charge %, charging, plugged in; only on machines with their own battery, not
+counting mice and keyboards), 4 system (uptime s, hostname, kernel, distribution). Disks take ids 10
+to 29 and interfaces 30 to 49, in the order of the configuration, so add new ones at the end: disks
+report used %, free and total GB; interfaces report download and upload kB/s, connected and the
+address. CPU usage and rates start on the second report. GB are 10^9 bytes, so `df -h` (GiB) shows
+smaller numbers. The protocol gained the `DataSize`, `DataRate` and `Frequency` quantities and the
+`Gigabyte`, `KilobytePerSecond` and `Megahertz` units for it. Plans for more (GPU, sensors, session
+events, actions) are in the Trilium note "Monitor Linux".
+
 ## Simulator
 
 Simulated nodes that talk to the broker like real boards, to work on the hub without hardware.

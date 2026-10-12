@@ -1,0 +1,15 @@
+# Copy to linux-monitor.toml (kept out of git: it is per machine).
+
+[mqtt]
+host = "localhost"
+port = 1883
+
+# Without an id the node takes the hostname.
+[node]
+id = "desktop"
+
+# Entity ids follow the order of these lists, so add new ones at the end.
+# The program prints the mount points and interfaces of the machine when it starts.
+[monitor]
+disks = ["/"]
+interfaces = ["wlan0"]

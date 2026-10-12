@@ -1,0 +1,14 @@
+# systemd user service; expects the binary and linux-monitor.toml in ~/oxihome-linux-monitor.
+[Unit]
+Description=Oxihome Linux monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/oxihome-linux-monitor
+ExecStart=%h/oxihome-linux-monitor/oxihome-linux-monitor linux-monitor.toml
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

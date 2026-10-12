@@ -1,0 +1,13 @@
+[package]
+name = "oxihome-linux-monitor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+oxihome-node = { path = "../node", features = ["mqtt"] }
+oxihome-protocol = { path = "../protocol" }
+serde = { version = "1", features = ["derive"] }
+sysinfo = { version = "0.39", default-features = false, features = ["component", "disk", "network", "system"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+toml = "1"
