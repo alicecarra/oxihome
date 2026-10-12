@@ -85,6 +85,8 @@ pub enum Quantity {
     Voltage,
     Current,
     Power,
+    Precipitation,
+    WindSpeed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,4 +98,6 @@ pub enum Unit {
     Ampere,
     Watt,
     Second,
+    Millimeter,
+    KilometerPerHour,
 }
