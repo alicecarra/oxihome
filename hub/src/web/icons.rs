@@ -22,3 +22,6 @@ pub const PANELS: IconData = iconify_icon!("tabler:square-plus");
 pub const RULES: IconData = iconify_icon!("tabler:sitemap");
 pub const REMOTES: IconData = iconify_icon!("tabler:device-remote");
 pub const SETTINGS: IconData = iconify_icon!("tabler:adjustments-cog");
+pub const SORT: IconData = iconify_icon!("tabler:selector");
+pub const SORT_ASCENDING: IconData = iconify_icon!("tabler:chevron-up");
+pub const SORT_DESCENDING: IconData = iconify_icon!("tabler:chevron-down");

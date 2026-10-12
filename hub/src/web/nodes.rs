@@ -5,10 +5,12 @@ use oxihome_protocol::{Value, management};
 use topcoat::{
     Result,
     context::{Cx, app_context},
+    icon::icon,
     router::page,
     view::{Child, View, attributes, component, view},
 };
 
+use super::icons;
 use super::format::{ago_label, duration_label, entity_label, value_label};
 use super::layout::layout;
 use super::overview::{self, ChannelOverview, Invocation, NodeOverview, Presence};
@@ -47,6 +49,7 @@ pub async fn nodes_page(cx: &Cx) -> Result<impl View> {
             </div>
             <p id="nodes-filtered-out" class="text-muted-foreground" hidden="">"No nodes match the filter."</p>
             <script src="/static/node-filter.js"></script>
+            <script src="/static/node-sort.js"></script>
         )
     })
 }
@@ -69,12 +72,12 @@ pub async fn node_list(nodes: Vec<NodeOverview>) -> Result<impl View> {
                 <table class="w-full text-sm">
                     <thead class="text-left text-muted-foreground">
                         <tr>
-                            <th class="px-4 py-3 font-medium">"Node"</th>
-                            <th class="px-4 py-3 font-medium">"Status"</th>
-                            <th class="hidden px-4 py-3 font-medium sm:table-cell">"Channels"</th>
-                            <th class="hidden px-4 py-3 font-medium sm:table-cell">"Firmware"</th>
-                            <th class="px-4 py-3 font-medium">"Uptime"</th>
-                            <th class="hidden px-4 py-3 font-medium sm:table-cell">"Signal"</th>
+                            sortable_header(column: "node", class: "", "Node")
+                            sortable_header(column: "status", class: "", "Status")
+                            sortable_header(column: "channels", class: "hidden sm:table-cell", "Channels")
+                            sortable_header(column: "firmware", class: "hidden sm:table-cell", "Firmware")
+                            sortable_header(column: "uptime", class: "", "Uptime")
+                            sortable_header(column: "signal", class: "hidden sm:table-cell", "Signal")
                         </tr>
                     </thead>
                     <tbody>
@@ -88,10 +91,29 @@ pub async fn node_list(nodes: Vec<NodeOverview>) -> Result<impl View> {
     })
 }
 
+/// A column header that `node-sort.js` sorts by when clicked.
+#[component]
+async fn sortable_header(
+    column: &'static str,
+    class: &'static str,
+    #[default] child: Child<'_>,
+) -> Result<impl View> {
+    Ok(view! {
+        <th class=(format!("group px-4 py-1.5 font-medium {class}")) data-sort-column=(column) aria-sort="none">
+            <button type="button" class="-mx-2 inline-flex items-center gap-1 rounded-md px-2 py-1.5 hover:bg-foreground/5 hover:text-foreground">
+                (child)
+                <span class="group-aria-[sort=ascending]:hidden group-aria-[sort=descending]:hidden opacity-50">icon(data: icons::SORT, size: 14)</span>
+                <span class="hidden group-aria-[sort=ascending]:inline">icon(data: icons::SORT_ASCENDING, size: 14)</span>
+                <span class="hidden group-aria-[sort=descending]:inline">icon(data: icons::SORT_DESCENDING, size: 14)</span>
+            </button>
+        </th>
+    })
+}
+
 #[component]
 async fn node_row(node: NodeOverview) -> Result<impl View> {
     let title = node.name.clone().unwrap_or_else(|| node.device_id.clone());
-    let channels = if node.presence == Presence::NotSeen {
+    let (channels_count, channels_label, channels_title) = if node.presence == Presence::NotSeen {
         let configured: usize = node
             .configured_entities
             .iter()
@@ -102,7 +124,7 @@ async fn node_row(node: NodeOverview) -> Result<impl View> {
             .iter()
             .map(configured_entity_label)
             .collect();
-        (format!("{configured} configured"), names.join("; "))
+        (configured, format!("{configured} configured"), names.join("; "))
     } else {
         // The management entity holds node parameters, not things in the home.
         let declared = node
@@ -110,7 +132,7 @@ async fn node_row(node: NodeOverview) -> Result<impl View> {
             .iter()
             .filter(|channel| channel.entity != management::ENTITY)
             .count();
-        (declared.to_string(), String::new())
+        (declared, declared.to_string(), String::new())
     };
     // The last uptime of an offline node is stale; when it went quiet says more.
     let uptime = match (node.presence, node.last_seen) {
@@ -121,8 +143,23 @@ async fn node_row(node: NodeOverview) -> Result<impl View> {
         _ => None,
     };
     let signal = node.rssi.map(|rssi| format!("{rssi} dBm"));
+    // Online nodes by uptime, then offline ones by how recently they were seen.
+    let uptime_order = match (node.presence, node.last_seen) {
+        (Presence::Offline, Some(ago)) => Some(-(ago.as_secs() as i64)),
+        (Presence::Online, _) => node.uptime_seconds.map(i64::from),
+        _ => None,
+    };
     Ok(view! {
-        <tr class="border-t border-border" data-presence=(presence_key(node.presence))>
+        <tr
+            class="border-t border-border"
+            data-presence=(presence_key(node.presence))
+            data-sort-node=(title.to_lowercase())
+            data-sort-status=((node.presence as u8).to_string())
+            data-sort-channels=(channels_count.to_string())
+            data-sort-firmware=(node.firmware_version.clone().unwrap_or_default())
+            data-sort-uptime=(uptime_order.map(|order| order.to_string()).unwrap_or_default())
+            data-sort-signal=(node.rssi.map(|rssi| rssi.to_string()).unwrap_or_default())
+        >
             <td class="px-4 py-3">
                 <a href=(format!("/nodes/{}", node.device_id)) class="font-medium hover:underline">(title)</a>
                 if node.name.is_some() {
@@ -130,7 +167,7 @@ async fn node_row(node: NodeOverview) -> Result<impl View> {
                 }
             </td>
             <td class="px-4 py-3">presence_badge(presence: node.presence)</td>
-            <td class="hidden px-4 py-3 tabular-nums sm:table-cell" title=(channels.1)>(channels.0)</td>
+            <td class="hidden px-4 py-3 tabular-nums sm:table-cell" title=(channels_title)>(channels_label)</td>
             <td class="hidden px-4 py-3 sm:table-cell">(node.firmware_version.unwrap_or_else(|| "—".into()))</td>
             <td class="px-4 py-3 tabular-nums">(uptime.unwrap_or_else(|| "—".into()))</td>
             <td class="hidden px-4 py-3 tabular-nums sm:table-cell">(signal.unwrap_or_else(|| "—".into()))</td>
