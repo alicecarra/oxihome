@@ -42,7 +42,17 @@ pub struct Restored {
     pub rule_runs: Vec<(String, RuleRun)>,
 }
 
+/// Numeric readings of one channel, grouped in buckets of equal length.
+#[derive(Debug, Default, PartialEq)]
+pub struct History {
+    /// The last value before the first bucket.
+    pub before: Option<f64>,
+    /// Bucket index from the start, average, minimum and maximum.
+    pub buckets: Vec<(usize, f64, f64, f64)>,
+}
+
 pub struct Storage {
+    pool: SqlitePool,
     writes: mpsc::UnboundedSender<Write>,
 }
 
@@ -65,13 +75,62 @@ impl Storage {
             .await
             .with_context(|| format!("reading {}", path.display()))?;
         let (writes, receiver) = mpsc::unbounded_channel();
-        tokio::spawn(write_loop(pool, receiver, retention));
-        Ok((Self { writes }, restored))
+        tokio::spawn(write_loop(pool.clone(), receiver, retention));
+        Ok((Self { pool, writes }, restored))
     }
 
     /// Queued for the writer task; a failed write is logged there.
     pub fn write(&self, write: Write) {
         let _ = self.writes.send(write);
+    }
+
+    pub async fn history(
+        &self,
+        device_id: &str,
+        entity: u8,
+        channel: u8,
+        since: Timestamp,
+        bucket: Duration,
+    ) -> anyhow::Result<History> {
+        let since = since.as_millisecond();
+        let bucket = i64::try_from(bucket.as_millis())?.max(1);
+        let before = sqlx::query(
+            "SELECT number FROM readings
+             WHERE device_id = ? AND entity = ? AND channel = ? AND at < ? AND number IS NOT NULL
+             ORDER BY at DESC LIMIT 1",
+        )
+        .bind(device_id)
+        .bind(entity)
+        .bind(channel)
+        .bind(since)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(|row| row.get("number"));
+        let mut buckets = Vec::new();
+        for row in sqlx::query(
+            "SELECT (at - ?) / ? AS bucket, AVG(number) AS average, MIN(number) AS minimum,
+                    MAX(number) AS maximum
+             FROM readings
+             WHERE device_id = ? AND entity = ? AND channel = ? AND at >= ? AND number IS NOT NULL
+             GROUP BY bucket ORDER BY bucket",
+        )
+        .bind(since)
+        .bind(bucket)
+        .bind(device_id)
+        .bind(entity)
+        .bind(channel)
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await?
+        {
+            buckets.push((
+                usize::try_from(row.get::<i64, _>("bucket"))?,
+                row.get("average"),
+                row.get("minimum"),
+                row.get("maximum"),
+            ));
+        }
+        Ok(History { before, buckets })
     }
 
     /// Waits for the queued writes.
@@ -423,6 +482,23 @@ mod tests {
             },
         ));
         storage.flush().await;
+        let history = storage
+            .history(
+                "esp32-test",
+                1,
+                0,
+                at - SignedDuration::from_mins(10),
+                Duration::from_secs(60),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            history,
+            History {
+                before: None,
+                buckets: vec![(10, 21.5, 21.5, 21.5)],
+            }
+        );
 
         let (_, restored) = Storage::open(&path, Duration::from_secs(3600))
             .await

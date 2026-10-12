@@ -1,3 +1,4 @@
+mod chart;
 mod dashboard;
 mod events;
 mod format;

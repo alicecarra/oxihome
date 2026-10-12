@@ -2,15 +2,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use jiff::Timestamp;
 use oxihome_protocol::management;
 use serde::Deserialize;
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::{content::Form, page, path_param, route},
+    router::{content::Form, page, parse_query_params, path_param, route},
     view::{View, ViewExt, ViewHandle, attributes, component, view},
 };
 
+use super::chart::{CHART_BUCKETS, Chart, ChartRange, chart, history_chart, series};
 use super::format::{channel_label, duration_label, entity_label, rule_anchor};
 use super::layout::layout;
 use super::nodes::{channel_controls, channel_value, presence_badge};
@@ -29,9 +31,27 @@ struct NodeView {
     node: NodeOverview,
     parameters: Vec<ParameterOverview>,
     rules: Vec<RuleUse>,
+    /// By entity and channel; only the fields section draws them.
+    charts: HashMap<(u8, u8), Chart>,
+    range: ChartRange,
 }
 
-fn node_view(hub: &Hub, device_id: &str) -> Option<NodeView> {
+#[derive(Deserialize)]
+struct RangeQuery {
+    range: Option<String>,
+}
+
+fn chart_range(cx: &Cx) -> ChartRange {
+    let query = parse_query_params::<RangeQuery>(cx).ok();
+    ChartRange::from_key(query.as_ref().and_then(|query| query.range.as_deref()))
+}
+
+async fn node_view(
+    hub: &Hub,
+    device_id: &str,
+    section: Option<Section>,
+    range: ChartRange,
+) -> Option<NodeView> {
     let node = overview::node(hub, device_id)?;
     let parameters = overview::parameters(hub)
         .into_iter()
@@ -39,28 +59,63 @@ fn node_view(hub: &Hub, device_id: &str) -> Option<NodeView> {
         .map(|node| node.parameters)
         .unwrap_or_default();
     let rules = hub.rules_involving(device_id);
+    let charts = if section.is_none_or(|section| section == Section::Fields) {
+        charts(hub, &node, range).await
+    } else {
+        HashMap::new()
+    };
     Some(NodeView {
         node,
         parameters,
         rules,
+        charts,
+        range,
     })
+}
+
+async fn charts(hub: &Hub, node: &NodeOverview, range: ChartRange) -> HashMap<(u8, u8), Chart> {
+    let since = Timestamp::now() - jiff::SignedDuration::try_from(range.span()).unwrap_or_default();
+    let mut charts = HashMap::new();
+    for channel in node.channels.iter().filter(|channel| channel.chartable) {
+        match hub
+            .history(
+                &node.device_id,
+                channel.entity,
+                channel.channel,
+                since,
+                range.bucket_length(),
+            )
+            .await
+        {
+            Ok(history) => {
+                if let Some(drawn) = chart(&series(&history, CHART_BUCKETS)) {
+                    charts.insert((channel.entity, channel.channel), drawn);
+                }
+            }
+            Err(error) => println!(
+                "history of {} {}/{}: {error:#}",
+                node.device_id, channel.entity, channel.channel
+            ),
+        }
+    }
+    charts
 }
 
 #[page("/nodes/{device_id}")]
 pub async fn node_page(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
     let device_id = path_param::<DeviceId>(cx).to_string();
-    let node = node_view(hub, &device_id);
+    let node = node_view(hub, &device_id, None, chart_range(cx)).await;
     Ok(view! {
         layout(
             title: "Oxihome node",
             <div class="space-y-4">
                 <a href="/nodes" class="text-sm text-muted-foreground hover:underline">"← Nodes"</a>
                 match node {
-                    None => <p class="text-muted-foreground">(format!("Unknown node {device_id}: it has not sent a Hello since the hub started."))</p>,
+                    None => <p class="text-muted-foreground">(format!("Unknown node {device_id}: it has never sent a Hello."))</p>,
                     Some(node) => {
                         overview_section(node: node.node.clone(), parameters: node.parameters, editing: false)
-                        fields_section(node: node.node.clone(), rules: node.rules.clone(), editing: false)
+                        fields_section(node: node.node.clone(), rules: node.rules.clone(), charts: node.charts, range: node.range, editing: false)
                         rules_section(channels: node.node.channels, rules: node.rules)
                     },
                 }
@@ -74,31 +129,37 @@ pub async fn node_page(cx: &Cx) -> Result<impl View> {
 
 #[page("/nodes/{device_id}/overview")]
 pub async fn overview_fragment(cx: &Cx) -> Result<impl View> {
-    let node = fragment_node(cx);
+    let node = fragment_node(cx, Section::Overview).await;
     Ok(view! { section_body(node: node, section: Section::Overview, editing: false) })
 }
 
 #[page("/nodes/{device_id}/overview/edit")]
 pub async fn overview_edit_fragment(cx: &Cx) -> Result<impl View> {
-    let node = fragment_node(cx);
+    let node = fragment_node(cx, Section::Overview).await;
     Ok(view! { section_body(node: node, section: Section::Overview, editing: true) })
 }
 
 #[page("/nodes/{device_id}/fields")]
 pub async fn fields_fragment(cx: &Cx) -> Result<impl View> {
-    let node = fragment_node(cx);
+    let node = fragment_node(cx, Section::Fields).await;
     Ok(view! { section_body(node: node, section: Section::Fields, editing: false) })
 }
 
 #[page("/nodes/{device_id}/fields/edit")]
 pub async fn fields_edit_fragment(cx: &Cx) -> Result<impl View> {
-    let node = fragment_node(cx);
+    let node = fragment_node(cx, Section::Fields).await;
     Ok(view! { section_body(node: node, section: Section::Fields, editing: true) })
 }
 
-fn fragment_node(cx: &Cx) -> Option<NodeView> {
+async fn fragment_node(cx: &Cx, section: Section) -> Option<NodeView> {
     let hub: &Arc<Hub> = app_context(cx);
-    node_view(hub, path_param::<DeviceId>(cx))
+    node_view(
+        hub,
+        path_param::<DeviceId>(cx),
+        Some(section),
+        chart_range(cx),
+    )
+    .await
 }
 
 #[derive(Clone, Copy, PartialEq, Deserialize)]
@@ -120,7 +181,7 @@ async fn section_body(
         if let Some(node) = node {
             match section {
                 Section::Overview => overview_section(node: node.node, parameters: node.parameters, editing: editing, out_of_band: out_of_band),
-                Section::Fields => fields_section(node: node.node, rules: node.rules, editing: editing, out_of_band: out_of_band),
+                Section::Fields => fields_section(node: node.node, rules: node.rules, charts: node.charts, range: node.range, editing: editing, out_of_band: out_of_band),
             }
         }
     })
@@ -200,6 +261,9 @@ async fn edit_buttons(
     target: &'static str,
     editing: bool,
     label: &'static str,
+    /// Kept by the section across edits, e.g. `?range=6h`.
+    #[default]
+    query: String,
 ) -> Result<impl View> {
     Ok(view! {
         if editing {
@@ -207,7 +271,7 @@ async fn edit_buttons(
                 button(
                     variant: ButtonVariant::Outline,
                     size: ButtonSize::Sm,
-                    attrs: attributes! { type="button" hx-get=(format!("/nodes/{device_id}/{path}")) hx-target=(target) hx-swap="outerHTML" },
+                    attrs: attributes! { type="button" hx-get=(format!("/nodes/{device_id}/{path}{query}")) hx-params="none" hx-target=(target) hx-swap="outerHTML" },
                     "Cancel"
                 )
                 button(size: ButtonSize::Sm, attrs: attributes! { type="submit" }, "Save")
@@ -216,7 +280,7 @@ async fn edit_buttons(
             button(
                 variant: ButtonVariant::Outline,
                 size: ButtonSize::Sm,
-                attrs: attributes! { type="button" hx-get=(format!("/nodes/{device_id}/{path}/edit")) hx-target=(target) hx-swap="outerHTML" },
+                attrs: attributes! { type="button" hx-get=(format!("/nodes/{device_id}/{path}/edit{query}")) hx-params="none" hx-target=(target) hx-swap="outerHTML" },
                 (label)
             )
         }
@@ -355,10 +419,14 @@ async fn parameter_stat(row: ParameterOverview, editing: bool) -> Result<impl Vi
 async fn fields_section(
     node: NodeOverview,
     rules: Vec<RuleUse>,
+    charts: HashMap<(u8, u8), Chart>,
+    range: ChartRange,
     editing: bool,
     #[default] out_of_band: bool,
 ) -> Result<impl View> {
     let device_id = node.device_id.clone();
+    let query = format!("?range={}", range.key());
+    let has_charts = node.channels.iter().any(|channel| channel.chartable);
     let mut entities: Vec<(u8, Option<String>, Vec<ChannelOverview>)> = Vec::new();
     for channel in node
         .channels
@@ -380,7 +448,9 @@ async fn fields_section(
             hx-post="/nodes/edit"
             hx-target="#status"
         } else {
-            hx-get=(format!("/nodes/{device_id}/fields"))
+            hx-get=(format!("/nodes/{device_id}/fields{query}"))
+            // The form's fields would repeat `range` in the query.
+            hx-params="none"
             hx-trigger="sse:nodes, refresh"
             hx-swap="outerHTML"
         }
@@ -389,20 +459,50 @@ async fn fields_section(
         <form class="space-y-3" (attrs)>
             <input type="hidden" name="device_id" value=(device_id.clone())>
             <input type="hidden" name="section" value="fields">
+            <input type="hidden" name="range" value=(range.key())>
             <div class="flex flex-wrap items-start justify-between gap-3">
                 <div>
                     <h2 class="text-base font-semibold">"Node fields"</h2>
                     <p class="text-sm text-muted-foreground">"What the node declares: each entity's channels, what they are, their values and controls."</p>
                 </div>
-                edit_buttons(device_id: device_id.clone(), path: "fields", target: "#node-fields", editing: editing, label: "Edit names")
+                <div class="flex flex-wrap items-center gap-2">
+                    if has_charts && !editing {
+                        range_picker(device_id: device_id.clone(), range: range)
+                    }
+                    edit_buttons(device_id: device_id.clone(), path: "fields", target: "#node-fields", editing: editing, label: "Edit names", query: query.clone())
+                </div>
             </div>
             // Cards of a row share its height, so the grid stays aligned.
             <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 for (entity, name, channels) in entities {
-                    entity_card(device_id: device_id.clone(), entity: entity, name: name, channels: channels, rules: rules.clone(), editing: editing)
+                    entity_card(device_id: device_id.clone(), entity: entity, name: name, channels: channels, rules: rules.clone(), charts: charts.clone(), range: range, editing: editing)
                 }
             </div>
         </form>
+    })
+}
+
+/// How far back the charts go; the address keeps the choice for reloads.
+#[component]
+async fn range_picker(device_id: String, range: ChartRange) -> Result<impl View> {
+    Ok(view! {
+        <div class="inline-flex gap-0.5 rounded-lg border border-border p-0.5" role="group" aria-label="Chart range">
+            for option in ChartRange::ALL {
+                button(
+                    variant: if option == range { ButtonVariant::Secondary } else { ButtonVariant::Ghost },
+                    size: ButtonSize::Sm,
+                    attrs: attributes! {
+                        type="button"
+                        aria-pressed=(if option == range { "true" } else { "false" })
+                        hx-get=(format!("/nodes/{device_id}/fields?range={}", option.key()))
+                        hx-target="#node-fields"
+                        hx-swap="outerHTML"
+                        hx-push-url=(format!("/nodes/{device_id}?range={}", option.key()))
+                    },
+                    (option.label())
+                )
+            }
+        </div>
     })
 }
 
@@ -413,6 +513,8 @@ async fn entity_card(
     name: Option<String>,
     channels: Vec<ChannelOverview>,
     rules: Vec<RuleUse>,
+    charts: HashMap<(u8, u8), Chart>,
+    range: ChartRange,
     editing: bool,
 ) -> Result<impl View> {
     Ok(view! {
@@ -438,6 +540,8 @@ async fn entity_card(
                 <ul class="divide-y divide-border">
                     for channel in channels {
                         field_row(
+                            chart: charts.get(&(channel.entity, channel.channel)).cloned(),
+                            range: range,
                             rules: rules
                                 .iter()
                                 .filter(|use_| use_.channel == Some((channel.entity, channel.channel)))
@@ -460,6 +564,8 @@ async fn field_row(
     device_id: String,
     channel: ChannelOverview,
     rules: Vec<String>,
+    chart: Option<Chart>,
+    range: ChartRange,
     editing: bool,
 ) -> Result<impl View> {
     let channel_name = channel_label(channel.channel, &channel.channel_name, channel.quantity);
@@ -494,7 +600,10 @@ async fn field_row(
                 }
             </div>
             if !editing {
-                channel_controls(device_id: device_id, channel: channel, label: label)
+                channel_controls(device_id: device_id, channel: channel.clone(), label: label)
+                if let Some(chart) = chart {
+                    history_chart(chart: chart, unit: channel.unit, range: range)
+                }
             }
         </li>
     })
@@ -518,11 +627,14 @@ pub async fn edit(cx: &Cx, Form(form): Form<EditForm>) -> Result<ViewHandle> {
     }
 
     // On success the section comes back shown, out of band; `#status` gets the error otherwise.
-    let node = result
-        .is_ok()
-        .then(|| node_view(hub, &form.device_id))
-        .flatten();
     let section = form.section;
+    let node = match result {
+        Ok(()) => {
+            let range = ChartRange::from_key(form.fields.get("range").map(String::as_str));
+            node_view(hub, &form.device_id, Some(section), range).await
+        }
+        Err(_) => None,
+    };
     view! { cx =>
         if let Err(error) = &result {
             <pre class="text-sm whitespace-pre-wrap text-destructive">(format!("{error:#}"))</pre>

@@ -23,7 +23,7 @@ use crate::node::events::{EventRecord, Events};
 use crate::node::registry::{NodeEvent, Registry};
 use crate::node::state::{ChannelUpdate, State};
 use crate::notifications::{self, Notification, Notifications};
-use crate::storage::{Restored, Storage, Write};
+use crate::storage::{History, Restored, Storage, Write};
 
 /// Read access for the web interface, see `Hub::snapshot`.
 pub struct Snapshot<'a> {
@@ -223,6 +223,20 @@ impl Hub {
 
     pub fn shut_down(&self) {
         self.shutting_down.send_replace(true);
+    }
+
+    /// A channel's numeric readings since `since`, grouped by `bucket`.
+    pub async fn history(
+        &self,
+        device_id: &str,
+        entity: u8,
+        channel: u8,
+        since: Timestamp,
+        bucket: std::time::Duration,
+    ) -> anyhow::Result<History> {
+        self.storage
+            .history(device_id, entity, channel, since, bucket)
+            .await
     }
 
     /// Waits until everything that happened is in the database.

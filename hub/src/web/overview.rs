@@ -22,7 +22,7 @@ use crate::node::registry::{Node, Registry};
 pub struct NodeOverview {
     pub device_id: String,
     pub name: Option<String>,
-    /// `None` for a node not seen since the hub started.
+    /// `None` for a node that never sent a `Hello`.
     pub firmware_version: Option<String>,
     pub presence: Presence,
     /// How long ago the hub last heard from it; `None` when not seen.
@@ -39,7 +39,7 @@ pub struct NodeOverview {
 pub enum Presence {
     Online,
     Offline,
-    /// In `nodes.toml` but has not sent a `Hello` since the hub started.
+    /// In `nodes.toml` but has never sent a `Hello`.
     NotSeen,
 }
 
@@ -78,6 +78,8 @@ pub struct ChannelOverview {
     /// Kind, data as text and how long ago.
     pub last_event: Option<(EventKind, Option<String>, Duration)>,
     pub switchable: bool,
+    /// A number the node measures, worth a history chart.
+    pub chartable: bool,
     pub quantity: Option<Quantity>,
     pub unit: Option<Unit>,
     /// `None` unless the channel is a `Trigger`.
@@ -254,6 +256,11 @@ fn node_overview(
                     ),
                     switchable: channel.value == Some(ValueType::Bool)
                         && matches!(channel.access, Access::Write | Access::ReadWrite),
+                    chartable: channel.access == Access::Read
+                        && matches!(
+                            channel.value,
+                            Some(ValueType::Int { .. } | ValueType::Float { .. })
+                        ),
                     quantity: channel.quantity,
                     unit: channel.unit,
                     invocation: invocation(channel),

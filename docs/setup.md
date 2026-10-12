@@ -320,7 +320,14 @@ Clicking a node's name on the home page opens its page, `/nodes/<id>`, with two 
 update live. **Node overview**: name, presence, device id, firmware, uptime, signal and the
 parameters (the node's value in red when it differs from the desired one). **Node fields**: a grid
 of cards, one per entity, each channel with what it is (type, range and unit, options, access), its
-value or last event and its controls. Each section has its own edit button (**Edit** for the node
+value or last event and its controls. A number the node measures (a read only `Int` or `Float`,
+such as temperature or humidity) also gets a chart from the database (see "Database"). Buttons next to **Edit names** pick the last
+1 h (default), 6 h or 24 h for every chart of the page; the choice stays in the address
+(`?range=6h`), so live updates, edits and reloads keep it. A chart has 144 steps (25 s, 2.5 min or
+10 min), the line at each step's average and a light band from its minimum
+to its maximum, with the overall minimum and maximum below. Values are stored only when they change,
+so a step without readings keeps the previous value; the chart starts at the first value known.
+It is inline SVG drawn by the hub (`hub/src/web/chart.rs`), without JavaScript. Each section has its own edit button (**Edit** for the node
 name and parameters, **Edit names** for entity and channel names), which turns only that section
 into fields; it stops updating while edited. Saving writes `nodes.toml` with `toml_edit`, keeping
 comments and the `entities.1 = { ... }` lines: an empty field removes the name or parameter, a field
