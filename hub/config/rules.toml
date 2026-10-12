@@ -62,5 +62,20 @@ then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, val
 
 [[rules]]
 name = "Remote key 0 toggles the external LED"
-when = { device = "esp32-08d1f9ca41e4", entity = 6, channel = 0, event = "Received", data = "NEC 00 52" }
+when = { remote = "Kit Lafvin", key = "0" }
 then = [{ toggle = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0 } }]
+
+[[rules]]
+name = "Remote key 1 beeps short"
+when = { remote = "Kit Lafvin", key = "1" }
+then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Short" } }]
+
+[[rules]]
+name = "Remote key 2 beeps long"
+when = { remote = "Kit Lafvin", key = "2" }
+then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Long" } }]
+
+[[rules]]
+name = "Remote key 3 sounds the alarm"
+when = { remote = "Kit Lafvin", key = "3" }
+then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]

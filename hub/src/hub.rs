@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Instant, SystemTime};
@@ -12,6 +12,7 @@ use tokio::sync::broadcast;
 
 use crate::commands::Commands;
 use crate::config::names::{NameTarget, Names};
+use crate::config::remotes::Remotes;
 use crate::config::rules::{Rule, RuleRun, Rules};
 use crate::config::{ConfigFile, FILES, HomeConfig, read_file, write_file};
 use crate::mqtt::Mqtt;
@@ -28,7 +29,18 @@ pub struct Snapshot<'a> {
     pub events: MutexGuard<'a, Events>,
     pub names: MutexGuard<'a, Names>,
     pub parameters: MutexGuard<'a, NodeParameters>,
+    pub remotes: MutexGuard<'a, Remotes>,
 }
+
+/// A code an IR receiver got, for learning remote keys.
+#[derive(Debug, Clone)]
+pub struct ReceivedCode {
+    pub code: String,
+    pub device_id: String,
+    pub at: Instant,
+}
+
+const RECENT_CODES: usize = 10;
 
 /// What changed, announced to the pages listening on `/events`.
 #[derive(Debug, Clone, Copy)]
@@ -58,6 +70,9 @@ pub struct Hub {
     /// Last run of each rule, by name.
     rule_runs: Mutex<HashMap<String, RuleRun>>,
     parameters: Mutex<NodeParameters>,
+    remotes: Mutex<Remotes>,
+    /// Newest first, without repeats of held keys.
+    recent_codes: Mutex<VecDeque<ReceivedCode>>,
     notifications: Mutex<Notifications>,
     commands: Commands,
     /// Scheduled rules run in this zone's local time.
@@ -83,6 +98,8 @@ impl Hub {
             rules: Mutex::new(config.rules),
             rule_runs: Mutex::default(),
             parameters: Mutex::new(config.parameters),
+            remotes: Mutex::new(config.remotes),
+            recent_codes: Mutex::default(),
             notifications: Mutex::default(),
             commands: Commands::default(),
             time_zone,
@@ -118,6 +135,16 @@ impl Hub {
         let node_events = self.registry.lock().unwrap().handle(message, now);
         updates.extend(state.apply(message));
         let event = self.events.lock().unwrap().apply(message, now);
+        if let Some(code) = event.as_ref().and_then(learnable_code) {
+            let mut recent = self.recent_codes.lock().unwrap();
+            recent.retain(|received| received.code != code);
+            recent.push_front(ReceivedCode {
+                code: code.to_string(),
+                device_id: message.src.clone(),
+                at: now,
+            });
+            recent.truncate(RECENT_CODES);
+        }
         if !node_events.is_empty() || !updates.is_empty() || event.is_some() {
             self.announce(Change::Nodes);
         }
@@ -200,6 +227,7 @@ impl Hub {
             events: self.events.lock().unwrap(),
             names: self.names.lock().unwrap(),
             parameters: self.parameters.lock().unwrap(),
+            remotes: self.remotes.lock().unwrap(),
         }
     }
 
@@ -239,6 +267,7 @@ impl Hub {
         *self.names.lock().unwrap() = config.names;
         *self.rules.lock().unwrap() = config.rules;
         *self.parameters.lock().unwrap() = config.parameters;
+        *self.remotes.lock().unwrap() = config.remotes;
         self.announce(Change::Nodes);
         rule_count
     }
@@ -277,13 +306,26 @@ impl Hub {
     }
 
     pub fn matching_rules(&self, event: &EventRecord) -> Vec<Rule> {
-        self.rules
-            .lock()
-            .unwrap()
-            .matching(event)
+        let rules = self.rules.lock().unwrap();
+        let remotes = self.remotes.lock().unwrap();
+        rules
+            .matching(event, &remotes)
             .into_iter()
             .cloned()
             .collect()
+    }
+
+    pub fn recent_codes(&self) -> Vec<ReceivedCode> {
+        self.recent_codes.lock().unwrap().iter().cloned().collect()
+    }
+
+    /// Adds a key to `remotes.toml` (keeping its comments), validates and applies the configuration.
+    pub fn learn_key(&self, remote: &str, key: &str, code: &str) -> anyhow::Result<()> {
+        let file = "remotes.toml";
+        let current = self.config_file(file)?;
+        let text = crate::config::remotes::with_key(&current.text, remote, key, code)?;
+        self.save_config_file(file, &text, current.modified)?;
+        Ok(())
     }
 
     pub fn crossed_rules(&self, update: &ChannelUpdate) -> Vec<Rule> {
@@ -370,5 +412,19 @@ impl Hub {
         if let Some((title, message)) = notifications::for_node_event(event, &name) {
             self.notify(title, message, event.device_id().to_string());
         }
+    }
+}
+
+/// Codes worth naming: decoded IR codes, not the repeats of a held key nor undecoded `raw` timings.
+fn learnable_code(event: &EventRecord) -> Option<&str> {
+    match &event.data {
+        Some(Value::Text(code))
+            if event.kind == oxihome_protocol::EventKind::Received
+                && !code.ends_with(" repeat")
+                && !code.starts_with("raw") =>
+        {
+            Some(code)
+        }
+        _ => None,
     }
 }

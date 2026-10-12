@@ -102,7 +102,10 @@ The IR receiver is read by the RMT peripheral. NEC frames (most cheap remotes, i
 arrive as `NEC 00 45` (8-bit address and command in hex) or `NEC 1234 45` (extended 16-bit
 address); a held key sends `NEC 00 45 repeat` about every 110 ms. Anything else arrives as
 `raw 9000 4500 560 …`, the mark and space durations in µs (at most 128). The code is a `Text` value
-(up to 1024 bytes); the hub shows it on the node card and in its log.
+(up to 1024 bytes); the hub shows it on the node card and in its log. The decoder tolerates a remote
+held at an angle: pulses under 250 µs are merged with their neighbours, the 4.5 ms header space may
+come after noise, and each bit's space counts as 0 below 1.1 ms and 1 up to 2.4 ms (the inverted
+command byte still rules out wrong readings).
 
 ## MQTT broker
 
@@ -151,6 +154,11 @@ previous configuration stays in use.
   sending them, and `/rules` shows the problem under the action.
   `enabled = false` turns a rule off. Triggers:
   - an event of a channel: `when = { device = "...", entity = 2, channel = 0, event = "Press" }`;
+    `data = "NEC 00 52"` also requires the event's text to be exactly that (a held key's
+    `NEC 00 52 repeat` does not match);
+  - a key of a remote named in `remotes.toml`, from any IR receiver:
+    `when = { remote = "Kit Lafvin", key = "0" }` (repeats do not match; an unknown key is an
+    error when the configuration loads);
   - a local time, every day or on some days: `when = { at = "07:00", days = ["monday", "friday"] }`;
   - a numeric channel crossing a limit: `when = { device = "...", entity = 3, channel = 0, above = 28 }`
     (or `below = 27`). It runs when a value confirmed by the node crosses the limit, not again while
@@ -183,6 +191,17 @@ previous configuration stays in use.
   name = "Test board LED blinks: on at even minutes"
   when = { cron = "*/2 * * * *" }
   then = [{ set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = true } }]
+  ```
+
+- `remotes.toml`: infrared remotes and the codes of their keys. The `/remotes` page lists them and
+  has a "Learn" card with the last codes received (not repeats nor `raw` signals): name a remote and
+  a key and the hub adds it to the file, keeping its comments. A code on two keys is an error. Node
+  cards show a named code as `Kit Lafvin · 0`.
+
+  ```toml
+  [remotes."Kit Lafvin".keys]
+  0 = "NEC 00 52"
+  1 = "NEC 00 16"
   ```
 
 - `nodes.toml`: desired operation parameters of each node (seconds). The hub sends a `Set` when a

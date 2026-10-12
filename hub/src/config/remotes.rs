@@ -1,0 +1,159 @@
+use std::collections::{BTreeMap, HashMap};
+
+use anyhow::bail;
+use serde::Deserialize;
+use toml_edit::{DocumentMut, Item, Table, value};
+
+/// Infrared remotes and the codes of their keys, from `remotes.toml`:
+///
+/// ```toml
+/// [remotes."Kit remote".keys]
+/// 0 = "NEC 00 52"
+/// OK = "NEC 00 1C"
+/// ```
+#[derive(Debug, Default, Deserialize)]
+pub struct Remotes {
+    #[serde(default)]
+    remotes: BTreeMap<String, Remote>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct Remote {
+    /// Key name to code.
+    #[serde(default)]
+    pub keys: BTreeMap<String, String>,
+}
+
+/// A key of a remote, found by its code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteKey {
+    pub remote: String,
+    pub key: String,
+}
+
+impl Remotes {
+    pub fn all(&self) -> &BTreeMap<String, Remote> {
+        &self.remotes
+    }
+
+    pub fn code(&self, remote: &str, key: &str) -> Option<&str> {
+        self.remotes.get(remote)?.keys.get(key).map(String::as_str)
+    }
+
+    pub fn key_for(&self, code: &str) -> Option<RemoteKey> {
+        self.remotes.iter().find_map(|(remote, keys)| {
+            keys.keys
+                .iter()
+                .find(|(_, known)| *known == code)
+                .map(|(key, _)| RemoteKey {
+                    remote: remote.clone(),
+                    key: key.clone(),
+                })
+        })
+    }
+
+    /// A code on two keys would make rules and names ambiguous.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        let mut seen: HashMap<&str, (&str, &str)> = HashMap::new();
+        for (remote, keys) in &self.remotes {
+            for (key, code) in &keys.keys {
+                if let Some((other_remote, other_key)) = seen.insert(code, (remote, key)) {
+                    bail!(
+                        "code \"{code}\" is on {other_remote} key {other_key} and on {remote} key {key}"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `remotes.toml` with one more key, keeping the file's comments and layout.
+pub fn with_key(text: &str, remote: &str, key: &str, code: &str) -> anyhow::Result<String> {
+    let mut document: DocumentMut = text.parse()?;
+    let remotes = document
+        .entry("remotes")
+        .or_insert_with(implicit_table)
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("`remotes` is not a table"))?;
+    let keys = remotes
+        .entry(remote)
+        .or_insert_with(implicit_table)
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("remote \"{remote}\" is not a table"))?
+        .entry("keys")
+        .or_insert_with(|| Item::Table(Table::new()))
+        .as_table_like_mut()
+        .ok_or_else(|| anyhow::anyhow!("keys of \"{remote}\" are not a table"))?;
+    keys.insert(key, value(code));
+    Ok(document.to_string())
+}
+
+/// A table that only shows through its subtables, so new remotes read as `[remotes."Name".keys]`.
+fn implicit_table() -> Item {
+    let mut table = Table::new();
+    table.set_implicit(true);
+    Item::Table(table)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EXAMPLE: &str = r#"
+        # The kit's 17-key remote.
+        [remotes."Kit remote".keys]
+        0 = "NEC 00 52"
+        OK = "NEC 00 1C"
+    "#;
+
+    #[test]
+    fn keys_are_found_by_code_and_by_name() {
+        let remotes: Remotes = toml::from_str(EXAMPLE).unwrap();
+        assert_eq!(
+            remotes.key_for("NEC 00 1C"),
+            Some(RemoteKey {
+                remote: "Kit remote".into(),
+                key: "OK".into(),
+            })
+        );
+        assert_eq!(remotes.key_for("NEC 00 99"), None);
+        assert_eq!(remotes.code("Kit remote", "0"), Some("NEC 00 52"));
+        assert_eq!(remotes.code("Kit remote", "9"), None);
+    }
+
+    #[test]
+    fn a_code_on_two_keys_is_refused() {
+        let remotes: Remotes = toml::from_str(
+            r#"
+            [remotes.A.keys]
+            up = "NEC 00 18"
+            [remotes.B.keys]
+            power = "NEC 00 18"
+            "#,
+        )
+        .unwrap();
+        let error = remotes.validate().unwrap_err().to_string();
+        assert!(error.contains("A key up and on B key power"), "{error}");
+    }
+
+    #[test]
+    fn new_keys_keep_comments_and_new_remotes_get_their_own_table() {
+        let text = with_key(EXAMPLE, "Kit remote", "up", "NEC 00 18").unwrap();
+        assert!(text.contains("# The kit's 17-key remote."));
+        assert!(text.contains("up = \"NEC 00 18\""));
+        let text = with_key(&text, "TV", "power", "NEC 04 08").unwrap();
+        assert!(text.contains("[remotes.TV.keys]"), "{text}");
+        let remotes: Remotes = toml::from_str(&text).unwrap();
+        assert_eq!(remotes.code("Kit remote", "up"), Some("NEC 00 18"));
+        assert_eq!(remotes.code("TV", "power"), Some("NEC 04 08"));
+        assert_eq!(remotes.code("Kit remote", "0"), Some("NEC 00 52"));
+    }
+
+    #[test]
+    fn the_first_key_creates_the_file_content() {
+        let text = with_key("", "Kit remote", "0", "NEC 00 52").unwrap();
+        let remotes: Remotes = toml::from_str(&text).unwrap();
+        assert_eq!(remotes.code("Kit remote", "0"), Some("NEC 00 52"));
+    }
+}

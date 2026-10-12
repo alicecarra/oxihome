@@ -10,6 +10,7 @@ use jiff::{ToSpan, Zoned};
 use oxihome_protocol::{Confidence, EventKind, Value};
 use serde::Deserialize;
 
+use super::remotes::Remotes;
 use crate::hub::Hub;
 use crate::node::events::EventRecord;
 use crate::node::state::ChannelUpdate;
@@ -31,13 +32,17 @@ pub enum Trigger {
     Cron(CronTrigger),
     Threshold(ThresholdTrigger),
     Offline(OfflineTrigger),
+    RemoteKey(RemoteKeyTrigger),
 }
 
 impl Trigger {
     /// The first run strictly after `now`; `None` for event rules.
     pub fn next_run(&self, now: &Zoned) -> Option<Zoned> {
         match self {
-            Trigger::Event(_) | Trigger::Threshold(_) | Trigger::Offline(_) => None,
+            Trigger::Event(_)
+            | Trigger::Threshold(_)
+            | Trigger::Offline(_)
+            | Trigger::RemoteKey(_) => None,
             Trigger::Schedule(trigger) => trigger.next_run(now),
             Trigger::Cron(trigger) => trigger.cron.find_next_occurrence(now, false).ok(),
         }
@@ -45,7 +50,10 @@ impl Trigger {
 
     fn is_due(&self, minute: DateTime) -> bool {
         match self {
-            Trigger::Event(_) | Trigger::Threshold(_) | Trigger::Offline(_) => false,
+            Trigger::Event(_)
+            | Trigger::Threshold(_)
+            | Trigger::Offline(_)
+            | Trigger::RemoteKey(_) => false,
             Trigger::Schedule(trigger) => trigger.is_due(minute),
             Trigger::Cron(trigger) => trigger.cron.is_time_matching(&minute).unwrap_or(false),
         }
@@ -68,12 +76,31 @@ struct TriggerFields {
     days: Vec<Day>,
     cron: Option<String>,
     offline: Option<String>,
+    remote: Option<String>,
+    key: Option<String>,
 }
 
 impl TryFrom<TriggerFields> for Trigger {
     type Error = String;
 
     fn try_from(fields: TriggerFields) -> Result<Self, String> {
+        if fields.remote.is_some() || fields.key.is_some() {
+            let alone = fields.device.is_none()
+                && fields.entity.is_none()
+                && fields.channel.is_none()
+                && fields.event.is_none()
+                && fields.data.is_none()
+                && fields.above.is_none()
+                && fields.below.is_none()
+                && fields.at.is_none()
+                && fields.days.is_empty()
+                && fields.cron.is_none()
+                && fields.offline.is_none();
+            let (Some(remote), Some(key), true) = (fields.remote, fields.key, alone) else {
+                return Err("a remote key trigger is `remote` and `key` alone".into());
+            };
+            return Ok(Trigger::RemoteKey(RemoteKeyTrigger { remote, key }));
+        }
         if let Some(device) = fields.offline {
             let alone = fields.device.is_none()
                 && fields.entity.is_none()
@@ -194,6 +221,14 @@ fn number(value: &Value) -> Option<f32> {
         Value::Float(number) => Some(*number),
         _ => None,
     }
+}
+
+/// Runs when any IR receiver gets the key's code (not its repeats), by the names in
+/// `remotes.toml`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoteKeyTrigger {
+    pub remote: String,
+    pub key: String,
 }
 
 /// Runs when the hub marks a node offline; `None` for any node (`offline = "*"`).
@@ -386,14 +421,41 @@ impl Rules {
         &self.rules
     }
 
-    pub fn matching(&self, event: &EventRecord) -> Vec<&Rule> {
+    pub fn matching(&self, event: &EventRecord, remotes: &Remotes) -> Vec<&Rule> {
+        let code = match &event.data {
+            Some(Value::Text(code)) if event.kind == EventKind::Received => Some(code.as_str()),
+            _ => None,
+        };
         self.rules
             .iter()
             .filter(|rule| {
                 rule.enabled
-                    && matches!(&rule.when, Trigger::Event(trigger) if trigger.matches(event))
+                    && match &rule.when {
+                        Trigger::Event(trigger) => trigger.matches(event),
+                        Trigger::RemoteKey(trigger) => code.is_some_and(|code| {
+                            remotes.code(&trigger.remote, &trigger.key) == Some(code)
+                        }),
+                        _ => false,
+                    }
             })
             .collect()
+    }
+
+    /// Every `remote`/`key` a rule names exists in `remotes.toml`.
+    pub fn check_remote_keys(&self, remotes: &Remotes) -> anyhow::Result<()> {
+        for rule in &self.rules {
+            if let Trigger::RemoteKey(trigger) = &rule.when
+                && remotes.code(&trigger.remote, &trigger.key).is_none()
+            {
+                bail!(
+                    "rule \"{}\": {} has no key \"{}\" in remotes.toml",
+                    rule.name,
+                    trigger.remote,
+                    trigger.key
+                );
+            }
+        }
+        Ok(())
     }
 
     pub fn crossed(&self, update: &ChannelUpdate) -> Vec<&Rule> {
@@ -498,6 +560,75 @@ const fn default_true() -> bool {
 mod tests {
     use super::*;
 
+    impl Rules {
+        fn matching_without_remotes(&self, event: &EventRecord) -> Vec<&Rule> {
+            self.matching(event, &Remotes::default())
+        }
+    }
+
+    const REMOTE_KEYS: &str = r#"
+        [[rules]]
+        name = "Key 0"
+        when = { remote = "Kit remote", key = "0" }
+        then = []
+    "#;
+
+    #[test]
+    fn remote_key_rules_match_the_code_from_any_receiver() {
+        let rules: Rules = toml::from_str(REMOTE_KEYS).unwrap();
+        let remotes: Remotes =
+            toml::from_str("[remotes.\"Kit remote\".keys]\n0 = \"NEC 00 52\"").unwrap();
+        let received = |device: &str, code: &str| EventRecord {
+            device_id: device.into(),
+            entity: 9,
+            channel: 0,
+            kind: EventKind::Received,
+            data: Some(Value::Text(code.into())),
+        };
+        assert_eq!(
+            rules
+                .matching(&received("board-a", "NEC 00 52"), &remotes)
+                .len(),
+            1
+        );
+        assert_eq!(
+            rules
+                .matching(&received("board-b", "NEC 00 52"), &remotes)
+                .len(),
+            1
+        );
+        assert!(
+            rules
+                .matching(&received("board-a", "NEC 00 52 repeat"), &remotes)
+                .is_empty()
+        );
+        assert!(
+            rules
+                .matching(&received("board-a", "NEC 00 18"), &remotes)
+                .is_empty()
+        );
+        assert!(rules.check_remote_keys(&remotes).is_ok());
+        let error = rules
+            .check_remote_keys(&Remotes::default())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Kit remote has no key \"0\""), "{error}");
+    }
+
+    #[test]
+    fn remote_key_triggers_go_alone() {
+        assert!(
+            when(r#"{ remote = "A" }"#)
+                .unwrap_err()
+                .contains("`remote` and `key` alone")
+        );
+        assert!(
+            when(r#"{ remote = "A", key = "0", device = "x" }"#)
+                .unwrap_err()
+                .contains("alone")
+        );
+    }
+
     const EXAMPLE: &str = r#"
         [[rules]]
         name = "Living room button toggles bedroom lamp"
@@ -560,7 +691,7 @@ mod tests {
     #[test]
     fn matching_event_selects_its_rules() {
         let rules: Rules = toml::from_str(EXAMPLE).unwrap();
-        let matched = rules.matching(&event(EventKind::Press, 2));
+        let matched = rules.matching_without_remotes(&event(EventKind::Press, 2));
         assert_eq!(matched.len(), 1);
         assert_eq!(matched[0].name, "Living room button toggles bedroom lamp");
     }
@@ -568,14 +699,22 @@ mod tests {
     #[test]
     fn other_events_select_nothing() {
         let rules: Rules = toml::from_str(EXAMPLE).unwrap();
-        assert!(rules.matching(&event(EventKind::DoublePress, 2)).is_empty());
-        assert!(rules.matching(&event(EventKind::Press, 3)).is_empty());
+        assert!(
+            rules
+                .matching_without_remotes(&event(EventKind::DoublePress, 2))
+                .is_empty()
+        );
+        assert!(
+            rules
+                .matching_without_remotes(&event(EventKind::Press, 3))
+                .is_empty()
+        );
     }
 
     #[test]
     fn disabled_rules_are_skipped() {
         let rules: Rules = toml::from_str(EXAMPLE).unwrap();
-        let matched = rules.matching(&event(EventKind::LongPress, 2));
+        let matched = rules.matching_without_remotes(&event(EventKind::LongPress, 2));
         assert_eq!(matched.len(), 1);
         assert_eq!(matched[0].name, "Long press turns everything off");
     }
@@ -640,7 +779,11 @@ mod tests {
     #[test]
     fn events_do_not_run_scheduled_rules() {
         let rules: Rules = toml::from_str(SCHEDULED).unwrap();
-        assert!(rules.matching(&event(EventKind::Press, 2)).is_empty());
+        assert!(
+            rules
+                .matching_without_remotes(&event(EventKind::Press, 2))
+                .is_empty()
+        );
         let rules: Rules = toml::from_str(EXAMPLE).unwrap();
         assert!(rules.due(minute("2026-10-12T23:00")).is_empty());
     }
@@ -730,7 +873,11 @@ mod tests {
             names(rules.offline("sim-living-room")),
             ["Any node offline"]
         );
-        assert!(rules.matching(&event(EventKind::Press, 2)).is_empty());
+        assert!(
+            rules
+                .matching_without_remotes(&event(EventKind::Press, 2))
+                .is_empty()
+        );
         assert!(rules.due(minute("2026-10-12T23:00")).is_empty());
     }
 
@@ -788,18 +935,21 @@ mod tests {
         let rules: Rules = toml::from_str(IR_CODES).unwrap();
         let text = |code: &str| Some(Value::Text(code.into()));
         assert_eq!(
-            names(rules.matching(&received(text("NEC 00 52")))),
+            names(rules.matching_without_remotes(&received(text("NEC 00 52")))),
             ["Key 0 toggles the external LED", "Any IR code"]
         );
         assert_eq!(
-            names(rules.matching(&received(text("NEC 00 52 repeat")))),
+            names(rules.matching_without_remotes(&received(text("NEC 00 52 repeat")))),
             ["Any IR code"]
         );
         assert_eq!(
-            names(rules.matching(&received(text("NEC 00 18")))),
+            names(rules.matching_without_remotes(&received(text("NEC 00 18")))),
             ["Any IR code"]
         );
-        assert_eq!(names(rules.matching(&received(None))), ["Any IR code"]);
+        assert_eq!(
+            names(rules.matching_without_remotes(&received(None))),
+            ["Any IR code"]
+        );
     }
 
     #[test]

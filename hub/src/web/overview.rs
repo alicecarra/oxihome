@@ -8,6 +8,7 @@ use oxihome_protocol::{Access, Channel, EventKind, Quantity, Unit, Value, ValueT
 
 use super::format::{channel_label, entity_label, value_label};
 use crate::config::names::{NameTarget, Names};
+use crate::config::remotes::Remotes;
 use crate::config::rules::{
     Action, CronTrigger, Day, EventTrigger, Limit, OfflineTrigger, ScheduleTrigger,
     ThresholdTrigger, Trigger,
@@ -91,6 +92,7 @@ pub fn nodes(hub: &Hub) -> Vec<NodeOverview> {
         registry,
         events,
         names,
+        remotes,
         ..
     } = &hub.snapshot();
     let now = Instant::now();
@@ -121,7 +123,13 @@ pub fn nodes(hub: &Hub) -> Vec<NodeOverview> {
                         has_value: channel.value.is_some() && channel.access != Access::Event,
                         value: state.value(device_id, entity.id, channel.id).cloned(),
                         last_event: events.last(device_id, entity.id, channel.id).map(|last| {
-                            (last.kind, last.data.as_ref().map(data_label), now - last.at)
+                            (
+                                last.kind,
+                                last.data
+                                    .as_ref()
+                                    .map(|data| event_data_label(data, remotes)),
+                                now - last.at,
+                            )
                         }),
                         switchable: channel.value == Some(ValueType::Bool)
                             && matches!(channel.access, Access::Write | Access::ReadWrite),
@@ -133,6 +141,20 @@ pub fn nodes(hub: &Hub) -> Vec<NodeOverview> {
                 .collect(),
         })
         .collect()
+}
+
+/// An IR code named in `remotes.toml` shows as `Kit remote · 0`, `(held)` for its repeats.
+pub fn event_data_label(data: &Value, remotes: &Remotes) -> String {
+    if let Value::Text(code) = data {
+        let (code, held) = match code.strip_suffix(" repeat") {
+            Some(code) => (code, " (held)"),
+            None => (code.as_str(), ""),
+        };
+        if let Some(named) = remotes.key_for(code) {
+            return format!("{} · {}{held}", named.remote, named.key);
+        }
+    }
+    data_label(data)
 }
 
 fn invocation(channel: &Channel) -> Option<Invocation> {
@@ -236,6 +258,7 @@ fn trigger_description(names: &Names, registry: &Registry, trigger: &Trigger) ->
         Trigger::Schedule(trigger) => schedule_description(trigger),
         Trigger::Cron(trigger) => cron_description(trigger),
         Trigger::Offline(trigger) => offline_description(names, trigger),
+        Trigger::RemoteKey(trigger) => format!("{}: key {}", trigger.remote, trigger.key),
     }
 }
 
@@ -648,5 +671,21 @@ mod tests {
             action_description(&names, &invoke),
             "Invoke Test board › LED with Alarm"
         );
+    }
+
+    #[test]
+    fn named_ir_codes_show_the_remote_and_key() {
+        let remotes: Remotes =
+            toml::from_str("[remotes.\"Kit remote\".keys]\n0 = \"NEC 00 52\"").unwrap();
+        let text = |code: &str| Value::Text(code.into());
+        assert_eq!(
+            event_data_label(&text("NEC 00 52"), &remotes),
+            "Kit remote · 0"
+        );
+        assert_eq!(
+            event_data_label(&text("NEC 00 52 repeat"), &remotes),
+            "Kit remote · 0 (held)"
+        );
+        assert_eq!(event_data_label(&text("NEC 00 18"), &remotes), "NEC 00 18");
     }
 }

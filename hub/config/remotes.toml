@@ -1,0 +1,10 @@
+[remotes."Kit Lafvin".keys]
+0 = "NEC 00 52"
+1 = "NEC 00 16"
+2 = "NEC 00 19"
+3 = "NEC 00 0D"
+up = "NEC 00 46"
+right = "NEC 00 43"
+down = "NEC 00 15"
+left = "NEC 00 44"
+ok = "NEC 00 40"

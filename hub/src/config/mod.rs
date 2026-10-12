@@ -1,4 +1,5 @@
 pub mod names;
+pub mod remotes;
 pub mod rules;
 
 use std::path::Path;
@@ -9,6 +10,7 @@ use serde::de::DeserializeOwned;
 
 use crate::node::parameters::NodeParameters;
 use names::Names;
+use remotes::Remotes;
 use rules::Rules;
 
 /// The home's configuration: the files in the config directory.
@@ -16,10 +18,11 @@ pub struct HomeConfig {
     pub names: Names,
     pub rules: Rules,
     pub parameters: NodeParameters,
+    pub remotes: Remotes,
 }
 
 /// The files the web interface can edit.
-pub const FILES: [&str; 3] = ["names.toml", "rules.toml", "nodes.toml"];
+pub const FILES: [&str; 4] = ["names.toml", "rules.toml", "nodes.toml", "remotes.toml"];
 
 /// A config file's text and when it was last modified (`None` if it does not exist).
 pub struct ConfigFile {
@@ -46,10 +49,21 @@ impl HomeConfig {
         parameters
             .validate()
             .with_context(|| format!("{}", path.display()))?;
+        let path = directory.join("remotes.toml");
+        let remotes: Remotes = parse(&path, &text("remotes.toml")?)?;
+        remotes
+            .validate()
+            .with_context(|| format!("{}", path.display()))?;
+        let path = directory.join("rules.toml");
+        let rules: Rules = parse(&path, &text("rules.toml")?)?;
+        rules
+            .check_remote_keys(&remotes)
+            .with_context(|| format!("{}", path.display()))?;
         Ok(Self {
             names: parse(&directory.join("names.toml"), &text("names.toml")?)?,
-            rules: parse(&directory.join("rules.toml"), &text("rules.toml")?)?,
+            rules,
             parameters,
+            remotes,
         })
     }
 }
