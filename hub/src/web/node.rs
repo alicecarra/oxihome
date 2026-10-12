@@ -287,11 +287,20 @@ async fn edit_buttons(
     })
 }
 
-/// The rules that run on something from this node or act on it, linked to their cards on
+struct RuleRow {
+    rule: String,
+    enabled: bool,
+    runs_on: Vec<String>,
+    checks: Vec<String>,
+    acts_on: Vec<String>,
+}
+
+/// The rules that run on something from this node, check it or act on it, linked to their cards on
 /// `/rules`.
 #[component]
 async fn rules_section(channels: Vec<ChannelOverview>, rules: Vec<RuleUse>) -> Result<impl View> {
-    let target = |channel: Option<(u8, u8)>| match channel {
+    let target = |role: RuleRole, channel: Option<(u8, u8)>| match channel {
+        None if role == RuleRole::Checks => "whether the node is online".to_string(),
         None => "the node going offline".to_string(),
         Some((entity, number)) => match channels
             .iter()
@@ -305,20 +314,28 @@ async fn rules_section(channels: Vec<ChannelOverview>, rules: Vec<RuleUse>) -> R
             None => format!("entity {entity} · channel {number}"),
         },
     };
-    // One line per rule: what it runs on and what it acts on, in file order.
-    let mut rows: Vec<(String, bool, Vec<String>, Vec<String>)> = Vec::new();
+    // One line per rule: what it runs on, checks and acts on, in file order.
+    let mut rows: Vec<RuleRow> = Vec::new();
     for use_ in rules {
-        let index = match rows.iter().position(|(rule, _, _, _)| *rule == use_.rule) {
+        let index = match rows.iter().position(|row| row.rule == use_.rule) {
             Some(index) => index,
             None => {
-                rows.push((use_.rule.clone(), use_.enabled, Vec::new(), Vec::new()));
+                rows.push(RuleRow {
+                    rule: use_.rule.clone(),
+                    enabled: use_.enabled,
+                    runs_on: Vec::new(),
+                    checks: Vec::new(),
+                    acts_on: Vec::new(),
+                });
                 rows.len() - 1
             }
         };
-        let (_, _, runs_on, acts_on) = &mut rows[index];
+        let row = &mut rows[index];
+        let text = target(use_.role, use_.channel);
         match use_.role {
-            RuleRole::RunsOn => runs_on.push(target(use_.channel)),
-            RuleRole::ActsOn => acts_on.push(target(use_.channel)),
+            RuleRole::RunsOn => row.runs_on.push(text),
+            RuleRole::Checks => row.checks.push(text),
+            RuleRole::ActsOn => row.acts_on.push(text),
         }
     }
     Ok(view! {
@@ -326,14 +343,14 @@ async fn rules_section(channels: Vec<ChannelOverview>, rules: Vec<RuleUse>) -> R
             attrs: attributes! { id="node-rules" },
             card_header(
                 card_title("Rules")
-                card_description("Rules that run on something from this node, or act on it.")
+                card_description("Rules that run on something from this node, check it or act on it.")
             )
             card_content(
                 if rows.is_empty() {
                     <p class="text-sm text-muted-foreground">"No rule involves this node."</p>
                 }
                 <ul class="divide-y divide-border text-sm">
-                    for (rule, enabled, runs_on, acts_on) in rows {
+                    for RuleRow { rule, enabled, runs_on, checks, acts_on } in rows {
                         <li class=(if enabled { "py-2 first:pt-0 last:pb-0" } else { "py-2 opacity-60 first:pt-0 last:pb-0" })>
                             <a href=(format!("/rules#{}", rule_anchor(&rule))) class="font-medium hover:underline">(rule)</a>
                             if !enabled {
@@ -341,6 +358,9 @@ async fn rules_section(channels: Vec<ChannelOverview>, rules: Vec<RuleUse>) -> R
                             }
                             if !runs_on.is_empty() {
                                 <p class="text-muted-foreground">"runs on " <span class="text-foreground">(runs_on.join(", "))</span></p>
+                            }
+                            if !checks.is_empty() {
+                                <p class="text-muted-foreground">"checks " <span class="text-foreground">(checks.join(", "))</span></p>
                             }
                             if !acts_on.is_empty() {
                                 <p class="text-muted-foreground">"acts on " <span class="text-foreground">(acts_on.join(", "))</span></p>

@@ -524,6 +524,14 @@ impl Hub {
             .cloned()
     }
 
+    pub fn is_online(&self, device_id: &str) -> bool {
+        self.registry
+            .lock()
+            .unwrap()
+            .node(device_id)
+            .is_some_and(|node| node.online)
+    }
+
     pub fn notify(&self, title: String, message: String, source: String) {
         self.notifications
             .lock()

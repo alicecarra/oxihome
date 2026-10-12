@@ -11,8 +11,8 @@ use crate::config::dashboard::ChannelReference;
 use crate::config::nodes::{ConfiguredEntity, NameTarget, Nodes};
 use crate::config::remotes::Remotes;
 use crate::config::rules::{
-    Action, CronTrigger, Day, EventTrigger, Limit, OfflineTrigger, ScheduleTrigger,
-    ThresholdTrigger, Trigger,
+    Action, ChannelCondition, Condition, CronTrigger, Day, EventTrigger, Expected, Limit,
+    OfflineTrigger, ScheduleTrigger, ThresholdTrigger, Trigger, ValueTest,
 };
 use crate::hub::{Hub, Snapshot};
 use crate::node::events::data_label;
@@ -102,6 +102,7 @@ pub enum Invocation {
 pub struct RuleOverview {
     pub name: String,
     pub trigger: String,
+    pub conditions: Vec<String>,
     pub actions: Vec<ActionOverview>,
     pub enabled: bool,
     /// Scheduled rules only.
@@ -159,16 +160,17 @@ pub fn dashboard_channels(hub: &Hub, references: &[ChannelReference]) -> Vec<Das
     references
         .iter()
         .map(|reference| {
-            let node = nodes
-                .iter()
-                .find(|node| node.device_id == reference.device);
+            let node = nodes.iter().find(|node| node.device_id == reference.device);
             let channel = node.and_then(|node| {
                 node.channels.iter().find(|channel| {
                     channel.entity == reference.entity && channel.channel == reference.channel
                 })
             });
             let name = |target: NameTarget| snapshot.nodes.name(&target).map(String::from);
-            let entity_name = name(NameTarget::Entity(reference.device.clone(), reference.entity));
+            let entity_name = name(NameTarget::Entity(
+                reference.device.clone(),
+                reference.entity,
+            ));
             let channel_name = name(NameTarget::Channel(
                 reference.device.clone(),
                 reference.entity,
@@ -388,6 +390,13 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
                 .next_run(&local_now)
                 .filter(|_| rule.enabled)
                 .map(|run| next_run_description(&local_now, &run)),
+            conditions: rule
+                .conditions
+                .iter()
+                .map(|condition| {
+                    condition_description(&snapshot.nodes, &snapshot.registry, condition)
+                })
+                .collect(),
             actions: rule
                 .then
                 .iter()
@@ -453,21 +462,26 @@ const ALL_DAYS: [Day; 7] = [
     Day::Sunday,
 ];
 
+/// The channel as the node's `Hello` declares it, for its quantity and unit.
+fn declared_channel<'a>(
+    registry: &'a Registry,
+    device_id: &str,
+    entity: u8,
+    channel: u8,
+) -> Option<&'a Channel> {
+    registry
+        .node(device_id)?
+        .entities
+        .iter()
+        .find(|known| known.id == entity)?
+        .channels
+        .iter()
+        .find(|known| known.id == channel)
+}
+
 /// `Living room › Climate sensor: above 28.0 °C`, with the unit the node declares.
 fn threshold_description(nodes: &Nodes, registry: &Registry, trigger: &ThresholdTrigger) -> String {
-    let declared = registry
-        .node(&trigger.device)
-        .and_then(|node| {
-            node.entities
-                .iter()
-                .find(|entity| entity.id == trigger.entity)
-        })
-        .and_then(|entity| {
-            entity
-                .channels
-                .iter()
-                .find(|channel| channel.id == trigger.channel)
-        });
+    let declared = declared_channel(registry, &trigger.device, trigger.entity, trigger.channel);
     let target = channel_description(
         nodes,
         &trigger.device,
@@ -486,12 +500,68 @@ fn threshold_description(nodes: &Nodes, registry: &Registry, trigger: &Threshold
     )
 }
 
-fn schedule_description(trigger: &ScheduleTrigger) -> String {
-    let has_exactly = |days: &[Day]| {
-        trigger.days.iter().all(|day| days.contains(day))
-            && days.iter().all(|day| trigger.days.contains(day))
+fn condition_description(nodes: &Nodes, registry: &Registry, condition: &Condition) -> String {
+    let node = |device: &String| {
+        nodes
+            .name(&NameTarget::Node(device.clone()))
+            .unwrap_or(device)
+            .to_string()
     };
-    let days = if trigger.days.is_empty() || has_exactly(&ALL_DAYS) {
+    match condition {
+        Condition::Channel(condition) => channel_condition_description(nodes, registry, condition),
+        Condition::Time { from, to } => {
+            format!(
+                "From {} to {}",
+                from.strftime("%H:%M"),
+                to.strftime("%H:%M")
+            )
+        }
+        Condition::Days(days) => days_description(days),
+        Condition::Online(device) => format!("{} is online", node(device)),
+        Condition::Offline(device) => format!("{} is offline", node(device)),
+    }
+}
+
+/// `Test board › LED is on`, `Living room › Climate sensor is above 28.0 °C`.
+fn channel_condition_description(
+    nodes: &Nodes,
+    registry: &Registry,
+    condition: &ChannelCondition,
+) -> String {
+    let declared = declared_channel(
+        registry,
+        &condition.device,
+        condition.entity,
+        condition.channel,
+    );
+    let target = channel_description(
+        nodes,
+        &condition.device,
+        condition.entity,
+        condition.channel,
+        declared.and_then(|channel| channel.quantity),
+    );
+    let unit = declared.and_then(|channel| channel.unit);
+    let number = |number: f32| value_label(&Value::Float(number), unit);
+    match &condition.test {
+        ValueTest::Equals(Expected::Bool(true)) => format!("{target} is on"),
+        ValueTest::Equals(Expected::Bool(false)) => format!("{target} is off"),
+        ValueTest::Equals(Expected::Number(expected)) => {
+            format!("{target} is {}", number(*expected))
+        }
+        ValueTest::Equals(Expected::Text(expected)) => format!("{target} is {expected}"),
+        ValueTest::Above(limit) => format!("{target} is above {}", number(*limit)),
+        ValueTest::Below(limit) => format!("{target} is below {}", number(*limit)),
+    }
+}
+
+/// `Every day`, `Weekdays`, `Weekends` or the days in week order.
+fn days_description(days: &[Day]) -> String {
+    let has_exactly = |expected: &[Day]| {
+        days.iter().all(|day| expected.contains(day))
+            && expected.iter().all(|day| days.contains(day))
+    };
+    if days.is_empty() || has_exactly(&ALL_DAYS) {
         "Every day".to_string()
     } else if has_exactly(&ALL_DAYS[..5]) {
         "Weekdays".to_string()
@@ -500,12 +570,19 @@ fn schedule_description(trigger: &ScheduleTrigger) -> String {
     } else {
         ALL_DAYS
             .iter()
-            .filter(|day| trigger.days.contains(day))
+            .filter(|day| days.contains(day))
             .map(|day| format!("{day:?}"))
             .collect::<Vec<_>>()
             .join(", ")
-    };
-    format!("{days} at {}", trigger.at.strftime("%H:%M"))
+    }
+}
+
+fn schedule_description(trigger: &ScheduleTrigger) -> String {
+    format!(
+        "{} at {}",
+        days_description(&trigger.days),
+        trigger.at.strftime("%H:%M")
+    )
 }
 
 /// Croner's English text, e.g. `At 07:00, on Monday, Tuesday.`, with the expression after it.

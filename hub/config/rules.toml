@@ -139,3 +139,12 @@ then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, val
 name = "Panel: sound the alarm"
 when = { panel = "Alarm", button = "Alarm" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
+
+[[rules]]
+name = "Test board hot: beep and warn, daytime only"
+when = { device = "esp32-08d1f9ca41e4", entity = 3, channel = 0, above = 28 }
+if = [{ from = "08:00", to = "22:00" }]
+then = [
+    { invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Long" } },
+    { notify = { title = "Test board", message = "Above 28 °C" } },
+]

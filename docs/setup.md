@@ -271,11 +271,33 @@ previous configuration stays in use.
   - a node going offline: `when = { offline = "sim-bedroom" }`, or `offline = "*"` for any node.
     It runs when the hub marks the node offline (the same moment as the toast).
 
+  Conditions (`if`, optional) are checked when the trigger fires; the actions only run when every
+  condition holds, otherwise the hub logs `rule "...": skipped, ... does not hold`. Each condition is
+  one of:
+  - the current value of a channel: `{ device = "...", entity = 3, channel = 0, above = 25 }`, or
+    `below`, or `equals` (`true`/`false`, a number, or the text of a `Text` or `Enum` value). It does
+    not hold while the node is offline or the value is unknown;
+  - a local time range: `{ from = "22:00", to = "06:00" }`, from included, to excluded; when `from`
+    is later than `to` the range crosses midnight;
+  - days of the week: `{ days = ["saturday", "sunday"] }`;
+  - a node online or offline: `{ online = "sim-bedroom" }`, `{ offline = "sim-bedroom" }`.
+
+  ```toml
+  [[rules]]
+  name = "Button at night lights the lamp only when it is off"
+  when = { device = "sim-living-room", entity = 2, channel = 0, event = "Press" }
+  if = [
+      { from = "22:00", to = "06:00" },
+      { device = "sim-bedroom", entity = 1, channel = 0, equals = false },
+  ]
+  then = [{ set = { device = "sim-bedroom", entity = 1, channel = 0, value = true } }]
+  ```
+
   Times are local, in the zone set in `[time] zone` of `hub/hub.toml` (an IANA name such as
   `America/Sao_Paulo`; the system's zone when missing). Scheduled rules are checked once per minute:
   the minute the hub starts does not run, minutes skipped by a short gap (up to 5 minutes, e.g. a
   clock adjustment) run right after, and longer gaps (hub stopped or suspended) are not run late.
-  `/rules` lists the rules with their trigger, next run and last result. Examples:
+  `/rules` lists the rules with their trigger, conditions, next run and last result. Examples:
 
   ```toml
   [[rules]]
@@ -335,7 +357,7 @@ left out stays as it is, the whole configuration is validated first (an error sh
 keeps what was typed), and changed parameters go to the node right away. A node that never sent
 a `Hello` (none in the database either) shows as unknown. At the bottom, **Rules** lists, one line per rule, the rules
 that run on something from the node (an event or value of one of its channels, the node going
-offline, `offline = "*"` included) and the channels they act on; each name links to the rule's card
+offline, `offline = "*"` included), the channels or presence their conditions check and the channels they act on; each name links to the rule's card
 on `/rules`, which is highlighted. A channel used by rules shows a "N rules" mark (their names on
 hover) that jumps there. Remote keys, panel buttons and schedules are not tied to a node, so those
 rules only show through their actions. The pages set the mobile viewport, so they fit a
