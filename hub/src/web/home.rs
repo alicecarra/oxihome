@@ -5,17 +5,11 @@ use serde::Deserialize;
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::{content::Form, error::redirect, page, route},
+    router::{content::Form, route},
     view::{ViewExt, ViewHandle, view},
 };
 
 use crate::hub::Hub;
-
-/// The dashboard will live here; until then, the node list.
-#[page("/")]
-pub async fn home() -> Result<()> {
-    Err(redirect("/nodes").into())
-}
 
 #[derive(Deserialize)]
 struct SetForm {

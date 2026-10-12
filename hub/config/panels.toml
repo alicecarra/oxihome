@@ -4,3 +4,7 @@
 [[panels]]
 name = "Test board"
 buttons = ["Turn on", "Turn off"]
+
+[[panels]]
+name = "Alarm"
+buttons = ["Short beep", "Long beep", "Alarm"]

@@ -1,3 +1,4 @@
+mod dashboard;
 mod events;
 mod format;
 mod home;
@@ -32,7 +33,8 @@ const STYLESHEET: &str = include_str!(concat!(env!("OUT_DIR"), "/tailwind.css"))
 
 pub fn router(hub: Arc<Hub>) -> Router {
     Router::builder()
-        .page(home::home)
+        .page(dashboard::dashboard_page)
+        .page(dashboard::dashboard_fragment)
         .page(nodes::nodes_page)
         .page(nodes::nodes_fragment)
         .page(node::node_page)

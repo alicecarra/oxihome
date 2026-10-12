@@ -11,14 +11,27 @@ use topcoat::{
 use super::layout::layout;
 use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::card::{card, card_content, card_header, card_title};
+use crate::config::panels::Panel;
 use crate::config::rules;
 use crate::hub::Hub;
 
 /// A button and the rules it runs, with whether each is enabled.
-struct PanelButton {
+pub(super) struct PanelButton {
     panel: String,
     button: String,
     rules: Vec<(String, bool)>,
+}
+
+pub(super) fn panel_buttons(hub: &Hub, configured: &Panel) -> Vec<PanelButton> {
+    configured
+        .buttons
+        .iter()
+        .map(|name| PanelButton {
+            panel: configured.name.clone(),
+            button: name.clone(),
+            rules: hub.rules_for_button(&configured.name, name),
+        })
+        .collect()
 }
 
 #[page("/panel")]
@@ -28,15 +41,7 @@ pub async fn panel(cx: &Cx) -> Result<impl View> {
         .panels()
         .into_iter()
         .map(|panel| {
-            let buttons = panel
-                .buttons
-                .iter()
-                .map(|name| PanelButton {
-                    panel: panel.name.clone(),
-                    button: name.clone(),
-                    rules: hub.rules_for_button(&panel.name, name),
-                })
-                .collect();
+            let buttons = panel_buttons(hub, &panel);
             (panel.name, buttons)
         })
         .collect();
@@ -69,7 +74,7 @@ pub async fn panel(cx: &Cx) -> Result<impl View> {
 }
 
 #[component]
-async fn panel_button_view(panel_button: PanelButton) -> Result<impl View> {
+pub(super) async fn panel_button_view(panel_button: PanelButton) -> Result<impl View> {
     let rules: Vec<String> = panel_button
         .rules
         .iter()

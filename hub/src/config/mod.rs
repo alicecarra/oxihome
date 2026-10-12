@@ -1,3 +1,4 @@
+pub mod dashboard;
 pub mod nodes;
 pub mod panels;
 pub mod remotes;
@@ -9,6 +10,7 @@ use std::time::SystemTime;
 use anyhow::Context;
 use serde::de::DeserializeOwned;
 
+use dashboard::Dashboards;
 use nodes::Nodes;
 use panels::Panels;
 use remotes::Remotes;
@@ -20,10 +22,17 @@ pub struct HomeConfig {
     pub rules: Rules,
     pub remotes: Remotes,
     pub panels: Panels,
+    pub dashboards: Dashboards,
 }
 
 /// The files the web interface can edit.
-pub const FILES: [&str; 4] = ["nodes.toml", "rules.toml", "remotes.toml", "panels.toml"];
+pub const FILES: [&str; 5] = [
+    "nodes.toml",
+    "rules.toml",
+    "remotes.toml",
+    "panels.toml",
+    "dashboard.toml",
+];
 
 /// A config file's text and when it was last modified (`None` if it does not exist).
 pub struct ConfigFile {
@@ -66,11 +75,17 @@ impl HomeConfig {
             .check_remote_keys(&remotes)
             .and_then(|()| rules.check_panel_buttons(&panels))
             .with_context(|| format!("{}", path.display()))?;
+        let path = directory.join("dashboard.toml");
+        let dashboards: Dashboards = parse(&path, &text("dashboard.toml")?)?;
+        dashboards
+            .validate(&panels)
+            .with_context(|| format!("{}", path.display()))?;
         Ok(Self {
             nodes,
             rules,
             remotes,
             panels,
+            dashboards,
         })
     }
 }

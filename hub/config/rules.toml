@@ -103,3 +103,18 @@ then = [
     { set = { device = "sim-living-room", entity = 1, channel = 0, value = false } },
     { set = { device = "sim-bedroom", entity = 1, channel = 0, value = false } },
 ]
+
+[[rules]]
+name = "Panel: short beep"
+when = { panel = "Alarm", button = "Short beep" }
+then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Short" } }]
+
+[[rules]]
+name = "Panel: long beep"
+when = { panel = "Alarm", button = "Long beep" }
+then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Long" } }]
+
+[[rules]]
+name = "Panel: sound the alarm"
+when = { panel = "Alarm", button = "Alarm" }
+then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]

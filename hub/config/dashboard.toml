@@ -1,0 +1,36 @@
+# The home page: blocks in this order on a grid of three columns (one on phones).
+# Block types: "nodes" (nodes by presence), "channels" (chosen channels with value and controls,
+# like rules: { device, entity, channel }), "panel" (the buttons of a panel from panels.toml).
+# Optional: title, width (1-3 columns, default 1). Only the first dashboard is shown for now.
+
+[[dashboards]]
+name = "Home"
+
+[[dashboards.blocks]]
+type = "panel"
+panel = "Test board"
+
+[[dashboards.blocks]]
+type = "panel"
+panel = "Alarm"
+width = 2
+
+[[dashboards.blocks]]
+type = "nodes"
+
+[[dashboards.blocks]]
+type = "channels"
+channels = [
+    { device = "weather", entity = 1, channel = 0 },
+    { device = "weather", entity = 1, channel = 4 },
+    { device = "weather", entity = 2, channel = 0 },
+    { device = "weather", entity = 2, channel = 1 },
+]
+
+[[dashboards.blocks]]
+type = "channels"
+title = "Inside"
+channels = [
+    { device = "esp32-08d1f9ca41e4", entity = 3, channel = 0 },
+    { device = "esp32-08d1f9ca41e4", entity = 3, channel = 1 },
+]

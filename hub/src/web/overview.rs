@@ -7,6 +7,7 @@ use oxihome_protocol::management::{self, PARAMETERS, Parameter};
 use oxihome_protocol::{Access, Channel, EventKind, Quantity, Unit, Value, ValueType};
 
 use super::format::{channel_label, entity_label, unit_symbol, value_label};
+use crate::config::dashboard::ChannelReference;
 use crate::config::nodes::{ConfiguredEntity, NameTarget, Nodes};
 use crate::config::remotes::Remotes;
 use crate::config::rules::{
@@ -38,6 +39,17 @@ pub enum Presence {
     Offline,
     /// In `nodes.toml` but has not sent a `Hello` since the hub started.
     NotSeen,
+}
+
+/// A channel of a dashboard `channels` block.
+pub struct DashboardChannel {
+    pub device_id: String,
+    /// The node's name, or its id.
+    pub node_label: String,
+    /// `Entity · Channel`.
+    pub label: String,
+    /// Why it has no value or controls: the node is unknown or not seen, or does not declare it.
+    pub channel: Result<ChannelOverview, &'static str>,
 }
 
 pub struct NodeParametersOverview {
@@ -133,6 +145,53 @@ pub fn nodes(hub: &Hub) -> Vec<NodeOverview> {
         (first.presence, &first.device_id).cmp(&(second.presence, &second.device_id))
     });
     nodes
+}
+
+/// In the order of `references`.
+pub fn dashboard_channels(hub: &Hub, references: &[ChannelReference]) -> Vec<DashboardChannel> {
+    let nodes = nodes(hub);
+    let snapshot = hub.snapshot();
+    references
+        .iter()
+        .map(|reference| {
+            let node = nodes
+                .iter()
+                .find(|node| node.device_id == reference.device);
+            let channel = node.and_then(|node| {
+                node.channels.iter().find(|channel| {
+                    channel.entity == reference.entity && channel.channel == reference.channel
+                })
+            });
+            let name = |target: NameTarget| snapshot.nodes.name(&target).map(String::from);
+            let entity_name = name(NameTarget::Entity(reference.device.clone(), reference.entity));
+            let channel_name = name(NameTarget::Channel(
+                reference.device.clone(),
+                reference.entity,
+                reference.channel,
+            ));
+            DashboardChannel {
+                device_id: reference.device.clone(),
+                node_label: node
+                    .and_then(|node| node.name.clone())
+                    .unwrap_or_else(|| reference.device.clone()),
+                label: format!(
+                    "{} · {}",
+                    entity_label(reference.entity, &entity_name),
+                    channel_label(
+                        reference.channel,
+                        &channel_name,
+                        channel.and_then(|channel| channel.quantity)
+                    )
+                ),
+                channel: match (node, channel) {
+                    (_, Some(channel)) => Ok(channel.clone()),
+                    (None, None) => Err("unknown node"),
+                    (Some(node), None) if node.presence == Presence::NotSeen => Err("not seen"),
+                    (Some(_), None) => Err("unknown channel"),
+                },
+            }
+        })
+        .collect()
 }
 
 /// `None` for a node that never sent a `Hello`.

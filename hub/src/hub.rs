@@ -12,6 +12,7 @@ use tokio::sync::{broadcast, watch};
 
 use crate::commands::Commands;
 use crate::config::nodes::{NameTarget, NodeEdits, Nodes};
+use crate::config::dashboard::{Dashboard, Dashboards};
 use crate::config::panels::{Panel, Panels};
 use crate::config::remotes::Remotes;
 use crate::config::rules::{Rule, RuleRun, RuleUse, Rules};
@@ -70,6 +71,7 @@ pub struct Hub {
     rule_runs: Mutex<HashMap<String, RuleRun>>,
     remotes: Mutex<Remotes>,
     panels: Mutex<Panels>,
+    dashboards: Mutex<Dashboards>,
     /// Newest first, without repeats of held keys.
     recent_codes: Mutex<VecDeque<ReceivedCode>>,
     /// The remote the last learned key went to, offered first for the next one.
@@ -102,6 +104,7 @@ impl Hub {
             rule_runs: Mutex::default(),
             remotes: Mutex::new(config.remotes),
             panels: Mutex::new(config.panels),
+            dashboards: Mutex::new(config.dashboards),
             recent_codes: Mutex::default(),
             last_learned_remote: Mutex::default(),
             notifications: Mutex::default(),
@@ -284,6 +287,7 @@ impl Hub {
         *self.rules.lock().unwrap() = config.rules;
         *self.remotes.lock().unwrap() = config.remotes;
         *self.panels.lock().unwrap() = config.panels;
+        *self.dashboards.lock().unwrap() = config.dashboards;
         self.announce(Change::Nodes);
         rule_count
     }
@@ -333,6 +337,11 @@ impl Hub {
 
     pub fn panels(&self) -> Vec<Panel> {
         self.panels.lock().unwrap().all().to_vec()
+    }
+
+    /// The one the home page shows.
+    pub fn dashboard(&self) -> Option<Dashboard> {
+        self.dashboards.lock().unwrap().first().cloned()
     }
 
     pub fn rules_involving(&self, device_id: &str) -> Vec<RuleUse> {
