@@ -43,6 +43,14 @@ struct Parameters {
     wifi_check_interval: Option<i32>,
 }
 
+/// An entity as `nodes.toml` names it, with its named channels by id.
+#[derive(Clone)]
+pub struct ConfiguredEntity {
+    pub id: u8,
+    pub name: Option<String>,
+    pub channels: Vec<(u8, String)>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum NameTarget {
     Node(String),
@@ -76,6 +84,36 @@ impl Parameters {
 }
 
 impl Nodes {
+    pub fn devices_id(&self) -> impl Iterator<Item = &str> {
+        self.nodes.keys().map(String::as_str)
+    }
+
+    /// By entity id; keys that are not ids are left out.
+    pub fn entities(&self, device_id: &str) -> Vec<ConfiguredEntity> {
+        let Some(node) = self.nodes.get(device_id) else {
+            return Vec::new();
+        };
+        let mut entities: Vec<ConfiguredEntity> = node
+            .entities
+            .iter()
+            .filter_map(|(id, entity)| {
+                let mut channels: Vec<(u8, String)> = entity
+                    .channels
+                    .iter()
+                    .filter_map(|(id, name)| Some((id.parse().ok()?, name.clone())))
+                    .collect();
+                channels.sort_by_key(|(id, _)| *id);
+                Some(ConfiguredEntity {
+                    id: id.parse().ok()?,
+                    name: entity.name.clone(),
+                    channels,
+                })
+            })
+            .collect();
+        entities.sort_by_key(|entity| entity.id);
+        entities
+    }
+
     pub fn name(&self, target: &NameTarget) -> Option<&str> {
         match target {
             NameTarget::Node(device_id) => self.nodes.get(device_id)?.name.as_deref(),

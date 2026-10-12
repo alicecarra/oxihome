@@ -5,33 +5,16 @@ use serde::Deserialize;
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::{content::Form, page, route},
-    view::{View, ViewExt, ViewHandle, view},
+    router::{content::Form, error::redirect, page, route},
+    view::{ViewExt, ViewHandle, view},
 };
 
-use super::layout::layout;
-use super::nodes::node_list;
-use super::overview;
 use crate::hub::Hub;
 
+/// The dashboard will live here; until then, the node list.
 #[page("/")]
-pub async fn home(cx: &Cx) -> Result<impl View> {
-    let hub: &Arc<Hub> = app_context(cx);
-
-    Ok(view! {
-        layout(
-            title: "Oxihome",
-            <div id="nodes" hx-get="/nodes" hx-trigger="sse:nodes, every 30s, refresh">
-                node_list(nodes: overview::nodes(hub))
-            </div>
-        )
-    })
-}
-
-#[page("/nodes")]
-pub async fn nodes_fragment(cx: &Cx) -> Result<impl View> {
-    let hub: &Arc<Hub> = app_context(cx);
-    Ok(view! { node_list(nodes: overview::nodes(hub)) })
+pub async fn home() -> Result<()> {
+    Err(redirect("/nodes").into())
 }
 
 #[derive(Deserialize)]

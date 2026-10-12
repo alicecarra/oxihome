@@ -55,7 +55,7 @@ pub async fn node_page(cx: &Cx) -> Result<impl View> {
         layout(
             title: "Oxihome node",
             <div class="space-y-4">
-                <a href="/" class="text-sm text-muted-foreground hover:underline">"← Nodes"</a>
+                <a href="/nodes" class="text-sm text-muted-foreground hover:underline">"← Nodes"</a>
                 match node {
                     None => <p class="text-muted-foreground">(format!("Unknown node {device_id}: it has not sent a Hello since the hub started."))</p>,
                     Some(node) => {
@@ -170,7 +170,7 @@ async fn overview_section(
                             } else {
                                 card_title((title))
                             }
-                            presence_badge(online: node.online)
+                            presence_badge(presence: node.presence)
                         </div>
                         edit_buttons(device_id: device_id.clone(), path: "overview", target: "#node-overview", editing: editing, label: "Edit")
                     </div>
@@ -179,7 +179,7 @@ async fn overview_section(
                 card_content(
                     <dl class="grid grid-cols-2 gap-x-6 gap-y-4 text-sm sm:grid-cols-3 lg:grid-cols-6">
                         stat(label: "Device ID", value: device_id.clone())
-                        stat(label: "Firmware", value: node.firmware_version.clone())
+                        stat(label: "Firmware", value: node.firmware_version.clone().unwrap_or_default())
                         stat(label: "Uptime", value: uptime)
                         stat(label: "Signal", value: signal)
                         for row in parameters {

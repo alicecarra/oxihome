@@ -7,7 +7,7 @@ use oxihome_protocol::management::{self, PARAMETERS, Parameter};
 use oxihome_protocol::{Access, Channel, EventKind, Quantity, Unit, Value, ValueType};
 
 use super::format::{channel_label, entity_label, unit_symbol, value_label};
-use crate::config::nodes::{NameTarget, Nodes};
+use crate::config::nodes::{ConfiguredEntity, NameTarget, Nodes};
 use crate::config::remotes::Remotes;
 use crate::config::rules::{
     Action, CronTrigger, Day, EventTrigger, Limit, OfflineTrigger, ScheduleTrigger,
@@ -21,11 +21,23 @@ use crate::node::registry::{Node, Registry};
 pub struct NodeOverview {
     pub device_id: String,
     pub name: Option<String>,
-    pub firmware_version: String,
-    pub online: bool,
+    /// `None` for a node not seen since the hub started.
+    pub firmware_version: Option<String>,
+    pub presence: Presence,
     pub uptime_seconds: Option<u32>,
     pub rssi: Option<i8>,
     pub channels: Vec<ChannelOverview>,
+    /// From `nodes.toml`, for a node not seen yet: its channels are unknown until its `Hello`.
+    pub configured_entities: Vec<ConfiguredEntity>,
+}
+
+/// In the order the home page lists nodes.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Presence {
+    Online,
+    Offline,
+    /// In `nodes.toml` but has not sent a `Hello` since the hub started.
+    NotSeen,
 }
 
 pub struct NodeParametersOverview {
@@ -88,16 +100,39 @@ pub struct ActionOverview {
     pub warning: Option<String>,
 }
 
-/// One entry per registered node, for the nodes page.
+/// The registered nodes and the configured ones not seen yet, by presence then device id.
 pub fn nodes(hub: &Hub) -> Vec<NodeOverview> {
     let snapshot = hub.snapshot();
     let now = Instant::now();
-    snapshot
+    let mut nodes: Vec<NodeOverview> = snapshot
         .registry
         .nodes()
         .into_iter()
         .map(|(device_id, node)| node_overview(&snapshot, device_id, node, now))
-        .collect()
+        .collect();
+    nodes.extend(
+        snapshot
+            .nodes
+            .devices_id()
+            .filter(|device_id| snapshot.registry.node(device_id).is_none())
+            .map(|device_id| NodeOverview {
+                device_id: device_id.to_string(),
+                name: snapshot
+                    .nodes
+                    .name(&NameTarget::Node(device_id.to_string()))
+                    .map(String::from),
+                firmware_version: None,
+                presence: Presence::NotSeen,
+                uptime_seconds: None,
+                rssi: None,
+                channels: Vec::new(),
+                configured_entities: snapshot.nodes.entities(device_id),
+            }),
+    );
+    nodes.sort_by(|first, second| {
+        (first.presence, &first.device_id).cmp(&(second.presence, &second.device_id))
+    });
+    nodes
 }
 
 /// `None` for a node that never sent a `Hello`.
@@ -112,8 +147,12 @@ fn node_overview(snapshot: &Snapshot, device_id: &str, node: &Node, now: Instant
     NodeOverview {
         device_id: device_id.to_string(),
         name: name(NameTarget::Node(device_id.to_string())),
-        firmware_version: node.firmware_version.clone(),
-        online: node.online,
+        firmware_version: Some(node.firmware_version.clone()),
+        presence: if node.online {
+            Presence::Online
+        } else {
+            Presence::Offline
+        },
         uptime_seconds: node.uptime_seconds,
         rssi: node.rssi,
         channels: node
@@ -154,6 +193,7 @@ fn node_overview(snapshot: &Snapshot, device_id: &str, node: &Node, now: Instant
                 })
             })
             .collect(),
+        configured_entities: Vec::new(),
     }
 }
 
