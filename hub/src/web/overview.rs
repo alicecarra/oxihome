@@ -15,7 +15,8 @@ use crate::config::rules::{
     OfflineTrigger, ScheduleTrigger, ThresholdTrigger, Trigger, ValueTest,
 };
 use crate::hub::{Hub, Snapshot};
-use crate::node::events::data_label;
+use crate::node::events::{EventRecord, data_label};
+use crate::storage::StoredNotification;
 use crate::node::registry::{Node, Registry};
 
 #[derive(Clone)]
@@ -109,6 +110,23 @@ pub struct RuleOverview {
     pub next_run: Option<String>,
     /// How long ago it ran and the errors of the actions that failed.
     pub last_run: Option<(Duration, Vec<String>)>,
+}
+
+/// What the dashboard's `rules` block lists.
+pub struct RulesSummary {
+    /// Name and when, soonest first.
+    pub upcoming: Vec<(String, String)>,
+    /// Name, how long ago and the errors, latest first.
+    pub failed: Vec<(String, Duration, Vec<String>)>,
+}
+
+/// A node event or a notification, for the dashboard's `events` block.
+pub struct Activity {
+    pub title: String,
+    pub detail: String,
+    pub ago: Duration,
+    /// The node's page, for node events.
+    pub link: Option<String>,
 }
 
 pub struct ActionOverview {
@@ -371,6 +389,87 @@ pub fn parameters(hub: &Hub) -> Vec<NodeParametersOverview> {
                     .collect(),
             }
         })
+        .collect()
+}
+
+pub fn rules_summary(hub: &Hub, upcoming_count: usize) -> RulesSummary {
+    let local_now = Zoned::now().with_time_zone(hub.time_zone().clone());
+    let rules = hub.rules();
+    let mut upcoming: Vec<(Zoned, String)> = rules
+        .iter()
+        .filter(|rule| rule.enabled)
+        .filter_map(|rule| Some((rule.when.next_run(&local_now)?, rule.name.clone())))
+        .collect();
+    upcoming.sort();
+    let now = Timestamp::now();
+    let mut failed: Vec<(String, Duration, Vec<String>)> = hub
+        .rule_runs()
+        .into_iter()
+        .filter(|(name, run)| {
+            !run.errors.is_empty() && rules.iter().any(|rule| &rule.name == name)
+        })
+        .map(|(name, run)| (name, elapsed(run.at, now), run.errors))
+        .collect();
+    failed.sort_by_key(|(_, ago, _)| *ago);
+    RulesSummary {
+        upcoming: upcoming
+            .into_iter()
+            .take(upcoming_count)
+            .map(|(run, name)| (name, next_run_description(&local_now, &run)))
+            .collect(),
+        failed,
+    }
+}
+
+/// Node events and notifications together, newest first.
+pub fn activity(
+    hub: &Hub,
+    events: Vec<(EventRecord, Timestamp)>,
+    notifications: Vec<StoredNotification>,
+    limit: usize,
+) -> Vec<Activity> {
+    let snapshot = hub.snapshot();
+    let now = Timestamp::now();
+    let mut items: Vec<(Timestamp, Activity)> = events
+        .into_iter()
+        .map(|(event, at)| {
+            let detail = match &event.data {
+                Some(data) => format!(
+                    "{:?} {}",
+                    event.kind,
+                    event_data_label(data, &snapshot.remotes)
+                ),
+                None => format!("{:?}", event.kind),
+            };
+            let activity = Activity {
+                title: channel_description(
+                    &snapshot.nodes,
+                    &event.device_id,
+                    event.entity,
+                    event.channel,
+                    None,
+                ),
+                detail,
+                ago: elapsed(at, now),
+                link: Some(format!("/nodes/{}", event.device_id)),
+            };
+            (at, activity)
+        })
+        .chain(notifications.into_iter().map(|notification| {
+            let activity = Activity {
+                title: notification.title,
+                detail: notification.message,
+                ago: elapsed(notification.at, now),
+                link: None,
+            };
+            (notification.at, activity)
+        }))
+        .collect();
+    items.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+    items
+        .into_iter()
+        .take(limit)
+        .map(|(_, activity)| activity)
         .collect()
 }
 

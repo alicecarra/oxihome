@@ -23,7 +23,7 @@ use crate::node::events::{EventRecord, Events};
 use crate::node::registry::{NodeEvent, Registry};
 use crate::node::state::{ChannelUpdate, State};
 use crate::notifications::{self, Notification, Notifications};
-use crate::storage::{History, Restored, Storage, Write};
+use crate::storage::{History, Restored, Storage, StoredNotification, Write};
 
 /// Read access for the web interface, see `Hub::snapshot`.
 pub struct Snapshot<'a> {
@@ -237,6 +237,19 @@ impl Hub {
         self.storage
             .history(device_id, entity, channel, since, bucket)
             .await
+    }
+
+    /// Newest first.
+    pub async fn recent_events(&self, limit: usize) -> anyhow::Result<Vec<(EventRecord, Timestamp)>> {
+        self.storage.recent_events(limit).await
+    }
+
+    /// Newest first.
+    pub async fn recent_notifications(
+        &self,
+        limit: usize,
+    ) -> anyhow::Result<Vec<StoredNotification>> {
+        self.storage.recent_notifications(limit).await
     }
 
     /// Waits until everything that happened is in the database.
@@ -533,6 +546,12 @@ impl Hub {
     }
 
     pub fn notify(&self, title: String, message: String, source: String) {
+        self.storage.write(Write::Notification(StoredNotification {
+            title: title.clone(),
+            message: message.clone(),
+            source: source.clone(),
+            at: Timestamp::now(),
+        }));
         self.notifications
             .lock()
             .unwrap()

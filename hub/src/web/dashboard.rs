@@ -1,18 +1,23 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use jiff::{SignedDuration, Timestamp};
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::page,
-    view::{View, component, view},
+    router::{page, parse_query_params},
+    view::{View, attributes, component, view},
 };
 
+use super::chart::{CHART_BUCKETS, Chart, ChartRange, chart, history_chart, series};
+use super::format::{ago_label, rule_anchor, value_label};
 use super::layout::layout;
 use super::nodes::{channel_controls, channel_value, presence_badge};
-use super::overview::{self, DashboardChannel, NodeOverview, Presence};
+use super::overview::{self, Activity, DashboardChannel, NodeOverview, Presence, RulesSummary};
 use super::panel::{PanelButton, panel_button_view, panel_buttons};
+use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::card::{card, card_content, card_header, card_title};
-use crate::config::dashboard::{Block, BlockKind};
+use crate::config::dashboard::{Block, BlockKind, ChannelReference, DEFAULT_EVENTS};
 use crate::config::panels::Panel;
 use crate::hub::Hub;
 
@@ -31,17 +36,31 @@ enum BlockContent {
         several_nodes: bool,
     },
     Panel(Vec<PanelButton>),
+    Value {
+        channel: DashboardChannel,
+        online: bool,
+    },
+    History {
+        channel: DashboardChannel,
+        chart: Option<Chart>,
+        range: ChartRange,
+        /// Each range with the dashboard query that picks it for this block.
+        choices: Vec<(ChartRange, String)>,
+    },
+    Rules(RulesSummary),
+    Events(Vec<Activity>),
 }
+
+const UPCOMING_RULES: usize = 5;
 
 #[page("/")]
 pub async fn dashboard_page(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
+    let (blocks, query) = block_views(hub, &picked_ranges(cx)).await;
     Ok(view! {
         layout(
             title: "Oxihome",
-            <div id="dashboard" hx-get="/dashboard/fragment" hx-trigger="sse:nodes, every 30s, refresh">
-                dashboard_blocks(blocks: block_views(hub))
-            </div>
+            dashboard_root(blocks: blocks, query: query)
         )
     })
 }
@@ -49,22 +68,84 @@ pub async fn dashboard_page(cx: &Cx) -> Result<impl View> {
 #[page("/dashboard/fragment")]
 pub async fn dashboard_fragment(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
-    Ok(view! { dashboard_blocks(blocks: block_views(hub)) })
+    let (blocks, query) = block_views(hub, &picked_ranges(cx)).await;
+    Ok(view! { dashboard_root(blocks: blocks, query: query) })
 }
 
-fn block_views(hub: &Hub) -> Vec<BlockView> {
-    let Some(dashboard) = hub.dashboard() else {
-        return Vec::new();
-    };
-    let panels = hub.panels();
-    dashboard
-        .blocks
-        .iter()
-        .map(|block| block_view(hub, block, &panels))
+/// The ranges picked on the page, `range<block>=6h` in the query, by block index.
+fn picked_ranges(cx: &Cx) -> HashMap<usize, String> {
+    parse_query_params::<HashMap<String, String>>(cx)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(key, value)| Some((key.strip_prefix("range")?.parse().ok()?, value)))
         .collect()
 }
 
-fn block_view(hub: &Hub, block: &Block, panels: &[Panel]) -> BlockView {
+/// The query keeping every history block's range, with `changed` set to `range`.
+fn ranges_query(ranges: &[(usize, ChartRange)], changed: Option<(usize, ChartRange)>) -> String {
+    ranges
+        .iter()
+        .map(|&(index, range)| {
+            let range = match changed {
+                Some((changed_index, picked)) if changed_index == index => picked,
+                _ => range,
+            };
+            format!("range{index}={}", range.key())
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+/// The blocks and the query that keeps their picked ranges.
+async fn block_views(hub: &Hub, picked: &HashMap<usize, String>) -> (Vec<BlockView>, String) {
+    let Some(dashboard) = hub.dashboard() else {
+        return (Vec::new(), String::new());
+    };
+    let panels = hub.panels();
+    let ranges: Vec<(usize, ChartRange)> = dashboard
+        .blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, block)| block.kind == BlockKind::History)
+        .map(|(index, block)| {
+            let key = picked
+                .get(&index)
+                .map(String::as_str)
+                .or(block.range.as_deref())
+                .unwrap_or("24h");
+            (index, ChartRange::from_key(Some(key)))
+        })
+        .collect();
+    let mut views = Vec::new();
+    for (index, block) in dashboard.blocks.iter().enumerate() {
+        let range = ranges
+            .iter()
+            .find(|(history, _)| *history == index)
+            .map(|(_, range)| *range)
+            .unwrap_or(ChartRange::Day);
+        let choices = ChartRange::ALL
+            .into_iter()
+            .map(|choice| (choice, ranges_query(&ranges, Some((index, choice)))))
+            .collect();
+        views.push(block_view(hub, block, &panels, range, choices).await);
+    }
+    (views, ranges_query(&ranges, None))
+}
+
+/// Validation makes sure `value` and `history` blocks have a channel.
+fn single_channel(hub: &Hub, reference: Option<&ChannelReference>) -> Option<DashboardChannel> {
+    overview::dashboard_channels(hub, std::slice::from_ref(reference?))
+        .into_iter()
+        .next()
+}
+
+async fn block_view(
+    hub: &Hub,
+    block: &Block,
+    panels: &[Panel],
+    range: ChartRange,
+    choices: Vec<(ChartRange, String)>,
+) -> BlockView {
     let (default_title, content) = match block.kind {
         BlockKind::Nodes => ("Nodes".to_string(), BlockContent::Nodes(overview::nodes(hub))),
         BlockKind::Channels => {
@@ -95,12 +176,71 @@ fn block_view(hub: &Hub, block: &Block, panels: &[Panel]) -> BlockView {
                 .unwrap_or_default();
             (name, BlockContent::Panel(buttons))
         }
+        BlockKind::Value | BlockKind::History => {
+            let Some(channel) = single_channel(hub, block.channel.as_ref()) else {
+                return BlockView {
+                    title: block.title.clone().unwrap_or_default(),
+                    width: block.width,
+                    content: BlockContent::Events(Vec::new()),
+                };
+            };
+            let title = channel.node_label.clone();
+            if block.kind == BlockKind::Value {
+                let online = hub.is_online(&channel.device_id);
+                (title, BlockContent::Value { channel, online })
+            } else {
+                let chart = history(hub, block.channel.as_ref(), range).await;
+                (
+                    title,
+                    BlockContent::History {
+                        channel,
+                        chart,
+                        range,
+                        choices,
+                    },
+                )
+            }
+        }
+        BlockKind::Rules => (
+            "Rules".to_string(),
+            BlockContent::Rules(overview::rules_summary(hub, UPCOMING_RULES)),
+        ),
+        BlockKind::Events => {
+            let limit = block.limit.unwrap_or(DEFAULT_EVENTS);
+            let events = hub.recent_events(limit).await.unwrap_or_else(|error| {
+                println!("dashboard: recent events: {error:#}");
+                Vec::new()
+            });
+            let notifications = hub.recent_notifications(limit).await.unwrap_or_else(|error| {
+                println!("dashboard: recent notifications: {error:#}");
+                Vec::new()
+            });
+            (
+                "Recent events".to_string(),
+                BlockContent::Events(overview::activity(hub, events, notifications, limit)),
+            )
+        }
     };
     BlockView {
         title: block.title.clone().unwrap_or(default_title),
         width: block.width,
         content,
     }
+}
+
+/// Refreshes itself with the same query, so picked chart ranges stay.
+#[component]
+async fn dashboard_root(blocks: Vec<BlockView>, query: String) -> Result<impl View> {
+    Ok(view! {
+        <div
+            id="dashboard"
+            hx-get=(format!("/dashboard/fragment?{query}"))
+            hx-trigger="sse:nodes, sse:notifications, every 30s, refresh"
+            hx-swap="outerHTML"
+        >
+            dashboard_blocks(blocks: blocks)
+        </div>
+    })
 }
 
 #[component]
@@ -115,10 +255,12 @@ async fn dashboard_blocks(blocks: Vec<BlockView>) -> Result<impl View> {
                 "."
             </p>
         }
-        <div class="grid items-start gap-4 lg:grid-cols-3">
+        // Cards of a row share its height.
+        <div class="grid gap-4 lg:grid-cols-3">
             for block in blocks {
                 <div class=(width_class(block.width))>
                     card(
+                        attrs: attributes! { class="h-full" },
                         card_header(card_title((block.title)))
                         card_content(
                             match block.content {
@@ -130,6 +272,10 @@ async fn dashboard_blocks(blocks: Vec<BlockView>) -> Result<impl View> {
                                         }
                                     </ul>
                                 },
+                                BlockContent::Value { channel, online } => value_block(channel: channel, online: online),
+                                BlockContent::History { channel, chart, range, choices } => history_block(channel: channel, chart: chart, range: range, choices: choices),
+                                BlockContent::Rules(summary) => rules_block(summary: summary),
+                                BlockContent::Events(items) => events_block(items: items),
                                 BlockContent::Panel(buttons) => {
                                     // In one row while they fit, sharing the width.
                                     <div class="flex flex-wrap gap-3">
@@ -147,6 +293,31 @@ async fn dashboard_blocks(blocks: Vec<BlockView>) -> Result<impl View> {
             }
         </div>
     })
+}
+
+async fn history(
+    hub: &Hub,
+    reference: Option<&ChannelReference>,
+    range: ChartRange,
+) -> Option<Chart> {
+    let reference = reference?;
+    let since = Timestamp::now() - SignedDuration::try_from(range.span()).ok()?;
+    match hub
+        .history(
+            &reference.device,
+            reference.entity,
+            reference.channel,
+            since,
+            range.bucket_length(),
+        )
+        .await
+    {
+        Ok(history) => chart(&series(&history, CHART_BUCKETS)),
+        Err(error) => {
+            println!("dashboard: history of {}: {error:#}", reference.device);
+            None
+        }
+    }
 }
 
 fn width_class(width: u8) -> &'static str {
@@ -219,5 +390,133 @@ async fn dashboard_channel_row(channel: DashboardChannel, several_nodes: bool) -
                 channel_controls(device_id: channel.device_id, channel: overview, label: label)
             }
         </li>
+    })
+}
+
+/// The channel's current value as text, or why there is none.
+fn current_value(channel: &DashboardChannel) -> String {
+    match &channel.channel {
+        Ok(overview) => overview
+            .value
+            .as_ref()
+            .map_or_else(|| "—".to_string(), |value| value_label(value, overview.unit)),
+        Err(reason) => (*reason).to_string(),
+    }
+}
+
+#[component]
+async fn value_block(channel: DashboardChannel, online: bool) -> Result<impl View> {
+    let value = current_value(&channel);
+    Ok(view! {
+        <div class=(if online { "space-y-1" } else { "space-y-1 opacity-60" })>
+            <p class="text-4xl font-semibold tracking-tight tabular-nums">(value)</p>
+            <p class="text-sm text-muted-foreground">
+                (channel.label)
+                if !online {
+                    " · offline"
+                }
+            </p>
+        </div>
+    })
+}
+
+#[component]
+async fn history_block(
+    channel: DashboardChannel,
+    chart: Option<Chart>,
+    range: ChartRange,
+    choices: Vec<(ChartRange, String)>,
+) -> Result<impl View> {
+    let value = current_value(&channel);
+    let unit = channel.channel.as_ref().ok().and_then(|overview| overview.unit);
+    Ok(view! {
+        <div class="space-y-3">
+            <div class="flex items-baseline justify-between gap-3">
+                <p class="text-sm text-muted-foreground">(channel.label)</p>
+                <p class="text-xl font-semibold tabular-nums">(value)</p>
+            </div>
+            <div class="inline-flex gap-0.5 rounded-lg border border-border p-0.5" role="group" aria-label="Chart range">
+                for (choice, query) in choices {
+                    button(
+                        variant: if choice == range { ButtonVariant::Secondary } else { ButtonVariant::Ghost },
+                        size: ButtonSize::Sm,
+                        attrs: attributes! {
+                            type="button"
+                            aria-pressed=(if choice == range { "true" } else { "false" })
+                            hx-get=(format!("/dashboard/fragment?{query}"))
+                            hx-target="#dashboard"
+                            hx-swap="outerHTML"
+                            hx-push-url=(format!("/?{query}"))
+                        },
+                        (choice.label())
+                    )
+                }
+            </div>
+            match chart {
+                Some(chart) => history_chart(chart: chart, unit: unit, range: range),
+                None => <p class="text-sm text-muted-foreground">(format!("No readings in the last {}.", range.label()))</p>,
+            }
+        </div>
+    })
+}
+
+#[component]
+async fn rules_block(summary: RulesSummary) -> Result<impl View> {
+    Ok(view! {
+        <div class="space-y-4 text-sm">
+            <div class="space-y-2">
+                <p class="font-medium">"Next"</p>
+                if summary.upcoming.is_empty() {
+                    <p class="text-muted-foreground">"No scheduled rules."</p>
+                }
+                <ul class="space-y-1">
+                    for (name, when) in summary.upcoming {
+                        <li class="flex justify-between gap-3">
+                            <a href=(format!("/rules#{}", rule_anchor(&name))) class="hover:underline">(name)</a>
+                            <span class="shrink-0 text-muted-foreground tabular-nums">(when)</span>
+                        </li>
+                    }
+                </ul>
+            </div>
+            if !summary.failed.is_empty() {
+                <div class="space-y-2">
+                    <p class="font-medium text-destructive">"Failed"</p>
+                    <ul class="space-y-2">
+                        for (name, ago, errors) in summary.failed {
+                            <li>
+                                <div class="flex justify-between gap-3">
+                                    <a href=(format!("/rules#{}", rule_anchor(&name))) class="hover:underline">(name)</a>
+                                    <span class="shrink-0 text-muted-foreground">(ago_label(ago))</span>
+                                </div>
+                                <p class="text-xs text-destructive">(errors.join("; "))</p>
+                            </li>
+                        }
+                    </ul>
+                </div>
+            }
+        </div>
+    })
+}
+
+#[component]
+async fn events_block(items: Vec<Activity>) -> Result<impl View> {
+    Ok(view! {
+        if items.is_empty() {
+            <p class="text-sm text-muted-foreground">"Nothing yet."</p>
+        }
+        <ul class="divide-y divide-border text-sm">
+            for item in items {
+                <li class="flex justify-between gap-3 py-2 first:pt-0 last:pb-0">
+                    <div class="min-w-0">
+                        match item.link {
+                            Some(link) => <a href=(link) class="font-medium hover:underline">(item.title)</a>,
+                            None => <p class="font-medium">(item.title)</p>,
+                        }
+                        <p class="truncate text-muted-foreground">(item.detail)</p>
+                    </div>
+                    <span class="shrink-0 text-xs text-muted-foreground">(ago_label(item.ago))</span>
+                </li>
+            }
+        </ul>
     })
 }

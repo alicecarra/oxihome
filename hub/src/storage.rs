@@ -26,6 +26,7 @@ pub enum Write {
     Value(ChannelUpdate, Timestamp),
     Event(EventRecord, Timestamp),
     RuleRun(String, RuleRun),
+    Notification(StoredNotification),
     /// Answered once everything sent before it is written.
     Flush(oneshot::Sender<()>),
 }
@@ -40,6 +41,14 @@ pub struct Restored {
     /// Newest first.
     pub received_events: Vec<(EventRecord, Timestamp)>,
     pub rule_runs: Vec<(String, RuleRun)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredNotification {
+    pub title: String,
+    pub message: String,
+    pub source: String,
+    pub at: Timestamp,
 }
 
 /// Numeric readings of one channel, grouped in buckets of equal length.
@@ -133,6 +142,44 @@ impl Storage {
         Ok(History { before, buckets })
     }
 
+    /// Newest first.
+    pub async fn recent_events(&self, limit: usize) -> anyhow::Result<Vec<(EventRecord, Timestamp)>> {
+        let mut events = Vec::new();
+        for row in sqlx::query(
+            "SELECT device_id, entity, channel, at, kind, data FROM events ORDER BY at DESC LIMIT ?",
+        )
+        .bind(i64::try_from(limit)?)
+        .fetch_all(&self.pool)
+        .await?
+        {
+            events.push(event_row(&row)?);
+        }
+        Ok(events)
+    }
+
+    /// Newest first.
+    pub async fn recent_notifications(
+        &self,
+        limit: usize,
+    ) -> anyhow::Result<Vec<StoredNotification>> {
+        let mut notifications = Vec::new();
+        for row in sqlx::query(
+            "SELECT at, title, message, source FROM notifications ORDER BY at DESC LIMIT ?",
+        )
+        .bind(i64::try_from(limit)?)
+        .fetch_all(&self.pool)
+        .await?
+        {
+            notifications.push(StoredNotification {
+                title: row.get("title"),
+                message: row.get("message"),
+                source: row.get("source"),
+                at: Timestamp::from_millisecond(row.get("at"))?,
+            });
+        }
+        Ok(notifications)
+    }
+
     /// Waits for the queued writes.
     pub async fn flush(&self) {
         let (sender, receiver) = oneshot::channel();
@@ -185,6 +232,17 @@ async fn write_batch(pool: &SqlitePool, batch: Vec<Write>) -> anyhow::Result<()>
                 .bind(name)
                 .bind(run.at.as_millisecond())
                 .bind(serde_json::to_string(&run.errors)?)
+                .execute(&mut *transaction)
+                .await?;
+            }
+            Write::Notification(notification) => {
+                sqlx::query(
+                    "INSERT INTO notifications (at, title, message, source) VALUES (?, ?, ?, ?)",
+                )
+                .bind(notification.at.as_millisecond())
+                .bind(notification.title)
+                .bind(notification.message)
+                .bind(notification.source)
                 .execute(&mut *transaction)
                 .await?;
             }
@@ -294,8 +352,15 @@ async fn prune_older(pool: &SqlitePool, retention: Duration) -> anyhow::Result<(
         .execute(pool)
         .await?
         .rows_affected();
-    if readings + events > 0 {
-        println!("storage: pruned {readings} readings and {events} events");
+    let notifications = sqlx::query("DELETE FROM notifications WHERE at < ?")
+        .bind(before)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    if readings + events + notifications > 0 {
+        println!(
+            "storage: pruned {readings} readings, {events} events and {notifications} notifications"
+        );
     }
     Ok(())
 }
@@ -481,7 +546,18 @@ mod tests {
                 errors: vec!["failed".into()],
             },
         ));
+        storage.write(Write::Notification(StoredNotification {
+            title: "Test board offline".into(),
+            message: "Stopped sending messages".into(),
+            source: "esp32-test".into(),
+            at,
+        }));
         storage.flush().await;
+        assert_eq!(storage.recent_events(5).await.unwrap().len(), 1);
+        assert_eq!(
+            storage.recent_notifications(5).await.unwrap()[0].title,
+            "Test board offline"
+        );
         let history = storage
             .history(
                 "esp32-test",

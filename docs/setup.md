@@ -207,8 +207,10 @@ What it keeps:
 - `events`: every event (button, IR code). The last event of each channel and the recent codes
   of the Learn section on `/remotes` are read back from it at start.
 - `rule_runs`: the last run of each rule, shown on `/rules`.
+- `notifications`: the toasts (node offline, rule failed, `notify` actions), for the dashboard's
+  `events` block.
 
-`readings` and `events` keep `[storage] retention_days` days (default 7), pruned at start and
+`readings`, `events` and `notifications` keep `[storage] retention_days` days (default 7), pruned at start and
 then every hour. Writes go to a task of their own, in one transaction per batch, so the MQTT loop
 never waits for the disk. Times are milliseconds since the Unix epoch. To look inside (with the
 `sqlite` package):
@@ -336,6 +338,36 @@ previous configuration stays in use.
   [remotes."Kit Lafvin".keys]
   0 = "NEC 00 52"
   1 = "NEC 00 16"
+  ```
+
+- `dashboard.toml`: the home page `/`, a list of blocks in file order on a grid of three columns
+  (one on phones), refreshed live; the cards of a row share its height. Each block has a `type`, an optional `title` and a `width` of
+  1 to 3 columns (default 1). Types: `nodes` (nodes by presence), `channels` (chosen channels with
+  value and controls), `panel` (the buttons of a panel), `value` (one channel's value, large, dimmed
+  while its node is offline), `history` (the node page's chart for one channel, with 1 h, 6 h and 24 h
+  buttons; `range` of `1h`, `6h` or `24h` sets the default, `24h` when missing; the picked range stays
+  in the address, `?range4=6h` for the fifth block, through live updates and reloads), `rules` (the next 5 scheduled runs and the rules whose last run failed,
+  with the error) and `events` (the latest node events and notifications, newest first, `limit` 1 to
+  50, default 10; IR codes show the key name from `remotes.toml`). Notifications are stored in the
+  database too (table `notifications`, same retention as events), so they survive a restart.
+
+  ```toml
+  [[dashboards]]
+  name = "Home"
+
+  [[dashboards.blocks]]
+  type = "value"
+  channel = { device = "esp32-08d1f9ca41e4", entity = 3, channel = 0 }
+
+  [[dashboards.blocks]]
+  type = "history"
+  width = 2
+  channel = { device = "esp32-08d1f9ca41e4", entity = 3, channel = 0 }
+  range = "6h"
+
+  [[dashboards.blocks]]
+  type = "events"
+  limit = 5
   ```
 
 Clicking a node's name on the home page opens its page, `/nodes/<id>`, with two sections that
