@@ -8,7 +8,7 @@ use jiff::civil::DateTime;
 use jiff::tz::TimeZone;
 use oxihome_protocol::management::{self, Parameter};
 use oxihome_protocol::{CommandOp, Message, Payload, Value};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 
 use crate::commands::Commands;
 use crate::config::nodes::{NameTarget, Nodes};
@@ -79,6 +79,8 @@ pub struct Hub {
     /// Scheduled rules run in this zone's local time.
     time_zone: TimeZone,
     changes: broadcast::Sender<Change>,
+    /// `true` once the hub is shutting down; open `/events` streams end then.
+    shutting_down: watch::Sender<bool>,
 }
 
 impl Hub {
@@ -106,6 +108,7 @@ impl Hub {
             commands: Commands::default(),
             time_zone,
             changes: broadcast::channel(64).0,
+            shutting_down: watch::channel(false).0,
         }
     }
 
@@ -159,6 +162,18 @@ impl Hub {
             self.announce(Change::Nodes);
         }
         node_events
+    }
+
+    pub fn shut_down(&self) {
+        self.shutting_down.send_replace(true);
+    }
+
+    /// Resolves once `shut_down` is called.
+    pub fn shutdown(&self) -> impl Future<Output = ()> + use<> {
+        let mut receiver = self.shutting_down.subscribe();
+        async move {
+            let _ = receiver.wait_for(|shutting_down| *shutting_down).await;
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Change> {

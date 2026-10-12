@@ -9,7 +9,7 @@ futures-util = { version = "0.3", default-features = false }
 oxihome-protocol = { path = "../protocol" }
 rumqttc = "0.25"
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 topcoat = { version = "=0.10.0", features = ["sse", "tailwind", "ui"] }
 toml = "1"
 toml_edit = "0.25"

@@ -20,6 +20,7 @@ use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use serde::Deserialize;
 use tokio::net::TcpListener;
+use topcoat::router::RouterService;
 
 use config::HomeConfig;
 use hub::Hub;
@@ -29,6 +30,8 @@ use schedule::Schedule;
 
 const PRESENCE_CHECK_INTERVAL: Duration = Duration::from_secs(10);
 const CLOCK_INTERVAL: Duration = Duration::from_secs(1);
+/// How long requests get to finish after Ctrl+C or `SIGTERM`.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Deserialize)]
 struct Config {
@@ -116,7 +119,9 @@ async fn main() -> anyhow::Result<()> {
         "web interface on http://{}:{}",
         config.http.host, config.http.port
     );
-    let mut web_server = tokio::spawn(topcoat::serve(listener, web::router(hub.clone())));
+    let service = RouterService::new(web::router(hub.clone())).shutdown_timeout(SHUTDOWN_TIMEOUT);
+    let mut web_server = tokio::spawn(topcoat::serve_until(listener, service, hub.shutdown()));
+    let mut signal = std::pin::pin!(shutdown_signal());
 
     let mut presence_check = tokio::time::interval(PRESENCE_CHECK_INTERVAL);
     let mut clock = tokio::time::interval(CLOCK_INTERVAL);
@@ -135,6 +140,21 @@ async fn main() -> anyhow::Result<()> {
             result = &mut web_server => {
                 return Ok(result??);
             }
+            () = &mut signal => {
+                println!("shutting down");
+                hub.shut_down();
+                return Ok(web_server.await??);
+            }
         }
+    }
+}
+
+/// Ctrl+C, or `SIGTERM` (systemd, `kill`).
+async fn shutdown_signal() {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("installing the SIGTERM handler");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = terminate.recv() => {}
     }
 }

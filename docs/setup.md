@@ -132,6 +132,11 @@ cargo run -p oxihome-hub -- hub/hub.toml
 Only one hub can run per broker: both use the MQTT client id `oxihome-hub` and keep disconnecting
 each other.
 
+Ctrl+C or `SIGTERM` stops the hub at once: it logs `shutting down`, stops handling messages and
+rules, closes the pages' event streams and gives other requests up to 3 s to finish. (Before
+2026-10-12 it took 30 s with a page open, waiting for the event streams, which never end on their
+own.)
+
 The home's configuration lives in TOML files in the directory set in `[config] dir` (default
 `hub/config/`, versioned in git). The hub reads them at start. They can be edited on `/settings`,
 where each file has a text box and a Save button: the whole configuration is validated with the
