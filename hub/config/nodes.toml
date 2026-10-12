@@ -23,3 +23,9 @@ entities.3 = { name = "Climate sensor" }
 [nodes."sim-bedroom"]
 name = "Bedroom (simulated)"
 entities.1 = { name = "Lamp", channels.0 = "Power" }
+
+[nodes.weather]
+name = "Weather"
+entities.1 = { name = "Now", channels.3 = "Wind", channels.4 = "Raining" }
+entities.2 = { name = "Today", channels.0 = "Maximum", channels.1 = "Minimum", channels.2 = "Chance of rain" }
+entities.3 = { name = "Updated", channels.0 = "At" }

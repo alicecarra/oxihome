@@ -320,6 +320,25 @@ cargo test -p oxihome-node
 cargo clippy -p oxihome-node --features mqtt
 ```
 
+## Weather node
+
+`weather/` (`oxihome-weather`) is a software node with the weather outside, from
+[Open-Meteo](https://open-meteo.com) (free, no account or key). It fetches every 10 minutes and
+sends a heartbeat every 30 s; a failed fetch keeps the last readings.
+
+```sh
+cp weather/weather.toml.example weather/weather.toml   # then set the location
+cargo run -p oxihome-weather -- weather/weather.toml
+```
+
+`weather/weather.toml` stays out of git because it holds the location; a public place near home is
+precise enough. Entities: 1 now (temperature °C, humidity %, precipitation mm over the last 15
+minutes, wind km/h, raining `Bool`), 2 today (maximum and minimum °C, chance of rain %), 3 the local
+time of the last reading as `Text`. All read only; rules use them like any sensor, with
+`above`/`below` limits (e.g. precipitation above 0 to say it started raining). The protocol gained
+the `Precipitation` and `WindSpeed` quantities and the `Millimeter` and `KilometerPerHour` units
+for it.
+
 ## Simulator
 
 Simulated nodes that talk to the broker like real boards, to work on the hub without hardware.

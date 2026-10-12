@@ -1,0 +1,13 @@
+# Copy to weather.toml (kept out of git: it holds the location).
+
+[mqtt]
+host = "localhost"
+port = 1883
+
+[node]
+id = "weather"
+
+# A public place near home is precise enough for the weather (this one is Parque Farroupilha in Porto Alegre).
+[location]
+latitude = -30.04
+longitude = -51.22

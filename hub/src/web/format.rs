@@ -58,6 +58,8 @@ pub fn unit_symbol(unit: Unit) -> &'static str {
         Unit::Ampere => "A",
         Unit::Watt => "W",
         Unit::Second => "s",
+        Unit::Millimeter => "mm",
+        Unit::KilometerPerHour => "km/h",
     }
 }
 
