@@ -4,12 +4,24 @@
 2 = "NEC 00 19"
 3 = "NEC 00 0D"
 up = "NEC 00 46"
-right = "NEC 00 43"
-down = "NEC 00 15"
-left = "NEC 00 44"
 ok = "NEC 00 40"
 
 [remotes.Receiver.keys]
 power = "SONY15 30 15"
 "vol up" = "SONY15 30 12"
 "vol down" = "SONY15 30 13"
+tuner = "SONY15 30 21"
+tv = "SONY15 30 6A"
+mute = "SONY15 30 14"
+
+[remotes."TV Philips".keys]
+youtube = "RC6 00 79"
+up = "RC6 00 58"
+down = "RC6 00 59"
+left = "RC6 00 5A"
+right = "RC6 00 5B"
+enter = "RC6 00 5C"
+power = "RC6 00 0C"
+back = "RC6 00 0A"
+exit = "RC6 00 9F"
+sources = "RC6 00 38"

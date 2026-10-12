@@ -52,6 +52,27 @@ impl Remotes {
         })
     }
 
+    /// The remote whose keys share the code's protocol and address (all but the command), to
+    /// suggest for a new key: `RC6 00 0C` goes with the `RC6 00 ..` keys. With several, the one
+    /// with the most such keys.
+    pub fn remote_for(&self, code: &str) -> Option<&str> {
+        let family = |code: &str| code.rsplit_once(' ').map(|(family, _)| family.to_string());
+        let wanted = family(code)?;
+        self.remotes
+            .iter()
+            .map(|(name, remote)| {
+                let matching = remote
+                    .keys
+                    .values()
+                    .filter(|known| family(known).as_ref() == Some(&wanted))
+                    .count();
+                (name, matching)
+            })
+            .filter(|(_, matching)| *matching > 0)
+            .max_by_key(|(_, matching)| *matching)
+            .map(|(name, _)| name.as_str())
+    }
+
     /// A code on two keys would make rules and names ambiguous.
     pub fn validate(&self) -> anyhow::Result<()> {
         let mut seen: HashMap<&str, (&str, &str)> = HashMap::new();
@@ -120,6 +141,29 @@ mod tests {
         assert_eq!(remotes.key_for("NEC 00 99"), None);
         assert_eq!(remotes.code("Kit remote", "0"), Some("NEC 00 52"));
         assert_eq!(remotes.code("Kit remote", "9"), None);
+    }
+
+    #[test]
+    fn new_codes_go_with_the_remote_of_the_same_protocol_and_address() {
+        let remotes: Remotes = toml::from_str(
+            r#"
+            [remotes.Kit.keys]
+            0 = "NEC 00 52"
+            [remotes.Receiver.keys]
+            power = "SONY15 30 15"
+            [remotes.TV.keys]
+            power = "RC6 00 0C"
+            up = "RC6 00 58"
+            [remotes.Other.keys]
+            stray = "RC6 00 5A"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(remotes.remote_for("RC6 00 BF"), Some("TV"));
+        assert_eq!(remotes.remote_for("NEC 00 16"), Some("Kit"));
+        assert_eq!(remotes.remote_for("SONY15 30 12"), Some("Receiver"));
+        assert_eq!(remotes.remote_for("NEC 04 16"), None);
+        assert_eq!(remotes.remote_for("RC5 00 0C"), None);
     }
 
     #[test]

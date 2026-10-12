@@ -31,7 +31,7 @@ pub async fn remotes_page(cx: &Cx) -> Result<impl View> {
                     <a href="/settings/remotes.toml" class="text-sm font-medium whitespace-nowrap hover:underline">"Edit in Settings"</a>
                 </div>
                 <div id="remotes" hx-get="/remotes/fragment" hx-trigger="sse:nodes, refresh">
-                    remotes_content(learning: learning(hub), remotes: remote_list(hub), default_remote: remote_to_offer(hub))
+                    remotes_content(learning: learning(hub), remotes: remote_list(hub))
                 </div>
             </div>
         )
@@ -42,7 +42,7 @@ pub async fn remotes_page(cx: &Cx) -> Result<impl View> {
 pub async fn remotes_fragment(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
     Ok(
-        view! { remotes_content(learning: learning(hub), remotes: remote_list(hub), default_remote: remote_to_offer(hub)) },
+        view! { remotes_content(learning: learning(hub), remotes: remote_list(hub)) },
     )
 }
 
@@ -51,6 +51,8 @@ struct LearningCode {
     receiver: String,
     ago: String,
     known: Option<RemoteKey>,
+    /// The remote with keys of the same protocol and address.
+    suggested_remote: Option<String>,
 }
 
 struct RemoteOverview {
@@ -72,16 +74,10 @@ fn learning(hub: &Hub) -> Vec<LearningCode> {
                 .map_or(received.device_id.clone(), String::from),
             ago: ago_label(now - received.at),
             known: snapshot.remotes.key_for(&received.code),
+            suggested_remote: snapshot.remotes.remote_for(&received.code).map(String::from),
             code: received.code,
         })
         .collect()
-}
-
-/// The remote of the last learned key, else the first one.
-fn remote_to_offer(hub: &Hub) -> String {
-    hub.last_learned_remote()
-        .or_else(|| hub.snapshot().remotes.all().keys().next().cloned())
-        .unwrap_or_default()
 }
 
 fn remote_list(hub: &Hub) -> Vec<RemoteOverview> {
@@ -104,7 +100,6 @@ fn remote_list(hub: &Hub) -> Vec<RemoteOverview> {
 async fn remotes_content(
     learning: Vec<LearningCode>,
     remotes: Vec<RemoteOverview>,
-    default_remote: String,
 ) -> Result<impl View> {
     let remote_names: Vec<String> = remotes.iter().map(|remote| remote.name.clone()).collect();
     Ok(view! {
@@ -119,7 +114,7 @@ async fn remotes_content(
                 }
                 <ul class="divide-y divide-border">
                     for received in learning {
-                        learning_row(received: received, default_remote: default_remote.clone())
+                        learning_row(received: received)
                     }
                 </ul>
                 <datalist id="remote-names">
@@ -146,8 +141,9 @@ async fn remotes_content(
 }
 
 #[component]
-async fn learning_row(received: LearningCode, default_remote: String) -> Result<impl View> {
-    // Inputs keep what was typed when the list refreshes on new codes.
+async fn learning_row(received: LearningCode) -> Result<impl View> {
+    // Inputs keep what was typed when the list refreshes on new codes. The suggestion is a
+    // placeholder, not a value, and is part of the id: a new suggestion gives a fresh input.
     let code_id: String = received
         .code
         .chars()
@@ -159,7 +155,14 @@ async fn learning_row(received: LearningCode, default_remote: String) -> Result<
             }
         })
         .collect();
-    let remote_id = format!("learn-remote-{code_id}");
+    let suggestion = received.suggested_remote.clone().unwrap_or_default();
+    let remote_id = format!(
+        "learn-remote-{code_id}-{}",
+        suggestion
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>()
+    );
     let key_id = format!("learn-key-{code_id}");
     Ok(view! {
         <li class="flex flex-wrap items-center justify-between gap-3 py-3">
@@ -176,14 +179,16 @@ async fn learning_row(received: LearningCode, default_remote: String) -> Result<
                     ("hx-on--after-request")="htmx.trigger('#remotes', 'refresh')"
                 >
                     <input type="hidden" name="code" value=(received.code.clone())>
+                    <input type="hidden" name="suggested_remote" value=(suggestion.clone())>
                     input(attrs: attributes! {
                         id=(remote_id)
                         hx-preserve="true"
                         name="remote"
                         list="remote-names"
-                        required=""
-                        placeholder="Remote"
-                        value=(default_remote)
+                        if suggestion.is_empty() {
+                            required=""
+                        }
+                        placeholder=(if suggestion.is_empty() { "Remote".to_string() } else { suggestion.clone() })
                         aria-label="Remote"
                         class="h-8 w-36"
                     })
@@ -206,6 +211,9 @@ async fn learning_row(received: LearningCode, default_remote: String) -> Result<
 #[derive(Deserialize)]
 struct KeyForm {
     remote: String,
+    /// Used when `remote` is left empty.
+    #[serde(default)]
+    suggested_remote: String,
     key: String,
     code: String,
 }
@@ -214,7 +222,11 @@ struct KeyForm {
 #[route(POST "/remotes/keys")]
 pub async fn learn_key(cx: &Cx, Form(form): Form<KeyForm>) -> Result<ViewHandle> {
     let hub: &Arc<Hub> = app_context(cx);
-    let (remote, key) = (form.remote.trim(), form.key.trim());
+    let remote = match form.remote.trim() {
+        "" => form.suggested_remote.trim(),
+        typed => typed,
+    };
+    let key = form.key.trim();
     let result = if remote.is_empty() || key.is_empty() {
         Err(anyhow::anyhow!("the remote and the key need a name"))
     } else {
