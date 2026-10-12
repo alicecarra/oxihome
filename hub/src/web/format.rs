@@ -61,9 +61,31 @@ pub fn unit_symbol(unit: Unit) -> &'static str {
     }
 }
 
+/// The id of a rule's card on `/rules`, for links: `rule-living-room-hot`.
+pub fn rule_anchor(name: &str) -> String {
+    let words: Vec<String> = name
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect();
+    format!("rule-{}", words.join("-"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rule_anchors_are_url_friendly() {
+        assert_eq!(
+            rule_anchor("Living room hot: external LED on"),
+            "rule-living-room-hot-external-led-on"
+        );
+        assert_eq!(
+            rule_anchor("Remote key 0 toggles"),
+            "rule-remote-key-0-toggles"
+        );
+    }
 
     #[test]
     fn float_has_one_decimal_and_unit() {

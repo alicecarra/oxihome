@@ -11,7 +11,7 @@ use topcoat::{
     view::{View, ViewExt, ViewHandle, attributes, component, view},
 };
 
-use super::format::{channel_label, duration_label, entity_label};
+use super::format::{channel_label, duration_label, entity_label, rule_anchor};
 use super::layout::layout;
 use super::nodes::{channel_controls, channel_value, presence_badge};
 use super::overview::{self, ChannelOverview, NodeOverview, ParameterOverview};
@@ -19,6 +19,7 @@ use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::card::{card, card_content, card_description, card_header, card_title};
 use crate::components::input::input;
 use crate::config::nodes::{EntityEdit, NodeEdits, parameter_key};
+use crate::config::rules::{RuleRole, RuleUse};
 use crate::hub::Hub;
 use crate::node::parameters;
 
@@ -27,6 +28,7 @@ path_param!(device_id);
 struct NodeView {
     node: NodeOverview,
     parameters: Vec<ParameterOverview>,
+    rules: Vec<RuleUse>,
 }
 
 fn node_view(hub: &Hub, device_id: &str) -> Option<NodeView> {
@@ -36,7 +38,12 @@ fn node_view(hub: &Hub, device_id: &str) -> Option<NodeView> {
         .find(|node| node.device_id == device_id)
         .map(|node| node.parameters)
         .unwrap_or_default();
-    Some(NodeView { node, parameters })
+    let rules = hub.rules_involving(device_id);
+    Some(NodeView {
+        node,
+        parameters,
+        rules,
+    })
 }
 
 #[page("/nodes/{device_id}")]
@@ -53,7 +60,8 @@ pub async fn node_page(cx: &Cx) -> Result<impl View> {
                     None => <p class="text-muted-foreground">(format!("Unknown node {device_id}: it has not sent a Hello since the hub started."))</p>,
                     Some(node) => {
                         overview_section(node: node.node.clone(), parameters: node.parameters, editing: false)
-                        fields_section(node: node.node, editing: false)
+                        fields_section(node: node.node.clone(), rules: node.rules.clone(), editing: false)
+                        rules_section(channels: node.node.channels, rules: node.rules)
                     },
                 }
             </div>
@@ -112,7 +120,7 @@ async fn section_body(
         if let Some(node) = node {
             match section {
                 Section::Overview => overview_section(node: node.node, parameters: node.parameters, editing: editing, out_of_band: out_of_band),
-                Section::Fields => fields_section(node: node.node, editing: editing, out_of_band: out_of_band),
+                Section::Fields => fields_section(node: node.node, rules: node.rules, editing: editing, out_of_band: out_of_band),
             }
         }
     })
@@ -215,6 +223,72 @@ async fn edit_buttons(
     })
 }
 
+/// The rules that run on something from this node or act on it, linked to their cards on
+/// `/rules`.
+#[component]
+async fn rules_section(channels: Vec<ChannelOverview>, rules: Vec<RuleUse>) -> Result<impl View> {
+    let target = |channel: Option<(u8, u8)>| match channel {
+        None => "the node going offline".to_string(),
+        Some((entity, number)) => match channels
+            .iter()
+            .find(|known| known.entity == entity && known.channel == number)
+        {
+            Some(known) => format!(
+                "{} · {}",
+                entity_label(entity, &known.entity_name),
+                channel_label(number, &known.channel_name, known.quantity)
+            ),
+            None => format!("entity {entity} · channel {number}"),
+        },
+    };
+    // One line per rule: what it runs on and what it acts on, in file order.
+    let mut rows: Vec<(String, bool, Vec<String>, Vec<String>)> = Vec::new();
+    for use_ in rules {
+        let index = match rows.iter().position(|(rule, _, _, _)| *rule == use_.rule) {
+            Some(index) => index,
+            None => {
+                rows.push((use_.rule.clone(), use_.enabled, Vec::new(), Vec::new()));
+                rows.len() - 1
+            }
+        };
+        let (_, _, runs_on, acts_on) = &mut rows[index];
+        match use_.role {
+            RuleRole::RunsOn => runs_on.push(target(use_.channel)),
+            RuleRole::ActsOn => acts_on.push(target(use_.channel)),
+        }
+    }
+    Ok(view! {
+        card(
+            attrs: attributes! { id="node-rules" },
+            card_header(
+                card_title("Rules")
+                card_description("Rules that run on something from this node, or act on it.")
+            )
+            card_content(
+                if rows.is_empty() {
+                    <p class="text-sm text-muted-foreground">"No rule involves this node."</p>
+                }
+                <ul class="divide-y divide-border text-sm">
+                    for (rule, enabled, runs_on, acts_on) in rows {
+                        <li class=(if enabled { "py-2 first:pt-0 last:pb-0" } else { "py-2 opacity-60 first:pt-0 last:pb-0" })>
+                            <a href=(format!("/rules#{}", rule_anchor(&rule))) class="font-medium hover:underline">(rule)</a>
+                            if !enabled {
+                                <span class="ml-2 text-xs text-muted-foreground">"(disabled)"</span>
+                            }
+                            if !runs_on.is_empty() {
+                                <p class="text-muted-foreground">"runs on " <span class="text-foreground">(runs_on.join(", "))</span></p>
+                            }
+                            if !acts_on.is_empty() {
+                                <p class="text-muted-foreground">"acts on " <span class="text-foreground">(acts_on.join(", "))</span></p>
+                            }
+                        </li>
+                    }
+                </ul>
+            )
+        )
+    })
+}
+
 #[component]
 async fn stat(label: &'static str, value: String) -> Result<impl View> {
     Ok(view! {
@@ -280,6 +354,7 @@ async fn parameter_stat(row: ParameterOverview, editing: bool) -> Result<impl Vi
 #[component]
 async fn fields_section(
     node: NodeOverview,
+    rules: Vec<RuleUse>,
     editing: bool,
     #[default] out_of_band: bool,
 ) -> Result<impl View> {
@@ -324,7 +399,7 @@ async fn fields_section(
             // Cards of a row share its height, so the grid stays aligned.
             <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 for (entity, name, channels) in entities {
-                    entity_card(device_id: device_id.clone(), entity: entity, name: name, channels: channels, editing: editing)
+                    entity_card(device_id: device_id.clone(), entity: entity, name: name, channels: channels, rules: rules.clone(), editing: editing)
                 }
             </div>
         </form>
@@ -337,6 +412,7 @@ async fn entity_card(
     entity: u8,
     name: Option<String>,
     channels: Vec<ChannelOverview>,
+    rules: Vec<RuleUse>,
     editing: bool,
 ) -> Result<impl View> {
     Ok(view! {
@@ -361,7 +437,16 @@ async fn entity_card(
             card_content(
                 <ul class="divide-y divide-border">
                     for channel in channels {
-                        field_row(device_id: device_id.clone(), channel: channel, editing: editing)
+                        field_row(
+                            rules: rules
+                                .iter()
+                                .filter(|use_| use_.channel == Some((channel.entity, channel.channel)))
+                                .map(|use_| use_.rule.clone())
+                                .collect(),
+                            device_id: device_id.clone(),
+                            channel: channel,
+                            editing: editing,
+                        )
                     }
                 </ul>
             )
@@ -369,10 +454,12 @@ async fn entity_card(
     })
 }
 
+/// `rules` names the rules that use this channel.
 #[component]
 async fn field_row(
     device_id: String,
     channel: ChannelOverview,
+    rules: Vec<String>,
     editing: bool,
 ) -> Result<impl View> {
     let channel_name = channel_label(channel.channel, &channel.channel_name, channel.quantity);
@@ -394,7 +481,14 @@ async fn field_row(
                 } else {
                     <p class="text-sm font-medium">(channel_name)</p>
                 }
-                <p class="text-xs text-muted-foreground">(channel.kind.clone())</p>
+                <p class="text-xs text-muted-foreground">
+                    (channel.kind.clone())
+                    if !rules.is_empty() {
+                        <a href="#node-rules" class="ml-2 rounded-full bg-foreground/5 px-1.5 py-0.5 hover:bg-foreground/10" title=(rules.join("\n"))>
+                            (if rules.len() == 1 { "1 rule".to_string() } else { format!("{} rules", rules.len()) })
+                        </a>
+                    }
+                </p>
                 if !editing {
                     channel_value(channel: channel.clone())
                 }

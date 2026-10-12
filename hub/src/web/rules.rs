@@ -7,7 +7,7 @@ use topcoat::{
     view::{View, attributes, component, view},
 };
 
-use super::format::ago_label;
+use super::format::{ago_label, rule_anchor};
 use super::layout::layout;
 use super::overview::{self, RuleOverview};
 use crate::components::badge::{BadgeVariant, badge};
@@ -57,9 +57,9 @@ async fn rule_card(rule: RuleOverview) -> Result<impl View> {
     Ok(view! {
         card(
             attrs: attributes! {
-                if !rule.enabled {
-                    class="opacity-60"
-                }
+                id=(rule_anchor(&rule.name))
+                // Highlighted when a link from a node's page points at it.
+                class=(if rule.enabled { "scroll-mt-4 target:ring-2 target:ring-ring" } else { "scroll-mt-4 opacity-60 target:ring-2 target:ring-ring" })
             },
             card_header(
                 <div class="flex items-center justify-between gap-2">

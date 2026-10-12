@@ -14,7 +14,7 @@ use crate::commands::Commands;
 use crate::config::nodes::{NameTarget, NodeEdits, Nodes};
 use crate::config::panels::{Panel, Panels};
 use crate::config::remotes::Remotes;
-use crate::config::rules::{Rule, RuleRun, Rules};
+use crate::config::rules::{Rule, RuleRun, RuleUse, Rules};
 use crate::config::{ConfigFile, FILES, HomeConfig, read_file, write_file};
 use crate::mqtt::Mqtt;
 use crate::node::events::{EventRecord, Events};
@@ -333,6 +333,10 @@ impl Hub {
 
     pub fn panels(&self) -> Vec<Panel> {
         self.panels.lock().unwrap().all().to_vec()
+    }
+
+    pub fn rules_involving(&self, device_id: &str) -> Vec<RuleUse> {
+        self.rules.lock().unwrap().involving(device_id)
     }
 
     pub fn rules_for_button(&self, panel: &str, button: &str) -> Vec<(String, bool)> {

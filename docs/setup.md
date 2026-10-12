@@ -242,7 +242,12 @@ into fields; it stops updating while edited. Saving writes `nodes.toml` with `to
 comments and the `entities.1 = { ... }` lines: an empty field removes the name or parameter, a field
 left out stays as it is, the whole configuration is validated first (an error shows at the top and
 keeps what was typed), and changed parameters go to the node right away. A node that has not sent
-a `Hello` since the hub started shows as unknown. The pages set the mobile viewport, so they fit a
+a `Hello` since the hub started shows as unknown. At the bottom, **Rules** lists, one line per rule, the rules
+that run on something from the node (an event or value of one of its channels, the node going
+offline, `offline = "*"` included) and the channels they act on; each name links to the rule's card
+on `/rules`, which is highlighted. A channel used by rules shows a "N rules" mark (their names on
+hover) that jumps there. Remote keys, panel buttons and schedules are not tied to a node, so those
+rules only show through their actions. The pages set the mobile viewport, so they fit a
 phone screen.
 
 The page uses htmx: the switches post to `/set` and the controls of `Trigger` channels (a button per

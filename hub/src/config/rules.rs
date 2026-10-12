@@ -248,6 +248,24 @@ fn number(value: &Value) -> Option<f32> {
     }
 }
 
+/// How a rule involves a node: it runs on something from it, or acts on it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuleUse {
+    pub rule: String,
+    pub enabled: bool,
+    pub role: RuleRole,
+    /// `None` for the whole node (offline triggers).
+    pub channel: Option<(u8, u8)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleRole {
+    /// An event or value of the node, or the node going offline, runs the rule.
+    RunsOn,
+    /// One of the rule's actions sets, toggles or invokes a channel of the node.
+    ActsOn,
+}
+
 /// A button of a panel in `panels.toml`, pressed on the `/panel` page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ButtonTrigger {
@@ -471,6 +489,65 @@ impl Rules {
                     }
             })
             .collect()
+    }
+
+    /// Rules that run on something from the node or act on it, in file order. Remote keys,
+    /// panel buttons and schedules are not tied to a node, so only their actions count.
+    pub fn involving(&self, device_id: &str) -> Vec<RuleUse> {
+        let mut uses: Vec<RuleUse> = Vec::new();
+        for rule in &self.rules {
+            let mut add = |role, channel| {
+                let entry = RuleUse {
+                    rule: rule.name.clone(),
+                    enabled: rule.enabled,
+                    role,
+                    channel,
+                };
+                if !uses.contains(&entry) {
+                    uses.push(entry);
+                }
+            };
+            match &rule.when {
+                Trigger::Event(trigger) if trigger.device == device_id => {
+                    add(RuleRole::RunsOn, Some((trigger.entity, trigger.channel)));
+                }
+                Trigger::Threshold(trigger) if trigger.device == device_id => {
+                    add(RuleRole::RunsOn, Some((trigger.entity, trigger.channel)));
+                }
+                Trigger::Offline(trigger)
+                    if trigger
+                        .device
+                        .as_deref()
+                        .is_none_or(|device| device == device_id) =>
+                {
+                    add(RuleRole::RunsOn, None);
+                }
+                _ => {}
+            }
+            for action in &rule.then {
+                match action {
+                    Action::Set {
+                        device,
+                        entity,
+                        channel,
+                        ..
+                    }
+                    | Action::Toggle {
+                        device,
+                        entity,
+                        channel,
+                    }
+                    | Action::Invoke {
+                        device,
+                        entity,
+                        channel,
+                        ..
+                    } if device == device_id => add(RuleRole::ActsOn, Some((*entity, *channel))),
+                    _ => {}
+                }
+            }
+        }
+        uses
     }
 
     /// The rules a panel button runs, with whether each is enabled.
@@ -698,6 +775,72 @@ mod tests {
                 .unwrap_err()
                 .contains("alone")
         );
+    }
+
+    #[test]
+    fn rules_involving_a_node() {
+        let rules: Rules = toml::from_str(
+            r#"
+            [[rules]]
+            name = "Button lights the lamp"
+            when = { device = "board", entity = 2, channel = 0, event = "Press" }
+            then = [
+                { toggle = { device = "lamp-node", entity = 1, channel = 0 } },
+                { set = { device = "board", entity = 1, channel = 0, value = true } },
+            ]
+
+            [[rules]]
+            name = "Any node offline"
+            when = { offline = "*" }
+            then = [{ invoke = { device = "board", entity = 5, channel = 0, value = "Alarm" } }]
+
+            [[rules]]
+            name = "Hot"
+            enabled = false
+            when = { device = "other", entity = 3, channel = 0, above = 28 }
+            then = [{ notify = { title = "Hot", message = "" } }]
+            "#,
+        )
+        .unwrap();
+        type Role = (String, RuleRole, Option<(u8, u8)>);
+        let roles = |device: &str| -> Vec<Role> {
+            rules
+                .involving(device)
+                .into_iter()
+                .map(|use_| (use_.rule, use_.role, use_.channel))
+                .collect()
+        };
+        assert_eq!(
+            roles("board"),
+            [
+                (
+                    "Button lights the lamp".into(),
+                    RuleRole::RunsOn,
+                    Some((2, 0))
+                ),
+                (
+                    "Button lights the lamp".into(),
+                    RuleRole::ActsOn,
+                    Some((1, 0))
+                ),
+                ("Any node offline".into(), RuleRole::RunsOn, None),
+                ("Any node offline".into(), RuleRole::ActsOn, Some((5, 0))),
+            ]
+        );
+        assert_eq!(
+            roles("lamp-node"),
+            [
+                (
+                    "Button lights the lamp".into(),
+                    RuleRole::ActsOn,
+                    Some((1, 0))
+                ),
+                ("Any node offline".into(), RuleRole::RunsOn, None),
+            ]
+        );
+        let other = rules.involving("other");
+        assert_eq!(other.len(), 2);
+        assert!(!other[1].enabled);
     }
 
     const REMOTE_KEYS: &str = r#"
