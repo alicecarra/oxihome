@@ -2,6 +2,7 @@ mod events;
 mod format;
 mod home;
 mod layout;
+mod node;
 mod nodes;
 mod overview;
 mod panel;
@@ -32,12 +33,18 @@ pub fn router(hub: Arc<Hub>) -> Router {
     Router::builder()
         .page(home::home)
         .page(home::nodes_fragment)
+        .page(node::node_page)
+        .page(node::overview_fragment)
+        .page(node::overview_edit_fragment)
+        .page(node::fields_fragment)
+        .page(node::fields_edit_fragment)
         .page(panel::panel)
         .page(rules::rules)
         .page(remotes::remotes_page)
         .page(remotes::remotes_fragment)
         .page(settings::settings)
         .route(home::set)
+        .route(node::edit)
         .route(home::invoke)
         .route(remotes::learn_key)
         .route(panel::press)

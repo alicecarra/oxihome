@@ -11,12 +11,10 @@ use topcoat::{
 use super::layout::layout;
 use serde::Deserialize;
 
-use super::overview::{self, NodeParametersOverview, ParameterOverview};
 use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::card::{card, card_content, card_description, card_header, card_title};
 use crate::components::textarea::textarea;
 use crate::config::FILES;
-use crate::config::nodes;
 use crate::hub::Hub;
 use crate::node::parameters;
 
@@ -24,7 +22,6 @@ use crate::node::parameters;
 pub async fn settings(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
     let directory = hub.config_directory().display().to_string();
-    let nodes = overview::parameters(hub);
     let editors: Vec<Editor> = FILES
         .iter()
         .map(|file| match hub.config_file(file) {
@@ -51,7 +48,7 @@ pub async fn settings(cx: &Cx) -> Result<impl View> {
                     card_header(
                         card_title("Configuration")
                         card_description(
-                            (format!("Nodes (names and parameters), rules and remotes live in TOML files in {directory}. Edit them here, or in an editor and then reload."))
+                            (format!("Nodes (names and parameters), rules, remotes and panels live in TOML files in {directory}. Edit them here, or in an editor and then reload. Each node's page also edits its names and parameters."))
                         )
                     )
                     card_content(
@@ -65,65 +62,9 @@ pub async fn settings(cx: &Cx) -> Result<impl View> {
                         </form>
                     )
                 )
-                for node in nodes {
-                    parameters_card(node: node)
-                }
             </div>
         )
     })
-}
-
-/// Read-only: the desired values come from `nodes.toml`.
-#[component]
-async fn parameters_card(node: NodeParametersOverview) -> Result<impl View> {
-    let title = node.name.clone().unwrap_or_else(|| node.device_id.clone());
-    Ok(view! {
-        <div class="mt-6">
-            card(
-                card_header(
-                    card_title((title))
-                    card_description((format!("{} · parameters", node.device_id)))
-                )
-                card_content(
-                    <table class="w-full text-sm">
-                        <thead class="text-left text-muted-foreground">
-                            <tr>
-                                <th class="pb-2 font-medium">"Parameter"</th>
-                                <th class="pb-2 font-medium">"Node"</th>
-                                <th class="pb-2 font-medium">"nodes.toml"</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-border">
-                            for row in node.parameters {
-                                parameter_row(row: row)
-                            }
-                        </tbody>
-                    </table>
-                )
-            )
-        </div>
-    })
-}
-
-#[component]
-async fn parameter_row(row: ParameterOverview) -> Result<impl View> {
-    let pending = row.desired.is_some() && row.desired != row.current;
-    let current_class = if pending {
-        "py-2 text-destructive"
-    } else {
-        "py-2"
-    };
-    Ok(view! {
-        <tr>
-            <td class="py-2"><code class="font-mono">(nodes::parameter_key(row.parameter))</code></td>
-            <td class=(current_class)>(seconds_label(row.current))</td>
-            <td class="py-2 text-muted-foreground">(seconds_label(row.desired))</td>
-        </tr>
-    })
-}
-
-fn seconds_label(value: Option<i32>) -> String {
-    value.map_or_else(|| "—".into(), |seconds| format!("{seconds} s"))
 }
 
 /// Answers with the content of `#status`; a success also shows a toast.

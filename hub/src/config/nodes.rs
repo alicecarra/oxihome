@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use anyhow::bail;
 use oxihome_protocol::management::{HEARTBEAT_INTERVAL, Parameter, WIFI_CHECK_INTERVAL};
 use serde::Deserialize;
+use toml_edit::{DocumentMut, InlineTable, Item, Table, TableLike, Value};
 
 /// What `nodes.toml` says about each node, by the id from its `Hello`: friendly names and the
 /// desired operation parameters. The hub is the source of truth for the parameters: a node that
@@ -121,6 +122,124 @@ impl Nodes {
     }
 }
 
+#[derive(Debug, Default, PartialEq)]
+pub struct EntityEdit {
+    pub id: u8,
+    /// `None` leaves the name as it is, `Some(None)` removes it.
+    pub name: Option<Option<String>>,
+    /// Channel id and name.
+    pub channels: Vec<(u8, Option<String>)>,
+}
+
+/// Changes to one node's section. Names and parameters left out stay as they are; a `None`
+/// value removes them.
+#[derive(Debug, Default)]
+pub struct NodeEdits {
+    /// `None` leaves the name as it is, `Some(None)` removes it.
+    pub name: Option<Option<String>>,
+    pub entities: Vec<EntityEdit>,
+    /// `nodes.toml` key and value.
+    pub parameters: Vec<(&'static str, Option<i32>)>,
+}
+
+/// `nodes.toml` with one node's names and parameters changed, keeping the file's comments and
+/// layout. Entities, channels and parameters left empty are removed.
+pub fn with_node_edits(text: &str, device_id: &str, edits: &NodeEdits) -> anyhow::Result<String> {
+    let mut document: DocumentMut = text.parse()?;
+    let nodes = document
+        .entry("nodes")
+        .or_insert_with(|| {
+            let mut table = Table::new();
+            table.set_implicit(true);
+            Item::Table(table)
+        })
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("`nodes` is not a table"))?;
+    let node = nodes
+        .entry(device_id)
+        .or_insert_with(|| Item::Table(Table::new()))
+        .as_table_like_mut()
+        .ok_or_else(|| anyhow::anyhow!("node \"{device_id}\" is not a table"))?;
+
+    if let Some(name) = &edits.name {
+        set_or_remove(node, "name", name.clone().map(Value::from));
+    }
+
+    for EntityEdit { id, name, channels } in &edits.entities {
+        let key = id.to_string();
+        let entities = child_table(node, "entities", true)?;
+        let entity_names = entities
+            .entry(&key)
+            .or_insert(Item::Value(Value::InlineTable(InlineTable::new())))
+            .as_table_like_mut()
+            .ok_or_else(|| anyhow::anyhow!("entity {key} is not a table"))?;
+        if let Some(name) = name {
+            set_or_remove(entity_names, "name", name.clone().map(Value::from));
+        }
+        for (channel, channel_name) in channels {
+            let channel_names = child_table(entity_names, "channels", true)?;
+            set_or_remove(
+                channel_names,
+                &channel.to_string(),
+                channel_name.clone().map(Value::from),
+            );
+        }
+        remove_if_empty(entity_names, "channels");
+        remove_if_empty(entities, &key);
+    }
+    remove_if_empty(node, "entities");
+
+    for (key, value) in &edits.parameters {
+        let parameters = child_table(node, "parameters", false)?;
+        set_or_remove(
+            parameters,
+            key,
+            value.map(|value| Value::from(i64::from(value))),
+        );
+    }
+    remove_if_empty(node, "parameters");
+    // An emptied node keeps its `[nodes."..."]` line: comments above it live in its header.
+    Ok(document.to_string())
+}
+
+fn set_or_remove(table: &mut dyn TableLike, key: &str, value: Option<Value>) {
+    match value {
+        Some(value) => {
+            table.insert(key, Item::Value(value));
+        }
+        None => {
+            table.remove(key);
+        }
+    }
+}
+
+/// A new one is an inline table, dotted (`entities.1 = ...`) when `dotted`.
+fn child_table<'a>(
+    parent: &'a mut dyn TableLike,
+    key: &str,
+    dotted: bool,
+) -> anyhow::Result<&'a mut dyn TableLike> {
+    parent
+        .entry(key)
+        .or_insert_with(|| {
+            let mut table = InlineTable::new();
+            table.set_dotted(dotted);
+            Item::Value(Value::InlineTable(table))
+        })
+        .as_table_like_mut()
+        .ok_or_else(|| anyhow::anyhow!("`{key}` is not a table"))
+}
+
+fn remove_if_empty(parent: &mut dyn TableLike, key: &str) {
+    if parent
+        .get(key)
+        .and_then(Item::as_table_like)
+        .is_some_and(TableLike::is_empty)
+    {
+        parent.remove(key);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,5 +308,122 @@ mod tests {
         assert!(parse("[nodes.\"esp32-test\"]\nparameters = { heartbeat = 60 }").is_err());
         assert!(parse("[nodes.\"esp32-test\"]\nnmae = \"Test board\"").is_err());
         assert!(parse("[nodes.\"esp32-test\"]\nentities.1 = { nmae = \"LED\" }").is_err());
+    }
+
+    const FILE: &str = r#"# Friendly names and parameters.
+
+[nodes."esp32-test"]
+name = "Test board"
+entities.1 = { name = "LED", channels.0 = "Power" }
+parameters = { heartbeat_interval = 30, wifi_check_interval = 5 }
+"#;
+
+    #[test]
+    fn edits_keep_comments_and_style() {
+        let edits = NodeEdits {
+            name: Some(Some("Bench board".into())),
+            entities: vec![
+                EntityEdit {
+                    id: 1,
+                    name: Some(Some("Blue LED".into())),
+                    channels: vec![(0, Some("On".into()))],
+                },
+                EntityEdit {
+                    id: 4,
+                    name: Some(Some("External LED".into())),
+                    channels: vec![(0, Some("Power".into()))],
+                },
+            ],
+            parameters: vec![("heartbeat_interval", Some(60))],
+        };
+        let text = with_node_edits(FILE, DEVICE, &edits).unwrap();
+        assert!(
+            text.starts_with("# Friendly names and parameters."),
+            "{text}"
+        );
+        assert!(text.contains("name = \"Bench board\""), "{text}");
+        assert!(
+            text.contains("entities.1 = { name = \"Blue LED\", channels.0 = \"On\" }"),
+            "{text}"
+        );
+        assert!(
+            text.contains("entities.4 = { name = \"External LED\", channels.0 = \"Power\" }"),
+            "{text}"
+        );
+        assert!(
+            text.contains("heartbeat_interval = 60, wifi_check_interval = 5"),
+            "{text}"
+        );
+        let nodes = parse(&text).unwrap();
+        assert_eq!(
+            nodes.name(&NameTarget::Entity(DEVICE.into(), 4)),
+            Some("External LED")
+        );
+        assert_eq!(nodes.desired(DEVICE)[0], (HEARTBEAT_INTERVAL, 60));
+    }
+
+    #[test]
+    fn empty_values_remove_keys_and_empty_parts() {
+        let edits = NodeEdits {
+            name: Some(None),
+            entities: vec![EntityEdit {
+                id: 1,
+                name: Some(None),
+                channels: vec![(0, None)],
+            }],
+            parameters: vec![("heartbeat_interval", None), ("wifi_check_interval", None)],
+        };
+        let text = with_node_edits(FILE, DEVICE, &edits).unwrap();
+        assert_eq!(
+            text,
+            "# Friendly names and parameters.\n\n[nodes.\"esp32-test\"]\n"
+        );
+    }
+
+    #[test]
+    fn names_left_out_stay() {
+        let edits = NodeEdits {
+            name: None,
+            entities: vec![EntityEdit {
+                id: 1,
+                name: None,
+                channels: vec![(0, Some("On".into()))],
+            }],
+            parameters: vec![],
+        };
+        let text = with_node_edits(FILE, DEVICE, &edits).unwrap();
+        assert!(text.contains("name = \"Test board\""), "{text}");
+        assert!(
+            text.contains("entities.1 = { name = \"LED\", channels.0 = \"On\" }"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_new_node_gets_its_own_section() {
+        let edits = NodeEdits {
+            name: Some(Some("Kitchen".into())),
+            entities: vec![EntityEdit {
+                id: 2,
+                name: None,
+                channels: vec![(0, Some("Press".into()))],
+            }],
+            parameters: vec![],
+        };
+        let text = with_node_edits(FILE, "esp32-new", &edits).unwrap();
+        assert!(text.contains("[nodes.esp32-new]"), "{text}");
+        let nodes = parse(&text).unwrap();
+        assert_eq!(
+            nodes.name(&NameTarget::Node("esp32-new".into())),
+            Some("Kitchen")
+        );
+        assert_eq!(
+            nodes.name(&NameTarget::Channel("esp32-new".into(), 2, 0)),
+            Some("Press")
+        );
+        assert_eq!(
+            nodes.name(&NameTarget::Node(DEVICE.into())),
+            Some("Test board")
+        );
     }
 }

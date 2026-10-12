@@ -6,7 +6,7 @@ use jiff::Zoned;
 use oxihome_protocol::management::{self, PARAMETERS, Parameter};
 use oxihome_protocol::{Access, Channel, EventKind, Quantity, Unit, Value, ValueType};
 
-use super::format::{channel_label, entity_label, value_label};
+use super::format::{channel_label, entity_label, unit_symbol, value_label};
 use crate::config::nodes::{NameTarget, Nodes};
 use crate::config::remotes::Remotes;
 use crate::config::rules::{
@@ -15,8 +15,9 @@ use crate::config::rules::{
 };
 use crate::hub::{Hub, Snapshot};
 use crate::node::events::data_label;
-use crate::node::registry::Registry;
+use crate::node::registry::{Node, Registry};
 
+#[derive(Clone)]
 pub struct NodeOverview {
     pub device_id: String,
     pub name: Option<String>,
@@ -29,7 +30,6 @@ pub struct NodeOverview {
 
 pub struct NodeParametersOverview {
     pub device_id: String,
-    pub name: Option<String>,
     pub parameters: Vec<ParameterOverview>,
 }
 
@@ -41,6 +41,7 @@ pub struct ParameterOverview {
     pub desired: Option<i32>,
 }
 
+#[derive(Clone)]
 pub struct ChannelOverview {
     pub entity: u8,
     pub entity_name: Option<String>,
@@ -55,6 +56,8 @@ pub struct ChannelOverview {
     pub unit: Option<Unit>,
     /// `None` unless the channel is a `Trigger`.
     pub invocation: Option<Invocation>,
+    /// What the channel is, e.g. `Float 0–50 °C · read only`.
+    pub kind: String,
 }
 
 /// How the node card fires a `Trigger` channel.
@@ -87,60 +90,100 @@ pub struct ActionOverview {
 
 /// One entry per registered node, for the nodes page.
 pub fn nodes(hub: &Hub) -> Vec<NodeOverview> {
-    let Snapshot {
-        state,
-        registry,
-        events,
-        nodes,
-        remotes,
-        ..
-    } = &hub.snapshot();
+    let snapshot = hub.snapshot();
     let now = Instant::now();
-    let name = |target: NameTarget| nodes.name(&target).map(String::from);
-    registry
+    snapshot
+        .registry
         .nodes()
         .into_iter()
-        .map(|(device_id, node)| NodeOverview {
-            device_id: device_id.clone(),
-            name: name(NameTarget::Node(device_id.clone())),
-            firmware_version: node.firmware_version.clone(),
-            online: node.online,
-            uptime_seconds: node.uptime_seconds,
-            rssi: node.rssi,
-            channels: node
-                .entities
-                .iter()
-                .flat_map(|entity| {
-                    entity.channels.iter().map(|channel| ChannelOverview {
-                        entity: entity.id,
-                        entity_name: name(NameTarget::Entity(device_id.clone(), entity.id)),
-                        channel: channel.id,
-                        channel_name: name(NameTarget::Channel(
-                            device_id.clone(),
-                            entity.id,
-                            channel.id,
-                        )),
-                        has_value: channel.value.is_some() && channel.access != Access::Event,
-                        value: state.value(device_id, entity.id, channel.id).cloned(),
-                        last_event: events.last(device_id, entity.id, channel.id).map(|last| {
+        .map(|(device_id, node)| node_overview(&snapshot, device_id, node, now))
+        .collect()
+}
+
+/// `None` for a node that never sent a `Hello`.
+pub fn node(hub: &Hub, device_id: &str) -> Option<NodeOverview> {
+    let snapshot = hub.snapshot();
+    let node = snapshot.registry.node(device_id)?;
+    Some(node_overview(&snapshot, device_id, node, Instant::now()))
+}
+
+fn node_overview(snapshot: &Snapshot, device_id: &str, node: &Node, now: Instant) -> NodeOverview {
+    let name = |target: NameTarget| snapshot.nodes.name(&target).map(String::from);
+    NodeOverview {
+        device_id: device_id.to_string(),
+        name: name(NameTarget::Node(device_id.to_string())),
+        firmware_version: node.firmware_version.clone(),
+        online: node.online,
+        uptime_seconds: node.uptime_seconds,
+        rssi: node.rssi,
+        channels: node
+            .entities
+            .iter()
+            .flat_map(|entity| {
+                entity.channels.iter().map(|channel| ChannelOverview {
+                    entity: entity.id,
+                    entity_name: name(NameTarget::Entity(device_id.to_string(), entity.id)),
+                    channel: channel.id,
+                    channel_name: name(NameTarget::Channel(
+                        device_id.to_string(),
+                        entity.id,
+                        channel.id,
+                    )),
+                    has_value: channel.value.is_some() && channel.access != Access::Event,
+                    value: snapshot
+                        .state
+                        .value(device_id, entity.id, channel.id)
+                        .cloned(),
+                    last_event: snapshot.events.last(device_id, entity.id, channel.id).map(
+                        |last| {
                             (
                                 last.kind,
                                 last.data
                                     .as_ref()
-                                    .map(|data| event_data_label(data, remotes)),
+                                    .map(|data| event_data_label(data, &snapshot.remotes)),
                                 now - last.at,
                             )
-                        }),
-                        switchable: channel.value == Some(ValueType::Bool)
-                            && matches!(channel.access, Access::Write | Access::ReadWrite),
-                        quantity: channel.quantity,
-                        unit: channel.unit,
-                        invocation: invocation(channel),
-                    })
+                        },
+                    ),
+                    switchable: channel.value == Some(ValueType::Bool)
+                        && matches!(channel.access, Access::Write | Access::ReadWrite),
+                    quantity: channel.quantity,
+                    unit: channel.unit,
+                    invocation: invocation(channel),
+                    kind: channel_kind(channel),
                 })
-                .collect(),
-        })
-        .collect()
+            })
+            .collect(),
+    }
+}
+
+/// `Float 0–50 °C · read only`, `Enum Short, Long, Alarm · action`, `Bool · read and write`...
+fn channel_kind(channel: &Channel) -> String {
+    let unit = channel
+        .unit
+        .map(|unit| format!(" {}", unit_symbol(unit)))
+        .unwrap_or_default();
+    let value = match &channel.value {
+        None => None,
+        Some(ValueType::Bool) => Some("on/off".to_string()),
+        Some(ValueType::Int { min, max, .. }) => Some(format!("whole number {min}–{max}{unit}")),
+        Some(ValueType::Float { min, max, .. }) => Some(format!("number {min}–{max}{unit}")),
+        Some(ValueType::Enum(options)) => Some(format!("one of {}", options.join(", "))),
+        Some(ValueType::Color(model)) => Some(format!("{model:?} color")),
+        Some(ValueType::Text { max_length }) => Some(format!("text up to {max_length} bytes")),
+        Some(ValueType::Bytes) => Some("bytes".to_string()),
+    };
+    let access = match channel.access {
+        Access::Read => "read only",
+        Access::Write => "write only",
+        Access::ReadWrite => "read and write",
+        Access::Trigger => "action",
+        Access::Event => "event",
+    };
+    match value {
+        Some(value) => format!("{value} · {access}"),
+        None => access.to_string(),
+    }
 }
 
 /// An IR code named in `remotes.toml` shows as `Kit remote · 0`, `(held)` for its repeats.
@@ -170,7 +213,7 @@ fn invocation(channel: &Channel) -> Option<Invocation> {
     })
 }
 
-/// Nodes that declare the management entity, for the settings page.
+/// Nodes that declare the management entity, with their parameters.
 pub fn parameters(hub: &Hub) -> Vec<NodeParametersOverview> {
     let Snapshot {
         state,
@@ -190,9 +233,6 @@ pub fn parameters(hub: &Hub) -> Vec<NodeParametersOverview> {
             let desired = nodes.desired(device_id);
             NodeParametersOverview {
                 device_id: device_id.clone(),
-                name: nodes
-                    .name(&NameTarget::Node(device_id.clone()))
-                    .map(String::from),
                 parameters: PARAMETERS
                     .into_iter()
                     .filter(|parameter| node.declares(management::ENTITY, parameter.channel.into()))
@@ -217,7 +257,7 @@ pub fn parameters(hub: &Hub) -> Vec<NodeParametersOverview> {
         .collect()
 }
 
-/// Every rule in `rules.toml`, described with friendly nodes, for the rules page.
+/// Every rule in `rules.toml`, described with friendly names, for the rules page.
 pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
     let rules = hub.rules();
     let mut runs = hub.rule_runs();

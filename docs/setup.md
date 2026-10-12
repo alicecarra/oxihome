@@ -149,7 +149,7 @@ previous configuration stays in use.
   channels) and its desired operation parameters in seconds. The hub sends a `Set` when a node
   reports another value: when it connects, comes back online, or after a reload. A parameter left
   out keeps the node's value. Ranges: `heartbeat_interval` 5–300, `wifi_check_interval` 1–60.
-  `/settings` shows the node's value next to the desired one. A misspelled key is an error. (Until
+  The node's page shows the node's value next to the desired one. A misspelled key is an error. (Until
   2026-10-12 the names were in a separate `names.toml`.)
 
   ```toml
@@ -231,6 +231,19 @@ previous configuration stays in use.
   0 = "NEC 00 52"
   1 = "NEC 00 16"
   ```
+
+Clicking a node's name on the home page opens its page, `/nodes/<id>`, with two sections that
+update live. **Node overview**: name, presence, device id, firmware, uptime, signal and the
+parameters (the node's value in red when it differs from the desired one). **Node fields**: a grid
+of cards, one per entity, each channel with what it is (type, range and unit, options, access), its
+value or last event and its controls. Each section has its own edit button (**Edit** for the node
+name and parameters, **Edit names** for entity and channel names), which turns only that section
+into fields; it stops updating while edited. Saving writes `nodes.toml` with `toml_edit`, keeping
+comments and the `entities.1 = { ... }` lines: an empty field removes the name or parameter, a field
+left out stays as it is, the whole configuration is validated first (an error shows at the top and
+keeps what was typed), and changed parameters go to the node right away. A node that has not sent
+a `Hello` since the hub started shows as unknown. The pages set the mobile viewport, so they fit a
+phone screen.
 
 The page uses htmx: the switches post to `/set` and the controls of `Trigger` channels (a button per
 option, such as the buzzer patterns, or a text box for a `Text` channel) post to `/invoke`, without

@@ -42,7 +42,7 @@ async fn node_card(node: NodeOverview) -> Result<impl View> {
         card(
             card_header(
                 <div class="flex items-center justify-between gap-2">
-                    card_title((title))
+                    <a href=(format!("/nodes/{}", node.device_id)) class="hover:underline">card_title((title))</a>
                     presence_badge(online: node.online)
                 </div>
                 card_description((description))
@@ -59,7 +59,7 @@ async fn node_card(node: NodeOverview) -> Result<impl View> {
 }
 
 #[component]
-async fn presence_badge(online: bool) -> Result<impl View> {
+pub(super) async fn presence_badge(online: bool) -> Result<impl View> {
     Ok(view! {
         if online {
             badge(variant: BadgeVariant::Success, <span class="size-1.5 rounded-full bg-current"></span> "online")
@@ -82,7 +82,6 @@ async fn status_dot(active: bool, #[default] child: Child<'_>) -> Result<impl Vi
 
 #[component]
 async fn channel_row(device_id: String, channel: ChannelOverview) -> Result<impl View> {
-    let on = channel.value == Some(Value::Bool(true));
     let label = format!(
         "{} · {}",
         entity_label(channel.entity, &channel.entity_name),
@@ -92,82 +91,104 @@ async fn channel_row(device_id: String, channel: ChannelOverview) -> Result<impl
         <li class="flex items-center justify-between gap-4 py-3">
             <div>
                 <p class="text-sm font-medium">(label.clone())</p>
-                match &channel.value {
-                    Some(Value::Bool(active)) => status_dot(active: *active, if *active { "on" } else { "off" }),
-                    _ if channel.invocation.is_some() => {}
-                    _ => <p class="text-sm text-muted-foreground">(channel_state(&channel))</p>,
-                }
+                channel_value(channel: channel.clone())
             </div>
-            if let Some(invocation) = channel.invocation.clone() {
-                <form
-                    class="flex flex-wrap justify-end gap-2"
-                    hx-post="/invoke"
-                    hx-target="#status"
-                >
-                    <input type="hidden" name="device_id" value=(device_id.clone())>
-                    <input type="hidden" name="entity" value=(channel.entity.to_string())>
-                    <input type="hidden" name="channel" value=(channel.channel.to_string())>
-                    match invocation {
-                        Invocation::Options(options) => for option in options {
-                            button(
-                                variant: ButtonVariant::Outline,
-                                size: ButtonSize::Sm,
-                                attrs: attributes! { type="submit" name="value" value=(option.clone()) },
-                                (option)
-                            )
-                        },
-                        Invocation::Text { max_length } => {
-                            // Kept while the node list refreshes, so typing is not lost.
-                            input(attrs: attributes! {
-                                id=(format!("text-{device_id}-{}-{}", channel.entity, channel.channel))
-                                hx-preserve="true"
-                                name="value"
-                                required=""
-                                maxlength=(max_length.to_string())
-                                aria-label=(label.clone())
-                                class="h-8 w-48"
-                            })
-                            button(
-                                variant: ButtonVariant::Outline,
-                                size: ButtonSize::Sm,
-                                attrs: attributes! { type="submit" },
-                                "Send"
-                            )
-                        },
-                        Invocation::Plain => button(
-                            variant: ButtonVariant::Outline,
-                            size: ButtonSize::Sm,
-                            attrs: attributes! { type="submit" },
-                            "Run"
-                        ),
-                    }
-                </form>
-            }
-            if channel.switchable {
-                <form
-                    hx-post="/set"
-                    hx-trigger="change"
-                    hx-target="#status"
-                    ("hx-on--after-request")="htmx.trigger('#nodes', 'refresh')"
-                >
-                    <input type="hidden" name="device_id" value=(device_id.clone())>
-                    <input type="hidden" name="entity" value=(channel.entity.to_string())>
-                    <input type="hidden" name="channel" value=(channel.channel.to_string())>
-                    switch(attrs: attributes! {
-                        name="value"
-                        value="true"
-                        aria-label=(label.clone())
-                        if on {
-                            checked=""
-                        }
-                    })
-                </form>
-            }
+            channel_controls(device_id: device_id, channel: channel, label: label)
         </li>
     })
 }
 
-fn node_description(node: &NodeOverview) -> String {
+/// The value, the on/off dot or the last event; nothing for actions, whose controls say it all.
+#[component]
+pub(super) async fn channel_value(channel: ChannelOverview) -> Result<impl View> {
+    Ok(view! {
+        match &channel.value {
+            Some(Value::Bool(active)) => status_dot(active: *active, if *active { "on" } else { "off" }),
+            _ if channel.invocation.is_some() => {}
+            _ => <p class="text-sm text-muted-foreground">(channel_state(&channel))</p>,
+        }
+    })
+}
+
+/// The switch of a writable `Bool`, or the buttons or text box of a `Trigger`.
+#[component]
+pub(super) async fn channel_controls(
+    device_id: String,
+    channel: ChannelOverview,
+    label: String,
+) -> Result<impl View> {
+    let on = channel.value == Some(Value::Bool(true));
+    Ok(view! {
+        if let Some(invocation) = channel.invocation.clone() {
+            <form
+                class="flex flex-wrap justify-end gap-2"
+                hx-post="/invoke"
+                hx-target="#status"
+            >
+                <input type="hidden" name="device_id" value=(device_id.clone())>
+                <input type="hidden" name="entity" value=(channel.entity.to_string())>
+                <input type="hidden" name="channel" value=(channel.channel.to_string())>
+                match invocation {
+                    Invocation::Options(options) => for option in options {
+                        button(
+                            variant: ButtonVariant::Outline,
+                            size: ButtonSize::Sm,
+                            attrs: attributes! { type="submit" name="value" value=(option.clone()) },
+                            (option)
+                        )
+                    },
+                    Invocation::Text { max_length } => {
+                        // Kept while the node list refreshes, so typing is not lost.
+                        input(attrs: attributes! {
+                            id=(format!("text-{device_id}-{}-{}", channel.entity, channel.channel))
+                            hx-preserve="true"
+                            name="value"
+                            required=""
+                            maxlength=(max_length.to_string())
+                            aria-label=(label.clone())
+                            class="h-8 w-48"
+                        })
+                        button(
+                            variant: ButtonVariant::Outline,
+                            size: ButtonSize::Sm,
+                            attrs: attributes! { type="submit" },
+                            "Send"
+                        )
+                    },
+                    Invocation::Plain => button(
+                        variant: ButtonVariant::Outline,
+                        size: ButtonSize::Sm,
+                        attrs: attributes! { type="submit" },
+                        "Run"
+                    ),
+                }
+            </form>
+        }
+        if channel.switchable {
+            <form
+                hx-post="/set"
+                hx-trigger="change"
+                hx-target="#status"
+                // Refreshes the list or page this switch is in, sooner than its next update.
+                ("hx-on--after-request")="htmx.trigger(this.closest('[hx-get]'), 'refresh')"
+            >
+                <input type="hidden" name="device_id" value=(device_id.clone())>
+                <input type="hidden" name="entity" value=(channel.entity.to_string())>
+                <input type="hidden" name="channel" value=(channel.channel.to_string())>
+                switch(attrs: attributes! {
+                    name="value"
+                    value="true"
+                    aria-label=(label.clone())
+                    if on {
+                        checked=""
+                    }
+                })
+            </form>
+        }
+    })
+}
+
+pub(super) fn node_description(node: &NodeOverview) -> String {
     let mut parts = Vec::new();
     if node.name.is_some() {
         parts.push(node.device_id.clone());

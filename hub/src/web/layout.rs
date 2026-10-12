@@ -19,15 +19,16 @@ pub async fn layout(cx: &Cx, title: &str, #[default] child: Child<'_>) -> Result
         <html>
             <head>
                 <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1">
                 <title>(title)</title>
                 <link rel="stylesheet" href="/static/app.css">
                 <script src="/static/htmx.min.js"></script>
                 <script src="/static/htmx-ext-sse.min.js"></script>
             </head>
-            <body class="mx-auto max-w-6xl p-6" hx-ext="sse" sse-connect="/events">
-                <header class="mb-6 flex items-center justify-between">
+            <body class="mx-auto max-w-6xl p-4 sm:p-6" hx-ext="sse" sse-connect="/events">
+                <header class="mb-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
                     <a href="/" class="text-2xl font-bold">"Oxihome Hub"</a>
-                    <nav class="flex gap-4 text-sm text-muted-foreground">
+                    <nav class="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
                         <a href="/" class="hover:text-foreground hover:underline">"Nodes"</a>
                         <a href="/panel" class="hover:text-foreground hover:underline">"Panel"</a>
                         <a href="/rules" class="hover:text-foreground hover:underline">"Rules"</a>

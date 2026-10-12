@@ -49,7 +49,7 @@ pub fn value_label(value: &Value, unit: Option<Unit>) -> String {
     }
 }
 
-fn unit_symbol(unit: Unit) -> &'static str {
+pub fn unit_symbol(unit: Unit) -> &'static str {
     match unit {
         Unit::Celsius => "°C",
         Unit::Percent => "%",

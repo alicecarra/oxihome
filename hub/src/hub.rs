@@ -11,7 +11,7 @@ use oxihome_protocol::{CommandOp, Message, Payload, Value};
 use tokio::sync::{broadcast, watch};
 
 use crate::commands::Commands;
-use crate::config::nodes::{NameTarget, Nodes};
+use crate::config::nodes::{NameTarget, NodeEdits, Nodes};
 use crate::config::panels::{Panel, Panels};
 use crate::config::remotes::Remotes;
 use crate::config::rules::{Rule, RuleRun, Rules};
@@ -360,6 +360,16 @@ impl Hub {
         let text = crate::config::remotes::with_key(&current.text, remote, key, code)?;
         self.save_config_file(file, &text, current.modified)?;
         *self.last_learned_remote.lock().unwrap() = Some(remote.to_string());
+        Ok(())
+    }
+
+    /// Changes a node's names and parameters in `nodes.toml` (keeping its comments), validates
+    /// and applies the configuration.
+    pub fn edit_node(&self, device_id: &str, edits: &NodeEdits) -> anyhow::Result<()> {
+        let file = "nodes.toml";
+        let current = self.config_file(file)?;
+        let text = crate::config::nodes::with_node_edits(&current.text, device_id, edits)?;
+        self.save_config_file(file, &text, current.modified)?;
         Ok(())
     }
 
