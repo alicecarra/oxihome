@@ -1,6 +1,6 @@
 [package]
 name = "firmware"
-version = "0.8.1"
+version = "0.9.0"
 edition = "2024"
 resolver = "2"
 rust-version = "1.97"
@@ -33,6 +33,7 @@ esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf.git" }
 log = "0.4"
 anyhow = "1"
 toml-cfg = "0.2"
+oxihome-node = { path = "../node" }
 oxihome-protocol = { path = "../protocol" }
 esp-idf-svc = { version = "0.53", features = ["critical-section"] }
 dht-sensor = "0.3"

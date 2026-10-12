@@ -624,13 +624,14 @@ checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 
 [[package]]
 name = "firmware"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "dht-sensor",
  "embuild",
  "esp-idf-svc",
  "log",
+ "oxihome-node",
  "oxihome-protocol",
  "toml-cfg",
 ]
@@ -1003,6 +1004,13 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
+name = "oxihome-node"
+version = "0.1.0"
+dependencies = [
+ "oxihome-protocol",
+]
 
 [[package]]
 name = "oxihome-protocol"

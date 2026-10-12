@@ -22,7 +22,7 @@ use buzzer::Buzzer;
 use climate::Climate;
 use config::CONFIG;
 use ir::IrReceiver;
-use node::Node;
+use node::{Board, Node};
 use settings::Settings;
 use transport::MqttTransport;
 
@@ -57,16 +57,14 @@ fn main() -> anyhow::Result<()> {
         CONFIG.wifi_password,
     )?;
     let transport = MqttTransport::new(CONFIG.mqtt_url, &device_id)?;
-    let mut node = Node::new(
-        device_id,
-        transport,
+    let board = Board {
         led,
         external_led,
         climate,
         buzzer,
-        ir,
         settings,
-    );
+    };
+    let mut node = Node::new(device_id, transport, board, ir);
 
     let mut last_wifi_check = Instant::now();
     let mut last_heartbeat = Instant::now();
