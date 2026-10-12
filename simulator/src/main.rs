@@ -3,6 +3,7 @@
 mod node;
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -36,6 +37,14 @@ struct Config {
 struct MqttConfig {
     host: String,
     port: u16,
+    /// A TOML file out of git with a `[passwords]` table (device id = password); anonymous when
+    /// missing.
+    secrets: Option<PathBuf>,
+}
+
+#[derive(Deserialize)]
+struct Secrets {
+    passwords: HashMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -63,6 +72,17 @@ async fn main() -> anyhow::Result<()> {
     let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
     let config: Config = toml::from_str(&text).with_context(|| format!("parsing {path}"))?;
 
+    let mut passwords = match &config.mqtt.secrets {
+        Some(secrets_path) => {
+            let text = std::fs::read_to_string(secrets_path)
+                .with_context(|| format!("reading {}", secrets_path.display()))?;
+            let secrets: Secrets = toml::from_str(&text)
+                .with_context(|| format!("parsing {}", secrets_path.display()))?;
+            secrets.passwords
+        }
+        None => HashMap::new(),
+    };
+
     let mut handles = HashMap::new();
     for node_config in &config.nodes {
         let node = SimulatedNode::new(
@@ -73,6 +93,7 @@ async fn main() -> anyhow::Result<()> {
         let broker = Broker {
             host: config.mqtt.host.clone(),
             port: config.mqtt.port,
+            password: passwords.remove(&node_config.id),
             report_interval: REPORT_INTERVAL,
         };
         handles.insert(node_config.id.clone(), mqtt::spawn(node, broker));

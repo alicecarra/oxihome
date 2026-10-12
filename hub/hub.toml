@@ -1,6 +1,7 @@
 [mqtt]
 host = "localhost"
 port = 1883
+secrets = "hub/secrets.toml"
 
 [config]
 dir = "hub/config"

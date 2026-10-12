@@ -25,6 +25,8 @@ pub trait SoftwareNode: Send + 'static {
 pub struct Broker {
     pub host: String,
     pub port: u16,
+    /// The node logs in with its device id as the user name; `None` connects anonymously.
+    pub password: Option<String>,
     /// How often [`SoftwareNode::report`] runs; heartbeats should match the node's
     /// `HeartbeatInterval` (30 s by default).
     pub report_interval: Duration,
@@ -90,7 +92,10 @@ async fn run<N: SoftwareNode>(
     let down_topic = format!("oxihome/{device_id}/down");
 
     loop {
-        let options = MqttOptions::new(device_id.clone(), broker.host.clone(), broker.port);
+        let mut options = MqttOptions::new(device_id.clone(), broker.host.clone(), broker.port);
+        if let Some(password) = &broker.password {
+            options.set_credentials(device_id.clone(), password.clone());
+        }
         let (client, mut event_loop) = AsyncClient::new(options, 32);
         let mut report = tokio::time::interval(broker.report_interval);
         report.tick().await;

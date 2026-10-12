@@ -1,6 +1,7 @@
 [mqtt]
 host = "localhost"
 port = 1883
+secrets = "simulator/secrets.toml"
 
 [[nodes]]
 id = "sim-living-room"

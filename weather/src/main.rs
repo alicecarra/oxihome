@@ -26,6 +26,8 @@ struct Config {
 struct MqttConfig {
     host: String,
     port: u16,
+    /// The node's password on the broker; anonymous when missing.
+    password: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -52,6 +54,7 @@ async fn main() -> anyhow::Result<()> {
         Broker {
             host: config.mqtt.host,
             port: config.mqtt.port,
+            password: config.mqtt.password,
             report_interval: REPORT_INTERVAL,
         },
     );

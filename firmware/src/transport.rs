@@ -25,11 +25,14 @@ pub struct MqttTransport {
 }
 
 impl MqttTransport {
-    pub fn new(url: &str, device_id: &str) -> anyhow::Result<Self> {
+    pub fn new(url: &str, device_id: &str, password: &str) -> anyhow::Result<Self> {
+        let anonymous = password.is_empty();
         let (client, mut connection) = EspMqttClient::new(
             url,
             &MqttClientConfiguration {
                 client_id: Some(device_id),
+                username: (!anonymous).then_some(device_id),
+                password: (!anonymous).then_some(password),
                 ..Default::default()
             },
         )?;

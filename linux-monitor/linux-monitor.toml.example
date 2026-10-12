@@ -1,8 +1,9 @@
-# Copy to linux-monitor.toml (kept out of git: it is per machine).
+# Copy to linux-monitor.toml (kept out of git: it is per machine and holds the broker password).
 
 [mqtt]
 host = "localhost"
 port = 1883
+password = "the node's broker password"
 
 # Without an id the node takes the hostname.
 [node]

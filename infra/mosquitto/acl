@@ -1,0 +1,14 @@
+# Each node logs in with its device id as the user name (%u).
+pattern write oxihome/%u/up
+pattern read oxihome/%u/down
+pattern read oxihome/broadcast/down
+
+user oxihome-hub
+topic read oxihome/+/up
+topic write oxihome/+/down
+topic deny oxihome/oxihome-hub/up
+
+# Read only, for watching the traffic with mosquitto_sub.
+user observer
+topic read oxihome/#
+topic deny oxihome/observer/up

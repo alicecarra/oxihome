@@ -74,6 +74,18 @@ struct ConfigDirectory {
 struct MqttConfig {
     host: String,
     port: u16,
+    /// A TOML file out of git with the broker password; anonymous when missing.
+    secrets: Option<PathBuf>,
+}
+
+#[derive(Deserialize)]
+struct Secrets {
+    mqtt: MqttSecrets,
+}
+
+#[derive(Deserialize)]
+struct MqttSecrets {
+    password: String,
 }
 
 #[derive(Deserialize)]
@@ -105,7 +117,17 @@ async fn main() -> anyhow::Result<()> {
         home_config.rules.len(),
         config.config.dir.display()
     );
-    let (mqtt, mut incoming) = Mqtt::connect(&config.mqtt.host, config.mqtt.port);
+    let password = match &config.mqtt.secrets {
+        Some(secrets_path) => {
+            let text = std::fs::read_to_string(secrets_path)
+                .with_context(|| format!("reading {}", secrets_path.display()))?;
+            let secrets: Secrets = toml::from_str(&text)
+                .with_context(|| format!("parsing {}", secrets_path.display()))?;
+            Some(secrets.mqtt.password)
+        }
+        None => None,
+    };
+    let (mqtt, mut incoming) = Mqtt::connect(&config.mqtt.host, config.mqtt.port, password);
     let hub = Arc::new(Hub::new(
         mqtt,
         config.presence.missed_heartbeats,

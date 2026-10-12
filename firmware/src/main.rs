@@ -56,7 +56,7 @@ fn main() -> anyhow::Result<()> {
         CONFIG.wifi_ssid,
         CONFIG.wifi_password,
     )?;
-    let transport = MqttTransport::new(CONFIG.mqtt_url, &device_id)?;
+    let transport = MqttTransport::new(CONFIG.mqtt_url, &device_id, CONFIG.mqtt_password)?;
     let board = Board {
         led,
         external_led,

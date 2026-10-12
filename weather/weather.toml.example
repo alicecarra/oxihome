@@ -1,8 +1,9 @@
-# Copy to weather.toml (kept out of git: it holds the location).
+# Copy to weather.toml (kept out of git: it holds the location and the broker password).
 
 [mqtt]
 host = "localhost"
 port = 1883
+password = "the node's broker password"
 
 [node]
 id = "weather"

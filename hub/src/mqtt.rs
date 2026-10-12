@@ -21,8 +21,17 @@ pub struct Mqtt {
 }
 
 impl Mqtt {
-    pub fn connect(host: &str, port: u16) -> (Self, mpsc::Receiver<Incoming>) {
-        let (client, mut event_loop) = AsyncClient::new(MqttOptions::new(SOURCE, host, port), 64);
+    /// The hub logs in as `oxihome-hub`; without a password it connects anonymously.
+    pub fn connect(
+        host: &str,
+        port: u16,
+        password: Option<String>,
+    ) -> (Self, mpsc::Receiver<Incoming>) {
+        let mut options = MqttOptions::new(SOURCE, host, port);
+        if let Some(password) = password {
+            options.set_credentials(SOURCE, password);
+        }
+        let (client, mut event_loop) = AsyncClient::new(options, 64);
         let (sender, receiver) = mpsc::channel(64);
 
         let subscriber = client.clone();
@@ -39,6 +48,16 @@ impl Mqtt {
                     Ok(Event::Incoming(Packet::Publish(publish))) => {
                         let text = String::from_utf8_lossy(&publish.payload);
                         match Message::from_json(&text) {
+                            // The broker's ACL ties each topic to its node, but not the `src` field.
+                            Ok(message)
+                                if publish.topic != format!("oxihome/{}/up", message.src) =>
+                            {
+                                println!(
+                                    "dropping message from {} on {}",
+                                    message.src, publish.topic
+                                );
+                                continue;
+                            }
                             Ok(message) => Incoming::Message(message),
                             Err(error) => {
                                 println!("invalid message on {}: {error}", publish.topic);

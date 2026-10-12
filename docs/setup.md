@@ -75,6 +75,8 @@ cp firmware/cfg.toml.example firmware/cfg.toml
 ```
 
 `mqtt_url` must use the LAN address of the machine running the broker, e.g. `mqtt://192.168.15.10:1883`.
+`mqtt_password` is the board's own password; its user name is its device id (`esp32-<mac>`, printed
+by `espflash` as the MAC address), so each board needs its own build. Empty connects anonymously.
 
 ## Test board wiring
 
@@ -112,15 +114,44 @@ command byte still rules out wrong readings).
 
 ## MQTT broker
 
-Mosquitto 2 in Docker, anonymous access on port 1883 (see `infra/`):
+Mosquitto 2 in Docker on port 1883 (see `infra/`), with a password per client and no anonymous
+access:
 
 ```sh
 docker compose -f infra/compose.yaml up -d
 ```
 
+Each node logs in with its device id as the user name (`esp32-<mac>`, `weather`, `notebook`...);
+the hub is `oxihome-hub` and `observer` only reads. The ACL in `infra/mosquitto/acl` (in git: it has
+no secrets) lets a node publish only on `oxihome/<its id>/up` and read only its own `down` and the
+broadcast; only the hub publishes on `down`. The client id is forced to the user name, so a login
+cannot kick out another node by taking its client id. The hub also drops a message whose `src` does
+not match the topic it came on.
+
+The hashed passwords are in `infra/mosquitto/passwd`, out of git and owned by the container's
+`mosquitto` user (uid 1883, mode 0600: Mosquitto refuses to start if it cannot read it). Create or
+change a user with the script, which generates a password when none is given, prints it and reloads
+the broker:
+
+```sh
+infra/mosquitto/set-password.sh <device id> [password]
+```
+
+Then put the password in the node's configuration (each section below says where). Mosquitto logs
+warnings about the permissions of `acl` and about the `oxihome/broadcast/down` pattern without
+`%u`; both are expected. Without TLS the passwords cross the network in plain text (layer 3 of the
+"Segurança" note in Trilium).
+
 ## Hub
 
-Connects to the broker configured in `hub/hub.toml`, asks every node for its `Hello` and `State`,
+Connects to the broker configured in `hub/hub.toml` with the password in `hub/secrets.toml` (out
+of git; `[mqtt] secrets` points to it, and without that line the hub connects anonymously):
+
+```sh
+cp hub/secrets.toml.example hub/secrets.toml   # then set the password of oxihome-hub
+```
+
+It asks every node for its `Hello` and `State`,
 tracks which nodes are online (offline after `[presence] missed_heartbeats`, default 3, times the
 node's heartbeat interval without messages; changing it needs a hub restart) and serves a web interface
 (Topcoat) on the `[http]` address, by default <http://127.0.0.1:8080>:
@@ -331,7 +362,8 @@ cp weather/weather.toml.example weather/weather.toml   # then set the location
 cargo run -p oxihome-weather -- weather/weather.toml
 ```
 
-`weather/weather.toml` stays out of git because it holds the location; a public place near home is
+`weather/weather.toml` stays out of git because it holds the location and the broker password
+(`[mqtt] password`, user `weather` or the `[node] id`); a public place near home is
 precise enough. Entities: 1 now (temperature °C, humidity %, precipitation mm over the last 15
 minutes, wind km/h, raining `Bool`), 2 today (maximum and minimum °C, chance of rain %), 3 the local
 time of the last reading as `Text`. All read only; rules use them like any sensor, with
@@ -350,7 +382,8 @@ cp linux-monitor/linux-monitor.toml.example linux-monitor/linux-monitor.toml   #
 cargo run -p oxihome-linux-monitor -- linux-monitor/linux-monitor.toml
 ```
 
-`linux-monitor/linux-monitor.toml` stays out of git because it is per machine. Without
+`linux-monitor/linux-monitor.toml` stays out of git because it is per machine; `[mqtt] password`
+is the password of the node's id on the broker (create it with `set-password.sh` first). Without
 `[node] id` the node takes the hostname. The program prints the mount points and interfaces it
 finds when it starts.
 
@@ -396,8 +429,11 @@ Each node in `simulator/simulator.toml` gets its own MQTT connection and a list 
 `lamp` (switchable `Bool`), `button` (events) and `climate_sensor` (temperature and humidity).
 
 ```sh
+cp simulator/secrets.toml.example simulator/secrets.toml   # then set one password per node
 cargo run -p oxihome-simulator -- simulator/simulator.toml
 ```
+
+The passwords are in `simulator/secrets.toml` (out of git), pointed to by `[mqtt] secrets`.
 
 Type `help` for the commands: `press <node> <entity>`, `offline <node>`, `online <node>`,
 `reboot <node>`, `climate <node> <temperature> [humidity]`, `list`, `quit`.
@@ -408,10 +444,12 @@ the wave, and `climate sim-living-room auto` goes back to the wave for both.
 
 ## Raw MQTT messages
 
-To see the JSON messages nodes and the hub exchange, subscribe inside the broker container:
+To see the JSON messages nodes and the hub exchange, subscribe inside the broker container as
+`observer`, which reads everything and cannot publish. Its password is in
+`infra/mosquitto/observer-password` (out of git):
 
 ```sh
-docker exec oxihome-mosquitto mosquitto_sub -t 'oxihome/#' -v
+docker exec oxihome-mosquitto mosquitto_sub -u observer -P "$(cat infra/mosquitto/observer-password)" -t 'oxihome/#' -v
 ```
 
 ## Editor
