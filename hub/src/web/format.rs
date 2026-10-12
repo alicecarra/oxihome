@@ -60,6 +60,10 @@ pub fn unit_symbol(unit: Unit) -> &'static str {
         Unit::Second => "s",
         Unit::Millimeter => "mm",
         Unit::KilometerPerHour => "km/h",
+        Unit::Gigabyte => "GB",
+        Unit::KilobytePerSecond => "kB/s",
+        Unit::Megahertz => "MHz",
+        Unit::Megabyte => "MB",
     }
 }
 

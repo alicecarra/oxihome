@@ -106,4 +106,5 @@ pub enum Unit {
     Gigabyte,
     KilobytePerSecond,
     Megahertz,
+    Megabyte,
 }
