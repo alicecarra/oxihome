@@ -16,6 +16,7 @@ then = [
 
 [[rules]]
 name = "Test board LED on for waking up"
+enabled = false
 when = { at = "07:00", days = [
     "monday",
     "tuesday",

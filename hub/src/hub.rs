@@ -372,6 +372,16 @@ impl Hub {
         Ok(())
     }
 
+    /// Turns a rule on or off in `rules.toml` (keeping its comments), validates and applies the
+    /// configuration.
+    pub fn set_rule_enabled(&self, name: &str, enabled: bool) -> anyhow::Result<()> {
+        let file = "rules.toml";
+        let current = self.config_file(file)?;
+        let text = crate::config::rules::with_rule_enabled(&current.text, name, enabled)?;
+        self.save_config_file(file, &text, current.modified)?;
+        Ok(())
+    }
+
     /// Changes a node's names and parameters in `nodes.toml` (keeping its comments), validates
     /// and applies the configuration.
     pub fn edit_node(&self, device_id: &str, edits: &NodeEdits) -> anyhow::Result<()> {

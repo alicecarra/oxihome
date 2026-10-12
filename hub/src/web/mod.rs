@@ -52,6 +52,7 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .page(settings::settings_file)
         .page(lab::lab)
         .route(home::set)
+        .route(rules::set_enabled)
         .route(node::edit)
         .route(home::invoke)
         .route(remotes::learn_key)
