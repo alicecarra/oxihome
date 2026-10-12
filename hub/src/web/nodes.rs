@@ -9,12 +9,11 @@ use topcoat::{
     view::{Child, View, attributes, component, view},
 };
 
-use super::format::{ago_label, channel_label, duration_label, entity_label, value_label};
+use super::format::{ago_label, duration_label, entity_label, value_label};
 use super::layout::layout;
 use super::overview::{self, ChannelOverview, Invocation, NodeOverview, Presence};
 use crate::components::badge::{BadgeVariant, badge};
 use crate::components::button::{ButtonSize, ButtonVariant, button};
-use crate::components::card::{card, card_content, card_description, card_header, card_title};
 use crate::components::input::input;
 use crate::components::switch::switch;
 use crate::config::nodes::ConfiguredEntity;
@@ -58,59 +57,84 @@ pub async fn nodes_fragment(cx: &Cx) -> Result<impl View> {
     Ok(view! { node_list(nodes: overview::nodes(hub)) })
 }
 
+/// One row per node; values and controls live on each node's page and on the dashboard.
 #[component]
 pub async fn node_list(nodes: Vec<NodeOverview>) -> Result<impl View> {
     Ok(view! {
         if nodes.is_empty() {
             <p class="text-muted-foreground">"No nodes yet."</p>
+        } else {
+            // A card's look without its vertical padding, so rows reach the edges.
+            <div class="overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-sm">
+                <table class="w-full text-sm">
+                    <thead class="text-left text-muted-foreground">
+                        <tr>
+                            <th class="px-4 py-3 font-medium">"Node"</th>
+                            <th class="px-4 py-3 font-medium">"Status"</th>
+                            <th class="hidden px-4 py-3 font-medium sm:table-cell">"Channels"</th>
+                            <th class="hidden px-4 py-3 font-medium sm:table-cell">"Firmware"</th>
+                            <th class="px-4 py-3 font-medium">"Uptime"</th>
+                            <th class="hidden px-4 py-3 font-medium sm:table-cell">"Signal"</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        for node in nodes {
+                            node_row(node: node)
+                        }
+                    </tbody>
+                </table>
+            </div>
         }
-        <div class="grid items-start gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            for node in nodes {
-                node_card(node: node)
-            }
-        </div>
     })
 }
 
 #[component]
-async fn node_card(node: NodeOverview) -> Result<impl View> {
+async fn node_row(node: NodeOverview) -> Result<impl View> {
     let title = node.name.clone().unwrap_or_else(|| node.device_id.clone());
-    let description = node_description(&node);
-    // The management entity holds node parameters, not things in the home.
-    let channels: Vec<ChannelOverview> = node
-        .channels
-        .into_iter()
-        .filter(|channel| channel.entity != management::ENTITY)
-        .collect();
+    let channels = if node.presence == Presence::NotSeen {
+        let configured: usize = node
+            .configured_entities
+            .iter()
+            .map(|entity| entity.channels.len())
+            .sum();
+        let names: Vec<String> = node
+            .configured_entities
+            .iter()
+            .map(configured_entity_label)
+            .collect();
+        (format!("{configured} configured"), names.join("; "))
+    } else {
+        // The management entity holds node parameters, not things in the home.
+        let declared = node
+            .channels
+            .iter()
+            .filter(|channel| channel.entity != management::ENTITY)
+            .count();
+        (declared.to_string(), String::new())
+    };
+    // The last uptime of an offline node is stale; when it went quiet says more.
+    let uptime = match (node.presence, node.last_seen) {
+        (Presence::Offline, Some(ago)) => Some(format!("last seen {}", ago_label(ago))),
+        (Presence::Online, _) => node
+            .uptime_seconds
+            .map(|uptime| duration_label(Duration::from_secs(uptime.into()))),
+        _ => None,
+    };
+    let signal = node.rssi.map(|rssi| format!("{rssi} dBm"));
     Ok(view! {
-        card(
-            attrs: attributes! { data-presence=(presence_key(node.presence)) },
-            card_header(
-                <div class="flex items-center justify-between gap-2">
-                    <a href=(format!("/nodes/{}", node.device_id)) class="hover:underline">card_title((title))</a>
-                    presence_badge(presence: node.presence)
-                </div>
-                card_description((description))
-            )
-            if !channels.is_empty() {
-                card_content(
-                    <ul class="divide-y divide-border">
-                        for channel in channels {
-                            channel_row(device_id: node.device_id.clone(), channel: channel)
-                        }
-                    </ul>
-                )
-            }
-            if !node.configured_entities.is_empty() {
-                card_content(
-                    <ul class="space-y-1 text-sm text-muted-foreground">
-                        for entity in node.configured_entities {
-                            <li>(configured_entity_label(&entity))</li>
-                        }
-                    </ul>
-                )
-            }
-        )
+        <tr class="border-t border-border" data-presence=(presence_key(node.presence))>
+            <td class="px-4 py-3">
+                <a href=(format!("/nodes/{}", node.device_id)) class="font-medium hover:underline">(title)</a>
+                if node.name.is_some() {
+                    <p class="text-xs text-muted-foreground">(node.device_id.clone())</p>
+                }
+            </td>
+            <td class="px-4 py-3">presence_badge(presence: node.presence)</td>
+            <td class="hidden px-4 py-3 tabular-nums sm:table-cell" title=(channels.1)>(channels.0)</td>
+            <td class="hidden px-4 py-3 sm:table-cell">(node.firmware_version.unwrap_or_else(|| "—".into()))</td>
+            <td class="px-4 py-3 tabular-nums">(uptime.unwrap_or_else(|| "—".into()))</td>
+            <td class="hidden px-4 py-3 tabular-nums sm:table-cell">(signal.unwrap_or_else(|| "—".into()))</td>
+        </tr>
     })
 }
 
@@ -125,7 +149,7 @@ pub(super) async fn presence_badge(presence: Presence) -> Result<impl View> {
     })
 }
 
-/// What the node filter on the home page matches, in `data-presence`.
+/// What the node filter on `/nodes` matches, in `data-presence`.
 pub(super) fn presence_key(presence: Presence) -> &'static str {
     match presence {
         Presence::Online => "online",
@@ -142,24 +166,6 @@ async fn status_dot(active: bool, #[default] child: Child<'_>) -> Result<impl Vi
             <span class=(if active { "size-2 rounded-full bg-success" } else { "size-2 rounded-full bg-muted-foreground/40" })></span>
             (child)
         </p>
-    })
-}
-
-#[component]
-async fn channel_row(device_id: String, channel: ChannelOverview) -> Result<impl View> {
-    let label = format!(
-        "{} · {}",
-        entity_label(channel.entity, &channel.entity_name),
-        channel_label(channel.channel, &channel.channel_name, channel.quantity)
-    );
-    Ok(view! {
-        <li class="flex items-center justify-between gap-4 py-3">
-            <div>
-                <p class="text-sm font-medium">(label.clone())</p>
-                channel_value(channel: channel.clone())
-            </div>
-            channel_controls(device_id: device_id, channel: channel, label: label)
-        </li>
     })
 }
 
@@ -251,29 +257,6 @@ pub(super) async fn channel_controls(
             </form>
         }
     })
-}
-
-pub(super) fn node_description(node: &NodeOverview) -> String {
-    let mut parts = Vec::new();
-    if node.name.is_some() {
-        parts.push(node.device_id.clone());
-    }
-    if node.presence == Presence::NotSeen {
-        parts.push("not seen since the hub started".into());
-    }
-    if let Some(firmware_version) = &node.firmware_version {
-        parts.push(format!("firmware {firmware_version}"));
-    }
-    if let Some(uptime) = node.uptime_seconds {
-        parts.push(format!(
-            "up {}",
-            duration_label(Duration::from_secs(uptime.into()))
-        ));
-    }
-    if let Some(rssi) = node.rssi {
-        parts.push(format!("RSSI {rssi} dBm"));
-    }
-    parts.join(" · ")
 }
 
 /// `LED: Power`, or the entity alone when no channel is named.

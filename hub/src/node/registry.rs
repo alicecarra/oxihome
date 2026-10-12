@@ -11,7 +11,7 @@ pub struct Node {
     pub firmware_version: String,
     pub entities: Vec<EntityDescriptor>,
     pub online: bool,
-    last_seen: Instant,
+    pub last_seen: Instant,
     pub uptime_seconds: Option<u32>,
     pub rssi: Option<i8>,
     /// From the node's `HeartbeatInterval`; the default until it reports one.

@@ -25,6 +25,8 @@ pub struct NodeOverview {
     /// `None` for a node not seen since the hub started.
     pub firmware_version: Option<String>,
     pub presence: Presence,
+    /// How long ago the hub last heard from it; `None` when not seen.
+    pub last_seen: Option<Duration>,
     pub uptime_seconds: Option<u32>,
     pub rssi: Option<i8>,
     pub channels: Vec<ChannelOverview>,
@@ -135,6 +137,7 @@ pub fn nodes(hub: &Hub) -> Vec<NodeOverview> {
                     .map(String::from),
                 firmware_version: None,
                 presence: Presence::NotSeen,
+                last_seen: None,
                 uptime_seconds: None,
                 rssi: None,
                 channels: Vec::new(),
@@ -212,6 +215,7 @@ fn node_overview(snapshot: &Snapshot, device_id: &str, node: &Node, now: Instant
         } else {
             Presence::Offline
         },
+        last_seen: Some(now - node.last_seen),
         uptime_seconds: node.uptime_seconds,
         rssi: node.rssi,
         channels: node
