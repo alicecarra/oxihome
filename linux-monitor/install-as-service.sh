@@ -63,6 +63,7 @@ if run "test -e ~/$directory/linux-monitor.toml"; then
     run "systemctl --user --no-pager status $service | head -5; journalctl --user -u $service -n 5 --no-pager -o cat"
 else
     copy "$config" "$directory/linux-monitor.toml"
+    run "chmod 600 ~/$directory/linux-monitor.toml"
     run "systemctl --user daemon-reload && systemctl --user enable $service"
     if [[ $config == *.example ]]; then
         echo "copied the example to ~/$directory/linux-monitor.toml: edit it, then"

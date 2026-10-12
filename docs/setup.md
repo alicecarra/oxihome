@@ -72,6 +72,7 @@ The firmware reads the Wi-Fi credentials and the broker address at compile time 
 
 ```sh
 cp firmware/cfg.toml.example firmware/cfg.toml
+chmod 600 firmware/cfg.toml
 ```
 
 `mqtt_url` must use the LAN address of the machine running the broker, e.g. `mqtt://192.168.15.10:1883`.
@@ -137,7 +138,14 @@ the broker:
 infra/mosquitto/set-password.sh <device id> [password]
 ```
 
-Then put the password in the node's configuration (each section below says where). Mosquitto logs
+Then put the password in the node's configuration (each section below says where) and keep that
+file readable only by its owner (`chmod 600`); `install-as-service.sh` does it for the Linux
+monitor's installed copy.
+
+`max_packet_size` drops messages over 64 KiB at the broker (the largest today is a Linux monitor's
+`Hello`, about 5.5 KB). The hub accepts up to 128 KiB, so an oversized message never reaches it;
+rumqttc's default of 10 KiB would close the hub's connection, and a node could keep it down that
+way. Mosquitto logs
 warnings about the permissions of `acl` and about the `oxihome/broadcast/down` pattern without
 `%u`; both are expected. Without TLS the passwords cross the network in plain text (layer 3 of the
 "Segurança" note in Trilium).
@@ -149,6 +157,7 @@ of git; `[mqtt] secrets` points to it, and without that line the hub connects an
 
 ```sh
 cp hub/secrets.toml.example hub/secrets.toml   # then set the password of oxihome-hub
+chmod 600 hub/secrets.toml
 ```
 
 It asks every node for its `Hello` and `State`,
@@ -159,6 +168,10 @@ node's heartbeat interval without messages; changing it needs a hub restart) and
 ```sh
 cargo run -p oxihome-hub -- hub/hub.toml
 ```
+
+Requests must name the hub in `Host` (`localhost`, `127.0.0.1`, `[::1]` or the `[http] host`),
+otherwise 403: a site pointing its own domain at 127.0.0.1 (DNS rebinding) would otherwise pass as
+same-origin. Topcoat already rejects POSTs from other sites (`Sec-Fetch-Site`/`Origin`).
 
 Only one hub can run per broker: both use the MQTT client id `oxihome-hub` and keep disconnecting
 each other.
@@ -359,6 +372,7 @@ sends a heartbeat every 30 s; a failed fetch keeps the last readings.
 
 ```sh
 cp weather/weather.toml.example weather/weather.toml   # then set the location
+chmod 600 weather/weather.toml
 cargo run -p oxihome-weather -- weather/weather.toml
 ```
 
@@ -379,6 +393,7 @@ and reports every 30 s with the heartbeat (the battery charge also goes in the h
 
 ```sh
 cp linux-monitor/linux-monitor.toml.example linux-monitor/linux-monitor.toml   # then pick disks and interfaces
+chmod 600 linux-monitor/linux-monitor.toml
 cargo run -p oxihome-linux-monitor -- linux-monitor/linux-monitor.toml
 ```
 
@@ -430,6 +445,7 @@ Each node in `simulator/simulator.toml` gets its own MQTT connection and a list 
 
 ```sh
 cp simulator/secrets.toml.example simulator/secrets.toml   # then set one password per node
+chmod 600 simulator/secrets.toml
 cargo run -p oxihome-simulator -- simulator/simulator.toml
 ```
 
@@ -446,10 +462,12 @@ the wave, and `climate sim-living-room auto` goes back to the wave for both.
 
 To see the JSON messages nodes and the hub exchange, subscribe inside the broker container as
 `observer`, which reads everything and cannot publish. Its password is in
-`infra/mosquitto/observer-password` (out of git):
+`infra/mosquitto/observer-password` (out of git); the script passes it through an options file, not
+the command line, where `ps` would show it:
 
 ```sh
-docker exec oxihome-mosquitto mosquitto_sub -u observer -P "$(cat infra/mosquitto/observer-password)" -t 'oxihome/#' -v
+infra/mosquitto/watch.sh                      # everything
+infra/mosquitto/watch.sh 'oxihome/+/up'       # one topic filter
 ```
 
 ## Editor

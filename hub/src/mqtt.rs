@@ -8,6 +8,9 @@ use tokio::sync::mpsc;
 const SOURCE: &str = "oxihome-hub";
 const UP_TOPICS: &str = "oxihome/+/up";
 const BROADCAST_TOPIC: &str = "oxihome/broadcast/down";
+/// Above the broker's `max_packet_size` (64 KiB), so the broker is the one that drops oversized
+/// messages; rumqttc's default of 10 KiB would close the connection over a large `Hello`.
+const MAX_PACKET_SIZE: usize = 128 * 1024;
 
 pub enum Incoming {
     /// (Re)connected to the broker.
@@ -28,6 +31,7 @@ impl Mqtt {
         password: Option<String>,
     ) -> (Self, mpsc::Receiver<Incoming>) {
         let mut options = MqttOptions::new(SOURCE, host, port);
+        options.set_max_packet_size(MAX_PACKET_SIZE, MAX_PACKET_SIZE);
         if let Some(password) = password {
             options.set_credentials(SOURCE, password);
         }
