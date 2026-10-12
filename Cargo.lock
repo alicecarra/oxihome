@@ -1299,9 +1299,11 @@ name = "oxihome-linux-monitor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "jiff",
  "oxihome-node",
  "oxihome-protocol",
  "serde",
+ "serde_json",
  "sysinfo",
  "tokio",
  "toml",

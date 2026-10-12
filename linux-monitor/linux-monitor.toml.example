@@ -13,3 +13,6 @@ id = "desktop"
 [monitor]
 disks = ["/"]
 interfaces = ["wlan0"]
+# Names as `docker ps` shows them; the user needs to be in the docker group.
+containers = ["pihole", "jellyfin"]
+# docker_socket = "/var/run/docker.sock"   # Podman without root: "/run/user/1000/podman/podman.sock"

@@ -3,10 +3,11 @@ use std::time::Instant;
 use oxihome_node::mqtt::SoftwareNode;
 use oxihome_node::{Device, NodeCore, Rejection};
 use oxihome_protocol::{
-    Access, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, ErrorCode, Message,
-    Quantity, Unit, Value, ValueType,
+    Access, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, ErrorCode, EventKind,
+    Message, Quantity, Unit, Value, ValueType,
 };
 
+use crate::docker::{self, HEALTH_OPTIONS};
 use crate::sample::{Info, Sample, Sampler};
 
 const CPU_ENTITY: u8 = 1;
@@ -16,9 +17,12 @@ const SYSTEM_ENTITY: u8 = 4;
 /// Fixed ranges, so the ids stay the same when the machine changes.
 pub const FIRST_DISK_ENTITY: u8 = 10;
 pub const FIRST_INTERFACE_ENTITY: u8 = 30;
+pub const FIRST_CONTAINER_ENTITY: u8 = 50;
+const CONTAINER_CHANGE_CHANNEL: u8 = 6;
 pub const MAXIMUM_PER_RANGE: usize = 20;
 
-/// A Linux machine as a node: CPU, memory, disks, network interfaces, battery and system.
+/// A Linux machine as a node: CPU, memory, disks, network interfaces, battery, system and
+/// containers.
 pub struct MonitorNode {
     core: NodeCore,
     device: MonitorDevice,
@@ -30,12 +34,19 @@ struct MonitorDevice {
     info: Info,
     disks: usize,
     interfaces: usize,
+    containers: usize,
     /// `None` until the first report.
     sample: Option<Sample>,
 }
 
 impl MonitorNode {
-    pub fn new(device_id: String, sampler: Sampler, disks: usize, interfaces: usize) -> Self {
+    pub fn new(
+        device_id: String,
+        sampler: Sampler,
+        disks: usize,
+        interfaces: usize,
+        containers: usize,
+    ) -> Self {
         Self {
             core: NodeCore::new(
                 device_id,
@@ -45,6 +56,7 @@ impl MonitorNode {
                 info: sampler.info(),
                 disks,
                 interfaces,
+                containers,
                 sample: None,
             },
             sampler,
@@ -72,6 +84,7 @@ impl SoftwareNode for MonitorNode {
 
     fn report(&mut self) -> Vec<Message> {
         let sample = self.sampler.sample();
+        let changes = self.device.container_changes(&sample);
         let battery = sample
             .battery
             .as_ref()
@@ -80,7 +93,38 @@ impl SoftwareNode for MonitorNode {
         let uptime_s = self.started_at.elapsed().as_secs() as u32;
         let mut messages = vec![self.core.heartbeat(uptime_s, None, battery)];
         messages.extend(self.core.states(&self.device));
+        for (entity, change) in changes {
+            messages.push(self.core.event(
+                entity,
+                CONTAINER_CHANGE_CHANNEL,
+                EventKind::Received,
+                Some(Value::Text(change.into())),
+            ));
+        }
         messages
+    }
+}
+
+impl MonitorDevice {
+    /// Containers read both now and in the last report; nothing on the first one.
+    fn container_changes(&self, sample: &Sample) -> Vec<(u8, &'static str)> {
+        let Some(previous) = &self.sample else {
+            return Vec::new();
+        };
+        previous
+            .containers
+            .iter()
+            .zip(&sample.containers)
+            .enumerate()
+            .filter_map(|(index, pair)| match pair {
+                (Some(before), Some(after)) => Some((index, docker::changes(before, after))),
+                _ => None,
+            })
+            .flat_map(|(index, changes)| {
+                let entity = FIRST_CONTAINER_ENTITY + index as u8;
+                changes.into_iter().map(move |change| (entity, change))
+            })
+            .collect()
     }
 }
 
@@ -121,17 +165,7 @@ impl Device for MonitorDevice {
         entities.push(EntityDescriptor {
             id: SYSTEM_ENTITY,
             channels: vec![
-                Channel {
-                    id: 0,
-                    access: Access::Read,
-                    value: Some(ValueType::Int {
-                        min: 0,
-                        max: i32::MAX,
-                        step: 1,
-                    }),
-                    quantity: None,
-                    unit: Some(Unit::Second),
-                },
+                count(0, Some(Unit::Second)),
                 text(1, 64),
                 text(2, 64),
                 text(3, 128),
@@ -148,6 +182,38 @@ impl Device for MonitorDevice {
         entities.extend((0..self.interfaces).map(|index| EntityDescriptor {
             id: FIRST_INTERFACE_ENTITY + index as u8,
             channels: vec![rate(0), rate(1), flag(2), text(3, 45)],
+        }));
+        let cpu_max = 100.0 * self.info.cpu_count as f32;
+        entities.extend((0..self.containers).map(|index| EntityDescriptor {
+            id: FIRST_CONTAINER_ENTITY + index as u8,
+            channels: vec![
+                flag(0),
+                Channel {
+                    id: 1,
+                    access: Access::Read,
+                    value: Some(ValueType::Enum(
+                        HEALTH_OPTIONS.iter().map(|option| option.to_string()).collect(),
+                    )),
+                    quantity: None,
+                    unit: None,
+                },
+                reading(2, cpu_max, None, Unit::Percent),
+                reading(
+                    3,
+                    1_000_000.0,
+                    Some(Quantity::DataSize),
+                    Unit::Megabyte,
+                ),
+                count(4, None),
+                count(5, Some(Unit::Second)),
+                Channel {
+                    id: CONTAINER_CHANGE_CHANNEL,
+                    access: Access::Event,
+                    value: Some(ValueType::Text { max_length: 16 }),
+                    quantity: None,
+                    unit: None,
+                },
+            ],
         }));
         entities
     }
@@ -213,6 +279,28 @@ impl Device for MonitorDevice {
                     optional(1, interface.upload_kbps),
                     Some(confirmed(2, Value::Bool(interface.connected))),
                     Some(confirmed(3, Value::Text(interface.address.clone()))),
+                ]
+                .into_iter()
+                .flatten()
+                .collect()
+            }
+            id if (FIRST_CONTAINER_ENTITY..FIRST_CONTAINER_ENTITY + self.containers as u8)
+                .contains(&id) =>
+            {
+                let container =
+                    sample.containers[(id - FIRST_CONTAINER_ENTITY) as usize].as_ref()?;
+                let int = |channel, value: Option<i64>| {
+                    value.map(|value| {
+                        confirmed(channel, Value::Int(value.clamp(0, i32::MAX as i64) as i32))
+                    })
+                };
+                [
+                    Some(confirmed(0, Value::Bool(container.running))),
+                    Some(confirmed(1, Value::Enum(container.health.name().into()))),
+                    optional(2, container.cpu_percent),
+                    optional(3, container.memory_mb),
+                    int(4, container.restarts.map(i64::from)),
+                    int(5, container.uptime_s),
                 ]
                 .into_iter()
                 .flatten()
@@ -296,6 +384,20 @@ fn rate(id: u8) -> Channel {
     )
 }
 
+fn count(id: u8, unit: Option<Unit>) -> Channel {
+    Channel {
+        id,
+        access: Access::Read,
+        value: Some(ValueType::Int {
+            min: 0,
+            max: i32::MAX,
+            step: 1,
+        }),
+        quantity: None,
+        unit,
+    }
+}
+
 fn flag(id: u8) -> Channel {
     Channel {
         id,
@@ -327,6 +429,7 @@ fn confirmed(channel: u8, value: Value) -> ChannelValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::docker::{Container, Health};
     use crate::sample::{Battery, Cpu, Disk, Interface, Memory};
 
     fn device(has_battery: bool) -> MonitorDevice {
@@ -337,9 +440,11 @@ mod tests {
                 distribution: "Linux (Arch Linux)".into(),
                 has_cpu_temperature: true,
                 has_battery,
+                cpu_count: 4,
             },
             disks: 2,
             interfaces: 1,
+            containers: 2,
             sample: None,
         }
     }
@@ -380,6 +485,18 @@ mod tests {
                 plugged_in: true,
             }),
             uptime_s: 3600,
+            containers: vec![Some(container(true, Health::Healthy)), None],
+        }
+    }
+
+    fn container(running: bool, health: Health) -> Container {
+        Container {
+            running,
+            health,
+            cpu_percent: Some(if running { 150.0 } else { 0.0 }),
+            memory_mb: Some(if running { 80.5 } else { 0.0 }),
+            restarts: Some(1),
+            uptime_s: Some(if running { 600 } else { 0 }),
         }
     }
 
@@ -389,10 +506,10 @@ mod tests {
 
     #[test]
     fn disks_and_interfaces_take_fixed_ranges() {
-        assert_eq!(ids(&device(true)), [1, 2, 3, 4, 10, 11, 30]);
+        assert_eq!(ids(&device(true)), [1, 2, 3, 4, 10, 11, 30, 50, 51]);
         assert_eq!(
             ids(&device(false)),
-            [1, 2, 4, 10, 11, 30],
+            [1, 2, 4, 10, 11, 30, 50, 51],
             "no battery entity"
         );
     }
@@ -445,6 +562,9 @@ mod tests {
                     }
                     (Some(ValueType::Int { min, max, .. }), Value::Int(v)) => v >= min && v <= max,
                     (Some(ValueType::Bool), Value::Bool(_)) => true,
+                    (Some(ValueType::Enum(options)), Value::Enum(option)) => {
+                        options.contains(option)
+                    }
                     (Some(ValueType::Text { max_length }), Value::Text(text)) => {
                         text.len() <= *max_length as usize
                     }
@@ -453,5 +573,45 @@ mod tests {
                 assert!(fits, "entity {} channel {}", entity.id, value.channel);
             }
         }
+    }
+
+    #[test]
+    fn container_changes_become_events() {
+        let mut device = device(true);
+        let first = sample(false);
+        assert_eq!(
+            device.container_changes(&first),
+            [],
+            "nothing before the first report"
+        );
+        device.sample = Some(first);
+
+        let mut stopped = sample(false);
+        stopped.containers[0] = Some(container(false, Health::None));
+        stopped.containers[1] = Some(container(true, Health::Healthy));
+        assert_eq!(
+            device.container_changes(&stopped),
+            [(FIRST_CONTAINER_ENTITY, "stopped")],
+            "the second container was not read before"
+        );
+    }
+
+    #[test]
+    fn a_stopped_container_reports_zeros() {
+        let mut device = device(true);
+        let mut stopped = sample(false);
+        stopped.containers[0] = Some(container(false, Health::None));
+        device.sample = Some(stopped);
+        let channels: Vec<u8> = device
+            .state(FIRST_CONTAINER_ENTITY)
+            .unwrap()
+            .iter()
+            .map(|value| value.channel)
+            .collect();
+        assert_eq!(channels, [0, 1, 2, 3, 4, 5], "zeros, not the last values");
+        assert!(
+            device.state(FIRST_CONTAINER_ENTITY + 1).is_none(),
+            "not read"
+        );
     }
 }

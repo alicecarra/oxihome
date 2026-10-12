@@ -29,3 +29,28 @@ name = "Weather"
 entities.1 = { name = "Now", channels.3 = "Wind", channels.4 = "Raining" }
 entities.2 = { name = "Today", channels.0 = "Maximum", channels.1 = "Minimum", channels.2 = "Chance of rain" }
 entities.3 = { name = "Updated", channels.0 = "At" }
+
+[nodes.notebook]
+name = "Notebook"
+entities.1 = { name = "CPU", channels.0 = "Usage", channels.1 = "Load 1 min", channels.2 = "Load 5 min", channels.3 = "Load 15 min" }
+entities.2 = { name = "Memory", channels.0 = "Used", channels.1 = "Used", channels.2 = "Available", channels.3 = "Total", channels.4 = "Swap used" }
+entities.3 = { name = "Battery", channels.0 = "Charge", channels.1 = "Charging", channels.2 = "Plugged in" }
+entities.4 = { name = "System", channels.0 = "Uptime", channels.1 = "Hostname", channels.2 = "Kernel", channels.3 = "Distribution" }
+entities.10 = { name = "Disk /", channels.0 = "Used", channels.1 = "Free", channels.2 = "Total" }
+entities.11 = { name = "Disk /boot/efi", channels.0 = "Used", channels.1 = "Free", channels.2 = "Total" }
+entities.30 = { name = "Wi-Fi", channels.0 = "Download", channels.1 = "Upload", channels.2 = "Connected", channels.3 = "Address" }
+entities.50 = { name = "Trilium", channels.0 = "Running", channels.1 = "Health", channels.2 = "CPU", channels.3 = "Memory", channels.4 = "Restarts", channels.5 = "Up for", channels.6 = "Change" }
+entities.51 = { name = "Mosquitto", channels.0 = "Running", channels.1 = "Health", channels.2 = "CPU", channels.3 = "Memory", channels.4 = "Restarts", channels.5 = "Up for", channels.6 = "Change" }
+entities.52 = { name = "Redis", channels.0 = "Running", channels.1 = "Health", channels.2 = "CPU", channels.3 = "Memory", channels.4 = "Restarts", channels.5 = "Up for", channels.6 = "Change" }
+
+[nodes.docker-host]
+name = "Docker host"
+entities.1 = { name = "CPU", channels.0 = "Usage", channels.1 = "Load 1 min", channels.2 = "Load 5 min", channels.3 = "Load 15 min" }
+entities.2 = { name = "Memory", channels.0 = "Used", channels.1 = "Used", channels.2 = "Available", channels.3 = "Total", channels.4 = "Swap used" }
+entities.4 = { name = "System", channels.0 = "Uptime", channels.1 = "Hostname", channels.2 = "Kernel", channels.3 = "Distribution" }
+entities.10 = { name = "Disk /", channels.0 = "Used", channels.1 = "Free", channels.2 = "Total" }
+entities.30 = { name = "Network", channels.0 = "Download", channels.1 = "Upload", channels.2 = "Connected", channels.3 = "Address" }
+entities.50 = { name = "Pi-hole", channels.0 = "Running", channels.1 = "Health", channels.2 = "CPU", channels.3 = "Memory", channels.4 = "Restarts", channels.5 = "Up for", channels.6 = "Change" }
+entities.51 = { name = "Jellyfin", channels.0 = "Running", channels.1 = "Health", channels.2 = "CPU", channels.3 = "Memory", channels.4 = "Restarts", channels.5 = "Up for", channels.6 = "Change" }
+entities.52 = { name = "Trilium", channels.0 = "Running", channels.1 = "Health", channels.2 = "CPU", channels.3 = "Memory", channels.4 = "Restarts", channels.5 = "Up for", channels.6 = "Change" }
+entities.53 = { name = "Portainer", channels.0 = "Running", channels.1 = "Health", channels.2 = "CPU", channels.3 = "Memory", channels.4 = "Restarts", channels.5 = "Up for", channels.6 = "Change" }

@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 
 use sysinfo::{Components, Disks, Networks, System};
 
+use crate::docker::{Container, CpuCounters, Docker};
+
 const BYTES_PER_GIGABYTE: f32 = 1e9;
 /// Rates and CPU usage need two readings at least this far apart.
 const MINIMUM_SPAN: Duration = Duration::from_secs(1);
@@ -30,6 +32,8 @@ pub struct Sample {
     pub interfaces: Vec<Option<Interface>>,
     pub battery: Option<Battery>,
     pub uptime_s: u64,
+    /// In the order of the configuration; `None` when Docker could not be read.
+    pub containers: Vec<Option<Container>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -82,6 +86,7 @@ pub struct Info {
     pub distribution: String,
     pub has_cpu_temperature: bool,
     pub has_battery: bool,
+    pub cpu_count: usize,
 }
 
 pub struct Sampler {
@@ -95,10 +100,21 @@ pub struct Sampler {
     /// Totals of the last reading, per configured interface.
     last_traffic: Vec<Option<(u64, u64)>>,
     last_read_at: Instant,
+    containers: Vec<String>,
+    docker: Docker,
+    /// Per configured container, for its CPU usage.
+    container_counters: Vec<Option<CpuCounters>>,
+    /// The Docker error is written once, not on every report.
+    docker_failing: bool,
 }
 
 impl Sampler {
-    pub fn new(disks: Vec<String>, interfaces: Vec<String>) -> Self {
+    pub fn new(
+        disks: Vec<String>,
+        interfaces: Vec<String>,
+        containers: Vec<String>,
+        docker: Docker,
+    ) -> Self {
         let mut system = System::new();
         system.refresh_cpu_usage();
         let mut sampler = Self {
@@ -111,6 +127,10 @@ impl Sampler {
             components: Components::new_with_refreshed_list(),
             battery: find_battery(Path::new(POWER_SUPPLY)),
             last_read_at: Instant::now(),
+            container_counters: vec![None; containers.len()],
+            containers,
+            docker,
+            docker_failing: false,
         };
         sampler.read_traffic();
         sampler
@@ -123,6 +143,7 @@ impl Sampler {
             distribution: System::long_os_version().unwrap_or_default(),
             has_cpu_temperature: self.cpu_temperature().is_some(),
             has_battery: self.battery.is_some(),
+            cpu_count: self.system.cpus().len().max(1),
         }
     }
 
@@ -165,7 +186,32 @@ impl Sampler {
                 .collect(),
             battery: self.battery.as_deref().and_then(read_battery),
             uptime_s: System::uptime(),
+            containers: self.containers(),
         }
+    }
+
+    fn containers(&mut self) -> Vec<Option<Container>> {
+        let mut containers = Vec::with_capacity(self.containers.len());
+        let mut first_error = None;
+        for (name, counters) in self.containers.iter().zip(&mut self.container_counters) {
+            match self.docker.read(name, *counters) {
+                Ok((container, now)) => {
+                    *counters = now;
+                    containers.push(Some(container));
+                }
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                    containers.push(None);
+                }
+            }
+        }
+        if let Some(error) = &first_error
+            && !self.docker_failing
+        {
+            println!("reading the containers failed: {error:#}");
+        }
+        self.docker_failing = first_error.is_some();
+        containers
     }
 
     /// Stores the current totals and returns the previous ones.

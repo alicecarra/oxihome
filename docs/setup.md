@@ -372,9 +372,16 @@ used %), 3 battery (charge %, charging, plugged in; only on machines with their 
 counting mice and keyboards), 4 system (uptime s, hostname, kernel, distribution). Disks take ids 10
 to 29 and interfaces 30 to 49, in the order of the configuration, so add new ones at the end: disks
 report used %, free and total GB; interfaces report download and upload kB/s, connected and the
-address. CPU usage and rates start on the second report. GB are 10^9 bytes, so `df -h` (GiB) shows
+address. Containers take ids 50 to 69, from `containers` in the configuration (names as
+`docker ps` shows them, read through the Docker API on `docker_socket`, `/var/run/docker.sock` by
+default; the user needs to be in the `docker` group): running, health (`healthy`, `unhealthy`,
+`starting`, `none` without a healthcheck), CPU % of one whole CPU like `docker stats`, memory MB,
+restarts, seconds up, and an event channel with `stopped`, `started`, `unhealthy` or `healthy` when
+that changes between two reports (a rule with `data = "stopped"` catches a container going down; a
+container that falls and comes back within 30 s only shows in restarts). A stopped container
+reports zeros. CPU usage and rates start on the second report. GB are 10^9 bytes, so `df -h` (GiB) shows
 smaller numbers. The protocol gained the `DataSize`, `DataRate` and `Frequency` quantities and the
-`Gigabyte`, `KilobytePerSecond` and `Megahertz` units for it. Plans for more (GPU, sensors, session
+`Gigabyte`, `Megabyte`, `KilobytePerSecond` and `Megahertz` units for it. Plans for more (GPU, sensors, session
 events, actions) are in the Trilium note "Monitor Linux".
 
 ## Simulator

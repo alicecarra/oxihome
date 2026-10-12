@@ -1,14 +1,17 @@
 //! A software node with the state of the Linux machine it runs on.
 
+mod docker;
 mod node;
 mod sample;
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, ensure};
 use oxihome_node::mqtt::{self, Broker};
 use serde::Deserialize;
 
+use docker::Docker;
 use node::{MAXIMUM_PER_RANGE, MonitorNode};
 use sample::Sampler;
 
@@ -37,11 +40,16 @@ struct NodeConfig {
 }
 
 #[derive(Deserialize)]
+#[serde(default)]
 struct MonitorConfig {
     /// Mount points; entity ids follow this order.
     disks: Vec<String>,
     /// Interface names; entity ids follow this order.
     interfaces: Vec<String>,
+    /// Container names, as `docker ps` shows them; entity ids follow this order.
+    containers: Vec<String>,
+    /// Podman without root: `$XDG_RUNTIME_DIR/podman/podman.sock`.
+    docker_socket: PathBuf,
 }
 
 impl Default for MonitorConfig {
@@ -49,6 +57,8 @@ impl Default for MonitorConfig {
         Self {
             disks: vec!["/".into()],
             interfaces: Vec::new(),
+            containers: Vec::new(),
+            docker_socket: "/var/run/docker.sock".into(),
         }
     }
 }
@@ -62,11 +72,18 @@ async fn main() -> anyhow::Result<()> {
     let config: Config = toml::from_str(&text).with_context(|| format!("parsing {path}"))?;
     let monitor = config.monitor;
     ensure!(
-        monitor.disks.len() <= MAXIMUM_PER_RANGE && monitor.interfaces.len() <= MAXIMUM_PER_RANGE,
-        "at most {MAXIMUM_PER_RANGE} disks and {MAXIMUM_PER_RANGE} interfaces"
+        [&monitor.disks, &monitor.interfaces, &monitor.containers]
+            .iter()
+            .all(|list| list.len() <= MAXIMUM_PER_RANGE),
+        "at most {MAXIMUM_PER_RANGE} disks, interfaces and containers"
     );
 
-    let sampler = Sampler::new(monitor.disks.clone(), monitor.interfaces.clone());
+    let sampler = Sampler::new(
+        monitor.disks.clone(),
+        monitor.interfaces.clone(),
+        monitor.containers.clone(),
+        Docker::new(monitor.docker_socket),
+    );
     let (mounts, interfaces) = sampler.available();
     println!("mount points: {}", mounts.join(", "));
     println!("interfaces: {}", interfaces.join(", "));
@@ -83,6 +100,7 @@ async fn main() -> anyhow::Result<()> {
             sampler,
             monitor.disks.len(),
             monitor.interfaces.len(),
+            monitor.containers.len(),
         ),
         Broker {
             host: config.mqtt.host,
