@@ -31,7 +31,7 @@ pub async fn remotes_page(cx: &Cx) -> Result<impl View> {
                     <a href="/settings#remotes.toml" class="text-sm font-medium whitespace-nowrap hover:underline">"Edit in Settings"</a>
                 </div>
                 <div id="remotes" hx-get="/remotes/fragment" hx-trigger="sse:nodes, refresh">
-                    remotes_content(learning: learning(hub), remotes: remote_list(hub))
+                    remotes_content(learning: learning(hub), remotes: remote_list(hub), default_remote: remote_to_offer(hub))
                 </div>
             </div>
         )
@@ -41,7 +41,9 @@ pub async fn remotes_page(cx: &Cx) -> Result<impl View> {
 #[page("/remotes/fragment")]
 pub async fn remotes_fragment(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
-    Ok(view! { remotes_content(learning: learning(hub), remotes: remote_list(hub)) })
+    Ok(
+        view! { remotes_content(learning: learning(hub), remotes: remote_list(hub), default_remote: remote_to_offer(hub)) },
+    )
 }
 
 struct LearningCode {
@@ -75,6 +77,13 @@ fn learning(hub: &Hub) -> Vec<LearningCode> {
         .collect()
 }
 
+/// The remote of the last learned key, else the first one.
+fn remote_to_offer(hub: &Hub) -> String {
+    hub.last_learned_remote()
+        .or_else(|| hub.snapshot().remotes.all().keys().next().cloned())
+        .unwrap_or_default()
+}
+
 fn remote_list(hub: &Hub) -> Vec<RemoteOverview> {
     hub.snapshot()
         .remotes
@@ -95,6 +104,7 @@ fn remote_list(hub: &Hub) -> Vec<RemoteOverview> {
 async fn remotes_content(
     learning: Vec<LearningCode>,
     remotes: Vec<RemoteOverview>,
+    default_remote: String,
 ) -> Result<impl View> {
     let remote_names: Vec<String> = remotes.iter().map(|remote| remote.name.clone()).collect();
     Ok(view! {
@@ -109,7 +119,7 @@ async fn remotes_content(
                 }
                 <ul class="divide-y divide-border">
                     for received in learning {
-                        learning_row(received: received, remote_names: remote_names.clone())
+                        learning_row(received: received, default_remote: default_remote.clone())
                     }
                 </ul>
                 <datalist id="remote-names">
@@ -136,7 +146,7 @@ async fn remotes_content(
 }
 
 #[component]
-async fn learning_row(received: LearningCode, remote_names: Vec<String>) -> Result<impl View> {
+async fn learning_row(received: LearningCode, default_remote: String) -> Result<impl View> {
     // Inputs keep what was typed when the list refreshes on new codes.
     let code_id: String = received
         .code
@@ -151,7 +161,6 @@ async fn learning_row(received: LearningCode, remote_names: Vec<String>) -> Resu
         .collect();
     let remote_id = format!("learn-remote-{code_id}");
     let key_id = format!("learn-key-{code_id}");
-    let default_remote = remote_names.first().cloned().unwrap_or_default();
     Ok(view! {
         <li class="flex flex-wrap items-center justify-between gap-3 py-3">
             <div>

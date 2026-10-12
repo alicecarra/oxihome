@@ -73,6 +73,8 @@ pub struct Hub {
     remotes: Mutex<Remotes>,
     /// Newest first, without repeats of held keys.
     recent_codes: Mutex<VecDeque<ReceivedCode>>,
+    /// The remote the last learned key went to, offered first for the next one.
+    last_learned_remote: Mutex<Option<String>>,
     notifications: Mutex<Notifications>,
     commands: Commands,
     /// Scheduled rules run in this zone's local time.
@@ -100,6 +102,7 @@ impl Hub {
             parameters: Mutex::new(config.parameters),
             remotes: Mutex::new(config.remotes),
             recent_codes: Mutex::default(),
+            last_learned_remote: Mutex::default(),
             notifications: Mutex::default(),
             commands: Commands::default(),
             time_zone,
@@ -325,7 +328,12 @@ impl Hub {
         let current = self.config_file(file)?;
         let text = crate::config::remotes::with_key(&current.text, remote, key, code)?;
         self.save_config_file(file, &text, current.modified)?;
+        *self.last_learned_remote.lock().unwrap() = Some(remote.to_string());
         Ok(())
+    }
+
+    pub fn last_learned_remote(&self) -> Option<String> {
+        self.last_learned_remote.lock().unwrap().clone()
     }
 
     pub fn crossed_rules(&self, update: &ChannelUpdate) -> Vec<Rule> {

@@ -8,3 +8,8 @@ right = "NEC 00 43"
 down = "NEC 00 15"
 left = "NEC 00 44"
 ok = "NEC 00 40"
+
+[remotes.Receiver.keys]
+power = "SONY15 30 15"
+"vol up" = "SONY15 30 12"
+"vol down" = "SONY15 30 13"

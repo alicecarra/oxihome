@@ -195,7 +195,8 @@ previous configuration stays in use.
 
 - `remotes.toml`: infrared remotes and the codes of their keys. The `/remotes` page lists them and
   has a "Learn" card with the last codes received (not repeats nor `raw` signals): name a remote and
-  a key and the hub adds it to the file, keeping its comments. A code on two keys is an error. Node
+  a key and the hub adds it to the file, keeping its comments. The remote field starts with the remote
+  of the last learned key. A code on two keys is an error. Node
   cards show a named code as `Kit Lafvin · 0`.
 
   ```toml

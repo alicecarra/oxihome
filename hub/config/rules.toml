@@ -79,3 +79,8 @@ then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, val
 name = "Remote key 3 sounds the alarm"
 when = { remote = "Kit Lafvin", key = "3" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
+
+[[rules]]
+name = "Receiver power toggles the external LED"
+when = { remote = "Receiver", key = "power" }
+then = [{ toggle = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0 } }]
