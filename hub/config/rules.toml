@@ -59,3 +59,8 @@ then = [
 name = "Any node offline: buzzer alarm"
 when = { offline = "*" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
+
+[[rules]]
+name = "Remote key 0 toggles the external LED"
+when = { device = "esp32-08d1f9ca41e4", entity = 6, channel = 0, event = "Received", data = "NEC 00 52" }
+then = [{ toggle = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0 } }]

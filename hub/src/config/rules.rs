@@ -60,6 +60,7 @@ struct TriggerFields {
     entity: Option<u8>,
     channel: Option<u8>,
     event: Option<EventKind>,
+    data: Option<String>,
     above: Option<f32>,
     below: Option<f32>,
     at: Option<Time>,
@@ -78,6 +79,7 @@ impl TryFrom<TriggerFields> for Trigger {
                 && fields.entity.is_none()
                 && fields.channel.is_none()
                 && fields.event.is_none()
+                && fields.data.is_none()
                 && fields.above.is_none()
                 && fields.below.is_none()
                 && fields.at.is_none()
@@ -108,6 +110,9 @@ impl TryFrom<TriggerFields> for Trigger {
             if channel_kinds > 1 {
                 return Err("use only one of `event`, `above` and `below`".into());
             }
+            if fields.data.is_some() && fields.event.is_none() {
+                return Err("`data` goes with `event`".into());
+            }
             let (Some(device), Some(entity), Some(channel)) =
                 (fields.device, fields.entity, fields.channel)
             else {
@@ -120,6 +125,7 @@ impl TryFrom<TriggerFields> for Trigger {
                         entity,
                         channel,
                         event,
+                        data: fields.data,
                     }));
                 }
                 (_, Some(above), _) => Limit::Above(above),
@@ -202,6 +208,21 @@ pub struct EventTrigger {
     pub entity: u8,
     pub channel: u8,
     pub event: EventKind,
+    /// When set, the event's data must be exactly this text, e.g. an IR code `NEC 00 45`
+    /// (`NEC 00 45 repeat`, sent while the key is held, does not match).
+    pub data: Option<String>,
+}
+
+impl EventTrigger {
+    fn matches(&self, event: &EventRecord) -> bool {
+        self.device == event.device_id
+            && self.entity == event.entity
+            && self.channel == event.channel
+            && self.event == event.kind
+            && self.data.as_ref().is_none_or(|expected| {
+                matches!(&event.data, Some(Value::Text(text) | Value::Enum(text)) if text == expected)
+            })
+    }
 }
 
 /// Local time; no `days` means every day.
@@ -370,11 +391,7 @@ impl Rules {
             .iter()
             .filter(|rule| {
                 rule.enabled
-                    && matches!(&rule.when, Trigger::Event(trigger)
-                        if trigger.device == event.device_id
-                            && trigger.entity == event.entity
-                            && trigger.channel == event.channel
-                            && trigger.event == event.kind)
+                    && matches!(&rule.when, Trigger::Event(trigger) if trigger.matches(event))
             })
             .collect()
     }
@@ -742,6 +759,57 @@ mod tests {
                 .unwrap_err()
                 .contains("goes alone")
         );
+    }
+
+    const IR_CODES: &str = r#"
+        [[rules]]
+        name = "Key 0 toggles the external LED"
+        when = { device = "esp32-test", entity = 6, channel = 0, event = "Received", data = "NEC 00 52" }
+        then = []
+
+        [[rules]]
+        name = "Any IR code"
+        when = { device = "esp32-test", entity = 6, channel = 0, event = "Received" }
+        then = []
+    "#;
+
+    fn received(data: Option<Value>) -> EventRecord {
+        EventRecord {
+            device_id: "esp32-test".into(),
+            entity: 6,
+            channel: 0,
+            kind: EventKind::Received,
+            data,
+        }
+    }
+
+    #[test]
+    fn event_data_must_match_exactly() {
+        let rules: Rules = toml::from_str(IR_CODES).unwrap();
+        let text = |code: &str| Some(Value::Text(code.into()));
+        assert_eq!(
+            names(rules.matching(&received(text("NEC 00 52")))),
+            ["Key 0 toggles the external LED", "Any IR code"]
+        );
+        assert_eq!(
+            names(rules.matching(&received(text("NEC 00 52 repeat")))),
+            ["Any IR code"]
+        );
+        assert_eq!(
+            names(rules.matching(&received(text("NEC 00 18")))),
+            ["Any IR code"]
+        );
+        assert_eq!(names(rules.matching(&received(None))), ["Any IR code"]);
+    }
+
+    #[test]
+    fn data_goes_with_event() {
+        let error = |text: &str| when(text).unwrap_err();
+        assert!(
+            error(r#"{ device = "a", entity = 3, channel = 0, above = 28, data = "x" }"#)
+                .contains("`data` goes with `event`")
+        );
+        assert!(error(r#"{ offline = "*", data = "x" }"#).contains("goes alone"));
     }
 
     const THRESHOLDS: &str = r#"

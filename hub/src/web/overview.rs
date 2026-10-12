@@ -259,7 +259,10 @@ fn event_description(names: &Names, trigger: &EventTrigger) -> String {
         trigger.channel,
         None,
     );
-    format!("{target}: {:?}", trigger.event)
+    match &trigger.data {
+        Some(data) => format!("{target}: {:?} {data}", trigger.event),
+        None => format!("{target}: {:?}", trigger.event),
+    }
 }
 
 const ALL_DAYS: [Day; 7] = [
@@ -450,6 +453,7 @@ mod tests {
             entity: 2,
             channel: 0,
             event: EventKind::LongPress,
+            data: None,
         };
         assert_eq!(
             event_description(&names(), &trigger),
@@ -464,10 +468,26 @@ mod tests {
             entity: 3,
             channel: 0,
             event: EventKind::Press,
+            data: None,
         };
         assert_eq!(
             event_description(&names(), &trigger),
             "sim-unknown › entity 3: Press"
+        );
+    }
+
+    #[test]
+    fn event_data_shows_after_the_event() {
+        let trigger = EventTrigger {
+            device: "esp32-test".into(),
+            entity: 2,
+            channel: 0,
+            event: EventKind::Received,
+            data: Some("NEC 00 52".into()),
+        };
+        assert_eq!(
+            event_description(&names(), &trigger),
+            "Test board › BOOT button: Received NEC 00 52"
         );
     }
 
