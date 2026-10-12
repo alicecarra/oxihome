@@ -87,6 +87,9 @@ pub enum Quantity {
     Power,
     Precipitation,
     WindSpeed,
+    DataSize,
+    DataRate,
+    Frequency,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,4 +103,7 @@ pub enum Unit {
     Second,
     Millimeter,
     KilometerPerHour,
+    Gigabyte,
+    KilobytePerSecond,
+    Megahertz,
 }
