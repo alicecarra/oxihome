@@ -15,7 +15,7 @@ use crate::components::badge::{BadgeVariant, badge};
 use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::card::{card, card_content, card_description, card_header, card_title};
 use crate::components::input::input;
-use crate::config::names::NameTarget;
+use crate::config::nodes::NameTarget;
 use crate::config::remotes::RemoteKey;
 use crate::hub::Hub;
 
@@ -67,8 +67,8 @@ fn learning(hub: &Hub) -> Vec<LearningCode> {
         .into_iter()
         .map(|received| LearningCode {
             receiver: snapshot
-                .names
-                .get(&NameTarget::Node(received.device_id.clone()))
+                .nodes
+                .name(&NameTarget::Node(received.device_id.clone()))
                 .map_or(received.device_id.clone(), String::from),
             ago: ago_label(now - received.at),
             known: snapshot.remotes.key_for(&received.code),

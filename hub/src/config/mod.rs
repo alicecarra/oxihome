@@ -1,4 +1,4 @@
-pub mod names;
+pub mod nodes;
 pub mod remotes;
 pub mod rules;
 
@@ -8,21 +8,19 @@ use std::time::SystemTime;
 use anyhow::Context;
 use serde::de::DeserializeOwned;
 
-use crate::node::parameters::NodeParameters;
-use names::Names;
+use nodes::Nodes;
 use remotes::Remotes;
 use rules::Rules;
 
 /// The home's configuration: the files in the config directory.
 pub struct HomeConfig {
-    pub names: Names,
+    pub nodes: Nodes,
     pub rules: Rules,
-    pub parameters: NodeParameters,
     pub remotes: Remotes,
 }
 
 /// The files the web interface can edit.
-pub const FILES: [&str; 4] = ["names.toml", "rules.toml", "nodes.toml", "remotes.toml"];
+pub const FILES: [&str; 3] = ["nodes.toml", "rules.toml", "remotes.toml"];
 
 /// A config file's text and when it was last modified (`None` if it does not exist).
 pub struct ConfigFile {
@@ -45,8 +43,8 @@ impl HomeConfig {
             }
         };
         let path = directory.join("nodes.toml");
-        let parameters: NodeParameters = parse(&path, &text("nodes.toml")?)?;
-        parameters
+        let nodes: Nodes = parse(&path, &text("nodes.toml")?)?;
+        nodes
             .validate()
             .with_context(|| format!("{}", path.display()))?;
         let path = directory.join("remotes.toml");
@@ -60,9 +58,8 @@ impl HomeConfig {
             .check_remote_keys(&remotes)
             .with_context(|| format!("{}", path.display()))?;
         Ok(Self {
-            names: parse(&directory.join("names.toml"), &text("names.toml")?)?,
+            nodes,
             rules,
-            parameters,
             remotes,
         })
     }
@@ -134,14 +131,39 @@ mod tests {
     #[test]
     fn write_file_replaces_the_content() {
         let directory = directory("write");
-        let path = directory.join("names.toml");
+        let path = directory.join("nodes.toml");
         write_file(&path, "a = 1\n").unwrap();
         write_file(&path, "a = 2\n").unwrap();
 
         let file = read_file(&path).unwrap();
         assert_eq!(file.text, "a = 2\n");
         assert!(file.modified.is_some());
-        assert!(!directory.join("names.toml.tmp").exists());
+        assert!(!directory.join("nodes.toml.tmp").exists());
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn nodes_toml_holds_names_and_parameters() {
+        let directory = directory("nodes");
+        let text = r#"
+            [nodes."esp32-test"]
+            name = "Test board"
+            entities.1 = { name = "LED", channels.0 = "Power" }
+            parameters = { heartbeat_interval = 60 }
+        "#;
+        let config = HomeConfig::load_with(&directory, Some(("nodes.toml", text))).unwrap();
+        assert_eq!(
+            config
+                .nodes
+                .name(&nodes::NameTarget::Node("esp32-test".into())),
+            Some("Test board")
+        );
+        assert_eq!(config.nodes.desired("esp32-test").len(), 1);
+        let misspelled = "[nodes.\"esp32-test\"]\nnmae = \"Test board\"\n";
+        let error = HomeConfig::load_with(&directory, Some(("nodes.toml", misspelled)))
+            .err()
+            .unwrap();
+        assert!(format!("{error:#}").contains("nmae"), "{error:#}");
         std::fs::remove_dir_all(&directory).unwrap();
     }
 

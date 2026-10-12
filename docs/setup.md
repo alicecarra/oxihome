@@ -140,12 +140,18 @@ Saving is refused if the file changed on disk since the page was loaded. After e
 editor instead, press **Reload config from disk**; a file with an error is reported there and the
 previous configuration stays in use.
 
-- `names.toml`: friendly names for nodes, entities and channels.
+- `nodes.toml`: each node by the id from its `Hello`, with its friendly names (node, entities,
+  channels) and its desired operation parameters in seconds. The hub sends a `Set` when a node
+  reports another value: when it connects, comes back online, or after a reload. A parameter left
+  out keeps the node's value. Ranges: `heartbeat_interval` 5–300, `wifi_check_interval` 1–60.
+  `/settings` shows the node's value next to the desired one. A misspelled key is an error. (Until
+  2026-10-12 the names were in a separate `names.toml`.)
 
   ```toml
   [nodes."esp32-08d1f9ca41e4"]
   name = "Test board"
   entities.1 = { name = "LED", channels.0 = "Power" }
+  parameters = { heartbeat_interval = 30, wifi_check_interval = 5 }
   ```
 
 - `rules.toml`: a rule runs its actions when its trigger (`when`) fires. Actions set or toggle
@@ -206,17 +212,6 @@ previous configuration stays in use.
   [remotes."Kit Lafvin".keys]
   0 = "NEC 00 52"
   1 = "NEC 00 16"
-  ```
-
-- `nodes.toml`: desired operation parameters of each node (seconds). The hub sends a `Set` when a
-  node reports another value: when it connects, comes back online, or after a reload. A parameter
-  left out keeps the node's value. Ranges: `heartbeat_interval` 5–300, `wifi_check_interval` 1–60.
-  `/settings` shows the node's value next to the desired one.
-
-  ```toml
-  [nodes."esp32-08d1f9ca41e4"]
-  heartbeat_interval = 30
-  wifi_check_interval = 5
   ```
 
 The page uses htmx: the switches post to `/set` and the controls of `Trigger` channels (a button per

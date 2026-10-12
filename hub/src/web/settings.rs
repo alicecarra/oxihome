@@ -16,6 +16,7 @@ use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::card::{card, card_content, card_description, card_header, card_title};
 use crate::components::textarea::textarea;
 use crate::config::FILES;
+use crate::config::nodes;
 use crate::hub::Hub;
 use crate::node::parameters;
 
@@ -50,7 +51,7 @@ pub async fn settings(cx: &Cx) -> Result<impl View> {
                     card_header(
                         card_title("Configuration")
                         card_description(
-                            (format!("Names, rules and node parameters live in TOML files in {directory}. Edit them here, or in an editor and then reload."))
+                            (format!("Nodes (names and parameters), rules and remotes live in TOML files in {directory}. Edit them here, or in an editor and then reload."))
                         )
                     )
                     card_content(
@@ -114,7 +115,7 @@ async fn parameter_row(row: ParameterOverview) -> Result<impl View> {
     };
     Ok(view! {
         <tr>
-            <td class="py-2"><code class="font-mono">(parameters::key(row.parameter))</code></td>
+            <td class="py-2"><code class="font-mono">(nodes::parameter_key(row.parameter))</code></td>
             <td class=(current_class)>(seconds_label(row.current))</td>
             <td class="py-2 text-muted-foreground">(seconds_label(row.desired))</td>
         </tr>

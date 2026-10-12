@@ -1,6 +1,25 @@
-# Desired operation parameters (seconds). The hub sets them on nodes that report another value.
-# Ranges: heartbeat_interval 5-300, wifi_check_interval 1-60. A missing key keeps the node's value.
+# Each node, by the id from its Hello: friendly names shown on the web interface and the desired
+# operation parameters (seconds), which the hub sets on nodes that report another value.
+# Channels without a name show their quantity (e.g. Temperature) or "channel N".
+# Parameter ranges: heartbeat_interval 5-300, wifi_check_interval 1-60; a missing one keeps the
+# node's value.
 
 [nodes."esp32-08d1f9ca41e4"]
-heartbeat_interval = 30
-wifi_check_interval = 5
+name = "Test board"
+entities.1 = { name = "LED", channels.0 = "Power" }
+entities.2 = { name = "BOOT button", channels.0 = "Press" }
+entities.3 = { name = "Climate sensor" }
+entities.4 = { name = "External LED", channels.0 = "Power" }
+entities.5 = { name = "Buzzer", channels.0 = "Pattern" }
+entities.6 = { name = "IR receiver", channels.0 = "Code" }
+parameters = { heartbeat_interval = 30, wifi_check_interval = 5 }
+
+[nodes."sim-living-room"]
+name = "Living room (simulated)"
+entities.1 = { name = "Lamp", channels.0 = "Power" }
+entities.2 = { name = "Button", channels.0 = "Press" }
+entities.3 = { name = "Climate sensor" }
+
+[nodes."sim-bedroom"]
+name = "Bedroom (simulated)"
+entities.1 = { name = "Lamp", channels.0 = "Power" }

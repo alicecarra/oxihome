@@ -7,7 +7,7 @@ use oxihome_protocol::management::{self, PARAMETERS, Parameter};
 use oxihome_protocol::{Access, Channel, EventKind, Quantity, Unit, Value, ValueType};
 
 use super::format::{channel_label, entity_label, value_label};
-use crate::config::names::{NameTarget, Names};
+use crate::config::nodes::{NameTarget, Nodes};
 use crate::config::remotes::Remotes;
 use crate::config::rules::{
     Action, CronTrigger, Day, EventTrigger, Limit, OfflineTrigger, ScheduleTrigger,
@@ -91,12 +91,12 @@ pub fn nodes(hub: &Hub) -> Vec<NodeOverview> {
         state,
         registry,
         events,
-        names,
+        nodes,
         remotes,
         ..
     } = &hub.snapshot();
     let now = Instant::now();
-    let name = |target: NameTarget| names.get(&target).map(String::from);
+    let name = |target: NameTarget| nodes.name(&target).map(String::from);
     registry
         .nodes()
         .into_iter()
@@ -175,8 +175,7 @@ pub fn parameters(hub: &Hub) -> Vec<NodeParametersOverview> {
     let Snapshot {
         state,
         registry,
-        names,
-        parameters,
+        nodes,
         ..
     } = &hub.snapshot();
     registry
@@ -188,11 +187,11 @@ pub fn parameters(hub: &Hub) -> Vec<NodeParametersOverview> {
                 .any(|entity| entity.id == management::ENTITY)
         })
         .map(|(device_id, node)| {
-            let desired = parameters.desired(device_id);
+            let desired = nodes.desired(device_id);
             NodeParametersOverview {
                 device_id: device_id.clone(),
-                name: names
-                    .get(&NameTarget::Node(device_id.clone()))
+                name: nodes
+                    .name(&NameTarget::Node(device_id.clone()))
                     .map(String::from),
                 parameters: PARAMETERS
                     .into_iter()
@@ -218,7 +217,7 @@ pub fn parameters(hub: &Hub) -> Vec<NodeParametersOverview> {
         .collect()
 }
 
-/// Every rule in `rules.toml`, described with friendly names, for the rules page.
+/// Every rule in `rules.toml`, described with friendly nodes, for the rules page.
 pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
     let rules = hub.rules();
     let mut runs = hub.rule_runs();
@@ -228,7 +227,7 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
     rules
         .into_iter()
         .map(|rule| RuleOverview {
-            trigger: trigger_description(&snapshot.names, &snapshot.registry, &rule.when),
+            trigger: trigger_description(&snapshot.nodes, &snapshot.registry, &rule.when),
             next_run: rule
                 .when
                 .next_run(&local_now)
@@ -238,7 +237,7 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
                 .then
                 .iter()
                 .map(|action| ActionOverview {
-                    text: action_description(&snapshot.names, action),
+                    text: action_description(&snapshot.nodes, action),
                     warning: action_warning(&snapshot.registry, action),
                 })
                 .collect(),
@@ -251,22 +250,22 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
         .collect()
 }
 
-fn trigger_description(names: &Names, registry: &Registry, trigger: &Trigger) -> String {
+fn trigger_description(nodes: &Nodes, registry: &Registry, trigger: &Trigger) -> String {
     match trigger {
-        Trigger::Event(trigger) => event_description(names, trigger),
-        Trigger::Threshold(trigger) => threshold_description(names, registry, trigger),
+        Trigger::Event(trigger) => event_description(nodes, trigger),
+        Trigger::Threshold(trigger) => threshold_description(nodes, registry, trigger),
         Trigger::Schedule(trigger) => schedule_description(trigger),
         Trigger::Cron(trigger) => cron_description(trigger),
-        Trigger::Offline(trigger) => offline_description(names, trigger),
+        Trigger::Offline(trigger) => offline_description(nodes, trigger),
         Trigger::RemoteKey(trigger) => format!("{}: key {}", trigger.remote, trigger.key),
     }
 }
 
-fn offline_description(names: &Names, trigger: &OfflineTrigger) -> String {
+fn offline_description(nodes: &Nodes, trigger: &OfflineTrigger) -> String {
     match &trigger.device {
         Some(device) => {
-            let node = names
-                .get(&NameTarget::Node(device.clone()))
+            let node = nodes
+                .name(&NameTarget::Node(device.clone()))
                 .unwrap_or(device);
             format!("{node} goes offline")
         }
@@ -274,9 +273,9 @@ fn offline_description(names: &Names, trigger: &OfflineTrigger) -> String {
     }
 }
 
-fn event_description(names: &Names, trigger: &EventTrigger) -> String {
+fn event_description(nodes: &Nodes, trigger: &EventTrigger) -> String {
     let target = channel_description(
-        names,
+        nodes,
         &trigger.device,
         trigger.entity,
         trigger.channel,
@@ -299,7 +298,7 @@ const ALL_DAYS: [Day; 7] = [
 ];
 
 /// `Living room › Climate sensor: above 28.0 °C`, with the unit the node declares.
-fn threshold_description(names: &Names, registry: &Registry, trigger: &ThresholdTrigger) -> String {
+fn threshold_description(nodes: &Nodes, registry: &Registry, trigger: &ThresholdTrigger) -> String {
     let declared = registry
         .node(&trigger.device)
         .and_then(|node| {
@@ -314,7 +313,7 @@ fn threshold_description(names: &Names, registry: &Registry, trigger: &Threshold
                 .find(|channel| channel.id == trigger.channel)
         });
     let target = channel_description(
-        names,
+        nodes,
         &trigger.device,
         trigger.entity,
         trigger.channel,
@@ -375,7 +374,7 @@ fn next_run_description(now: &Zoned, run: &Zoned) -> String {
     format!("{day} {}", run.strftime("%H:%M"))
 }
 
-fn action_description(names: &Names, action: &Action) -> String {
+fn action_description(nodes: &Nodes, action: &Action) -> String {
     match action {
         Action::Set {
             device,
@@ -384,7 +383,7 @@ fn action_description(names: &Names, action: &Action) -> String {
             value,
         } => format!(
             "Set {} to {}",
-            channel_description(names, device, *entity, *channel, None),
+            channel_description(nodes, device, *entity, *channel, None),
             if *value { "on" } else { "off" }
         ),
         Action::Toggle {
@@ -393,7 +392,7 @@ fn action_description(names: &Names, action: &Action) -> String {
             channel,
         } => format!(
             "Toggle {}",
-            channel_description(names, device, *entity, *channel, None)
+            channel_description(nodes, device, *entity, *channel, None)
         ),
         Action::Invoke {
             device,
@@ -401,7 +400,7 @@ fn action_description(names: &Names, action: &Action) -> String {
             channel,
             value,
         } => {
-            let target = channel_description(names, device, *entity, *channel, None);
+            let target = channel_description(nodes, device, *entity, *channel, None);
             match value {
                 Some(value) => format!("Invoke {target} with {value}"),
                 None => format!("Invoke {target}"),
@@ -429,13 +428,13 @@ fn action_warning(registry: &Registry, action: &Action) -> Option<String> {
 
 /// `Test board › LED`; the channel only shows when it is not the entity's first.
 fn channel_description(
-    names: &Names,
+    nodes: &Nodes,
     device_id: &str,
     entity: u8,
     channel: u8,
     quantity: Option<Quantity>,
 ) -> String {
-    let name = |target: NameTarget| names.get(&target).map(String::from);
+    let name = |target: NameTarget| nodes.name(&target).map(String::from);
     let node =
         name(NameTarget::Node(device_id.to_string())).unwrap_or_else(|| device_id.to_string());
     let entity_name = entity_label(
@@ -465,7 +464,7 @@ mod tests {
         entities.2 = { name = "BOOT button" }
     "#;
 
-    fn names() -> Names {
+    fn nodes() -> Nodes {
         toml::from_str(NAMES).unwrap()
     }
 
@@ -479,7 +478,7 @@ mod tests {
             data: None,
         };
         assert_eq!(
-            event_description(&names(), &trigger),
+            event_description(&nodes(), &trigger),
             "Test board › BOOT button: LongPress"
         );
     }
@@ -494,7 +493,7 @@ mod tests {
             data: None,
         };
         assert_eq!(
-            event_description(&names(), &trigger),
+            event_description(&nodes(), &trigger),
             "sim-unknown › entity 3: Press"
         );
     }
@@ -509,7 +508,7 @@ mod tests {
             data: Some("NEC 00 52".into()),
         };
         assert_eq!(
-            event_description(&names(), &trigger),
+            event_description(&nodes(), &trigger),
             "Test board › BOOT button: Received NEC 00 52"
         );
     }
@@ -570,7 +569,7 @@ mod tests {
             limit: Limit::Above(85.0),
         };
         assert_eq!(
-            threshold_description(&names(), &registry, &trigger),
+            threshold_description(&nodes(), &registry, &trigger),
             "Test board › entity 3 · Humidity: above 85.0 %"
         );
     }
@@ -587,7 +586,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            trigger_description(&names(), &Registry::new(3), &rules.all()[0].when),
+            trigger_description(&nodes(), &Registry::new(3), &rules.all()[0].when),
             "At every 30 minutes, of hour 8-22, on Monday, Tuesday, Wednesday, Thursday, and Friday (*/30 8-22 * * mon-fri)"
         );
     }
@@ -620,7 +619,7 @@ mod tests {
             channel: 1,
         };
         assert_eq!(
-            action_description(&names(), &toggle),
+            action_description(&nodes(), &toggle),
             "Toggle Test board › LED · Brightness"
         );
     }
@@ -638,27 +637,27 @@ mod tests {
             message: "All lamps are off".into(),
         };
         assert_eq!(
-            action_description(&names(), &set),
+            action_description(&nodes(), &set),
             "Set Test board › LED to off"
         );
         assert_eq!(
-            action_description(&names(), &notify),
+            action_description(&nodes(), &notify),
             "Notify \"Good night\": All lamps are off"
         );
     }
 
     #[test]
     fn offline_and_invoke_descriptions() {
-        let names = names();
+        let nodes = nodes();
         let bedroom = OfflineTrigger {
             device: Some("esp32-test".into()),
         };
         assert_eq!(
-            offline_description(&names, &bedroom),
+            offline_description(&nodes, &bedroom),
             "Test board goes offline"
         );
         assert_eq!(
-            offline_description(&names, &OfflineTrigger { device: None }),
+            offline_description(&nodes, &OfflineTrigger { device: None }),
             "Any node goes offline"
         );
         let invoke = Action::Invoke {
@@ -668,7 +667,7 @@ mod tests {
             value: Some("Alarm".into()),
         };
         assert_eq!(
-            action_description(&names, &invoke),
+            action_description(&nodes, &invoke),
             "Invoke Test board › LED with Alarm"
         );
     }

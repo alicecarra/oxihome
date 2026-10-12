@@ -11,13 +11,12 @@ use oxihome_protocol::{CommandOp, Message, Payload, Value};
 use tokio::sync::broadcast;
 
 use crate::commands::Commands;
-use crate::config::names::{NameTarget, Names};
+use crate::config::nodes::{NameTarget, Nodes};
 use crate::config::remotes::Remotes;
 use crate::config::rules::{Rule, RuleRun, Rules};
 use crate::config::{ConfigFile, FILES, HomeConfig, read_file, write_file};
 use crate::mqtt::Mqtt;
 use crate::node::events::{EventRecord, Events};
-use crate::node::parameters::NodeParameters;
 use crate::node::registry::{NodeEvent, Registry};
 use crate::node::state::{ChannelUpdate, State};
 use crate::notifications::{self, Notification, Notifications};
@@ -27,8 +26,7 @@ pub struct Snapshot<'a> {
     pub state: MutexGuard<'a, State>,
     pub registry: MutexGuard<'a, Registry>,
     pub events: MutexGuard<'a, Events>,
-    pub names: MutexGuard<'a, Names>,
-    pub parameters: MutexGuard<'a, NodeParameters>,
+    pub nodes: MutexGuard<'a, Nodes>,
     pub remotes: MutexGuard<'a, Remotes>,
 }
 
@@ -65,11 +63,10 @@ pub struct Hub {
     state: Mutex<State>,
     events: Mutex<Events>,
     config_directory: PathBuf,
-    names: Mutex<Names>,
+    nodes: Mutex<Nodes>,
     rules: Mutex<Rules>,
     /// Last run of each rule, by name.
     rule_runs: Mutex<HashMap<String, RuleRun>>,
-    parameters: Mutex<NodeParameters>,
     remotes: Mutex<Remotes>,
     /// Newest first, without repeats of held keys.
     recent_codes: Mutex<VecDeque<ReceivedCode>>,
@@ -96,10 +93,9 @@ impl Hub {
             state: Mutex::default(),
             events: Mutex::default(),
             config_directory,
-            names: Mutex::new(config.names),
+            nodes: Mutex::new(config.nodes),
             rules: Mutex::new(config.rules),
             rule_runs: Mutex::default(),
-            parameters: Mutex::new(config.parameters),
             remotes: Mutex::new(config.remotes),
             recent_codes: Mutex::default(),
             last_learned_remote: Mutex::default(),
@@ -228,8 +224,7 @@ impl Hub {
             state: self.state.lock().unwrap(),
             registry: self.registry.lock().unwrap(),
             events: self.events.lock().unwrap(),
-            names: self.names.lock().unwrap(),
-            parameters: self.parameters.lock().unwrap(),
+            nodes: self.nodes.lock().unwrap(),
             remotes: self.remotes.lock().unwrap(),
         }
     }
@@ -267,9 +262,8 @@ impl Hub {
     /// Returns the number of rules.
     fn apply_config(&self, config: HomeConfig) -> usize {
         let rule_count = config.rules.len();
-        *self.names.lock().unwrap() = config.names;
+        *self.nodes.lock().unwrap() = config.nodes;
         *self.rules.lock().unwrap() = config.rules;
-        *self.parameters.lock().unwrap() = config.parameters;
         *self.remotes.lock().unwrap() = config.remotes;
         self.announce(Change::Nodes);
         rule_count
@@ -292,7 +286,7 @@ impl Hub {
             return Vec::new();
         };
         snapshot
-            .parameters
+            .nodes
             .desired(device_id)
             .into_iter()
             .filter(|(parameter, value)| {
@@ -408,10 +402,10 @@ impl Hub {
 
     /// The node's friendly name, or its id.
     pub fn node_name(&self, device_id: &str) -> String {
-        self.names
+        self.nodes
             .lock()
             .unwrap()
-            .get(&NameTarget::Node(device_id.to_string()))
+            .name(&NameTarget::Node(device_id.to_string()))
             .map_or_else(|| device_id.to_string(), String::from)
     }
 
