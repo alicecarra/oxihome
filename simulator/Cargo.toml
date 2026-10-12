@@ -5,9 +5,8 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
-oxihome-node = { path = "../node" }
+oxihome-node = { path = "../node", features = ["mqtt"] }
 oxihome-protocol = { path = "../protocol" }
-rumqttc = "0.25"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["io-std", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
 toml = "1"

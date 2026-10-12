@@ -250,10 +250,19 @@ checks each command against the entities the node declares (unknown entity or ch
 value type, `Int`/`Float` range, `Enum` option, `Text` length) before the node sees it. A node
 implements the `Device` trait (its entities, the state of an entity, running a checked command) and
 `NodeCore` turns messages from the hub into answers. No network and no clock, so it builds for the
-boards too. The simulator uses it; the firmware and an MQTT runtime for software nodes come next.
+boards too.
+
+The `mqtt` feature (Tokio and `rumqttc`, for computers only) runs a software node: implement
+`SoftwareNode` (device id, answers to a message, announcement, periodic report) and
+`mqtt::spawn` connects it with its own MQTT client, subscribes to its topics and the broadcast,
+announces on every connection, publishes the report every `report_interval`, reconnects by itself,
+and returns a `Handle` to act on the node from elsewhere (a console, a chat bot) or to disconnect it
+and connect again. The simulator is built this way; the firmware keeps its own MQTT client and will
+use only the core.
 
 ```sh
 cargo test -p oxihome-node
+cargo clippy -p oxihome-node --features mqtt
 ```
 
 ## Simulator

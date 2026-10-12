@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use oxihome_node::mqtt::SoftwareNode;
 use oxihome_node::{Device, NodeCore, Rejection};
 use oxihome_protocol::{
     Access, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, EventKind, Message,
@@ -63,10 +64,6 @@ impl SimulatedNode {
         }
     }
 
-    pub fn device_id(&self) -> &str {
-        self.core.device_id()
-    }
-
     /// Like a power cycle: lamps off, uptime and message ids from zero.
     pub fn reboot(&mut self, now: Instant) {
         self.core.reset();
@@ -74,16 +71,6 @@ impl SimulatedNode {
         for on in self.device.lamps.values_mut() {
             *on = false;
         }
-    }
-
-    /// The answers to a message from the hub.
-    pub fn handle(&mut self, message: &Message) -> Vec<Message> {
-        self.core.handle(&mut self.device, message)
-    }
-
-    /// What the node sends after connecting or rebooting.
-    pub fn announcement(&mut self) -> Vec<Message> {
-        self.core.announcement(&self.device)
     }
 
     pub fn heartbeat(&mut self, now: Instant) -> Message {
@@ -117,6 +104,26 @@ impl SimulatedNode {
     pub fn press(&mut self, entity: u8) -> Option<Message> {
         (self.device.profile(entity) == Some(Profile::Button))
             .then(|| self.core.event(entity, 0, EventKind::Press, None))
+    }
+}
+
+impl SoftwareNode for SimulatedNode {
+    fn device_id(&self) -> &str {
+        self.core.device_id()
+    }
+
+    fn handle(&mut self, message: &Message) -> Vec<Message> {
+        self.core.handle(&mut self.device, message)
+    }
+
+    fn announcement(&mut self) -> Vec<Message> {
+        self.core.announcement(&self.device)
+    }
+
+    fn report(&mut self) -> Vec<Message> {
+        let mut messages = vec![self.heartbeat(Instant::now())];
+        messages.extend(self.sensor_states());
+        messages
     }
 }
 

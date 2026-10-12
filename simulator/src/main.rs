@@ -6,11 +6,9 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use oxihome_protocol::Message;
-use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
+use oxihome_node::mqtt::{self, Broker, Handle, SoftwareNode};
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::mpsc;
 
 use node::{Profile, SimulatedNode};
 
@@ -34,7 +32,7 @@ struct Config {
     nodes: Vec<NodeConfig>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize)]
 struct MqttConfig {
     host: String,
     port: u16,
@@ -65,16 +63,19 @@ async fn main() -> anyhow::Result<()> {
     let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
     let config: Config = toml::from_str(&text).with_context(|| format!("parsing {path}"))?;
 
-    let mut controls = HashMap::new();
+    let mut handles = HashMap::new();
     for node_config in &config.nodes {
         let node = SimulatedNode::new(
             node_config.id.clone(),
             &node_config.entities,
             Instant::now(),
         );
-        let (sender, receiver) = mpsc::channel(8);
-        controls.insert(node_config.id.clone(), sender);
-        tokio::spawn(run_node(node, config.mqtt.clone(), receiver));
+        let broker = Broker {
+            host: config.mqtt.host.clone(),
+            port: config.mqtt.port,
+            report_interval: REPORT_INTERVAL,
+        };
+        handles.insert(node_config.id.clone(), mqtt::spawn(node, broker));
     }
 
     println!("{HELP}");
@@ -139,119 +140,51 @@ async fn main() -> anyhow::Result<()> {
                 continue;
             }
         };
-        match controls.get(device_id) {
-            Some(sender) => sender.send(control).await?,
+        match handles.get(device_id) {
+            Some(handle) => apply(handle, control).await,
             None => println!("unknown node {device_id}"),
         }
     }
     Ok(())
 }
 
-/// One MQTT connection per node, like a real board.
-async fn run_node(
-    mut node: SimulatedNode,
-    mqtt: MqttConfig,
-    mut controls: mpsc::Receiver<Control>,
-) {
-    let device_id = node.device_id().to_string();
-    let up_topic = format!("oxihome/{device_id}/up");
-    let down_topic = format!("oxihome/{device_id}/down");
-    let mut online = true;
-
-    loop {
-        if !online {
-            match controls.recv().await {
-                Some(Control::Online) => online = true,
-                Some(_) => println!("{} is offline", device_id),
-                None => return,
-            }
-            continue;
-        }
-
-        let options = MqttOptions::new(device_id.clone(), mqtt.host.clone(), mqtt.port);
-        let (client, mut event_loop) = AsyncClient::new(options, 32);
-        let mut report = tokio::time::interval(REPORT_INTERVAL);
-        report.tick().await;
-
-        loop {
-            let outgoing: Vec<Message> = tokio::select! {
-                event = event_loop.poll() => match event {
-                    Ok(Event::Incoming(Packet::ConnAck(_))) => {
-                        println!("{} connected", device_id);
-                        for topic in [down_topic.as_str(), "oxihome/broadcast/down"] {
-                            if let Err(error) = client.subscribe(topic, QoS::AtLeastOnce).await {
-                                println!("{} subscribe failed: {error}", device_id);
-                            }
-                        }
-                        node.announcement()
-                    }
-                    Ok(Event::Incoming(Packet::Publish(publish))) => {
-                        match Message::from_json(&String::from_utf8_lossy(&publish.payload)) {
-                            Ok(message) => node.handle(&message),
-                            Err(error) => {
-                                println!("{} invalid message: {error}", device_id);
-                                Vec::new()
-                            }
-                        }
-                    }
-                    Ok(_) => Vec::new(),
-                    Err(error) => {
-                        println!("{} connection error: {error}", device_id);
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+async fn apply(handle: &Handle<SimulatedNode>, control: Control) {
+    match control {
+        Control::Press(entity) => {
+            handle
+                .act(move |node| match node.press(entity) {
+                    Some(event) => vec![event],
+                    None => {
+                        println!("{} entity {entity} is not a button", node.device_id());
                         Vec::new()
                     }
-                },
-                _ = report.tick() => {
-                    let mut messages = vec![node.heartbeat(Instant::now())];
-                    messages.extend(node.sensor_states());
-                    messages
-                }
-                control = controls.recv() => match control {
-                    Some(Control::Press(entity)) => match node.press(entity) {
-                        Some(event) => vec![event],
-                        None => {
-                            println!("{} entity {entity} is not a button", device_id);
-                            Vec::new()
-                        }
-                    },
-                    Some(Control::Reboot) => {
-                        println!("{} rebooting", device_id);
-                        node.reboot(Instant::now());
-                        node.announcement()
-                    }
-                    Some(Control::Offline) => {
-                        println!("{} going offline", device_id);
-                        let _ = client.disconnect().await;
-                        online = false;
-                        break;
-                    }
-                    Some(Control::Climate { temperature, humidity }) => {
-                        let states = node.set_climate(temperature, humidity);
-                        if states.is_empty() {
-                            println!("{} has no climate sensor", device_id);
-                        }
-                        states
-                    }
-                    Some(Control::Online) => Vec::new(),
-                    None => return,
-                },
-            };
-
-            for message in outgoing {
-                let json = match message.to_json() {
-                    Ok(json) => json,
-                    Err(error) => {
-                        println!("{} encoding failed: {error}", device_id);
-                        continue;
-                    }
-                };
-                if let Err(error) = client
-                    .publish(up_topic.as_str(), QoS::AtLeastOnce, false, json)
-                    .await
-                {
-                    println!("{} publish failed: {error}", device_id);
-                }
-            }
+                })
+                .await
         }
-    }
+        Control::Reboot => {
+            handle
+                .act(|node| {
+                    println!("{} rebooting", node.device_id());
+                    node.reboot(Instant::now());
+                    node.announcement()
+                })
+                .await
+        }
+        Control::Climate {
+            temperature,
+            humidity,
+        } => {
+            handle
+                .act(move |node| {
+                    let states = node.set_climate(temperature, humidity);
+                    if states.is_empty() {
+                        println!("{} has no climate sensor", node.device_id());
+                    }
+                    states
+                })
+                .await
+        }
+        Control::Offline => handle.disconnect().await,
+        Control::Online => handle.connect().await,
+    };
 }

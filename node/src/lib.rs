@@ -1,7 +1,10 @@
 //! What every Oxihome node does, whatever it runs on: answering the hub, numbering messages,
 //! answering duplicate commands without running them again, and checking commands against the
-//! entities the node declares. No network and no clock: messages in, messages out.
+//! entities the node declares. No network and no clock: messages in, messages out. The `mqtt`
+//! feature adds a runtime for nodes that run on a computer.
 
+#[cfg(feature = "mqtt")]
+pub mod mqtt;
 mod validation;
 
 use std::collections::HashMap;

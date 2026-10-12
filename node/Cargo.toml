@@ -5,3 +5,8 @@ edition = "2024"
 
 [dependencies]
 oxihome-protocol = { path = "../protocol" }
+rumqttc = { version = "0.25", optional = true }
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"], optional = true }
+
+[features]
+mqtt = ["dep:rumqttc", "dep:tokio"]
