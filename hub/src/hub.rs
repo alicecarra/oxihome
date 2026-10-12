@@ -4,6 +4,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{Instant, SystemTime};
 
 use anyhow::bail;
+use jiff::Timestamp;
 use jiff::civil::DateTime;
 use jiff::tz::TimeZone;
 use oxihome_protocol::management::{self, Parameter};
@@ -11,8 +12,8 @@ use oxihome_protocol::{CommandOp, Message, Payload, Value};
 use tokio::sync::{broadcast, watch};
 
 use crate::commands::Commands;
-use crate::config::nodes::{NameTarget, NodeEdits, Nodes};
 use crate::config::dashboard::{Dashboard, Dashboards};
+use crate::config::nodes::{NameTarget, NodeEdits, Nodes};
 use crate::config::panels::{Panel, Panels};
 use crate::config::remotes::Remotes;
 use crate::config::rules::{Rule, RuleRun, RuleUse, Rules};
@@ -22,6 +23,7 @@ use crate::node::events::{EventRecord, Events};
 use crate::node::registry::{NodeEvent, Registry};
 use crate::node::state::{ChannelUpdate, State};
 use crate::notifications::{self, Notification, Notifications};
+use crate::storage::{Restored, Storage, Write};
 
 /// Read access for the web interface, see `Hub::snapshot`.
 pub struct Snapshot<'a> {
@@ -37,7 +39,7 @@ pub struct Snapshot<'a> {
 pub struct ReceivedCode {
     pub code: String,
     pub device_id: String,
-    pub at: Instant,
+    pub at: Timestamp,
 }
 
 const RECENT_CODES: usize = 10;
@@ -76,6 +78,7 @@ pub struct Hub {
     recent_codes: Mutex<VecDeque<ReceivedCode>>,
     notifications: Mutex<Notifications>,
     commands: Commands,
+    storage: Storage,
     /// Scheduled rules run in this zone's local time.
     time_zone: TimeZone,
     changes: broadcast::Sender<Change>,
@@ -90,22 +93,53 @@ impl Hub {
         config_directory: PathBuf,
         config: HomeConfig,
         time_zone: TimeZone,
+        storage: Storage,
+        restored: Restored,
     ) -> Self {
+        let now = Instant::now();
+        let mut registry = Registry::new(missed_heartbeats);
+        for node in restored.nodes {
+            registry.restore(node, now);
+        }
+        let mut state = State::default();
+        for (device_id, entity, channel, value, confidence) in restored.values {
+            state.restore(device_id, entity, channel, value, confidence);
+        }
+        let mut events = Events::default();
+        for (event, at) in restored.last_events {
+            events.restore(event, at);
+        }
+        let mut recent_codes = VecDeque::new();
+        for (event, at) in &restored.received_events {
+            if let Some(code) = learnable_code(event)
+                && recent_codes.len() < RECENT_CODES
+                && !recent_codes
+                    .iter()
+                    .any(|received: &ReceivedCode| received.code == code)
+            {
+                recent_codes.push_back(ReceivedCode {
+                    code: code.to_string(),
+                    device_id: event.device_id.clone(),
+                    at: *at,
+                });
+            }
+        }
         Self {
             mqtt,
-            registry: Mutex::new(Registry::new(missed_heartbeats)),
-            state: Mutex::default(),
-            events: Mutex::default(),
+            registry: Mutex::new(registry),
+            state: Mutex::new(state),
+            events: Mutex::new(events),
             config_directory,
             nodes: Mutex::new(config.nodes),
             rules: Mutex::new(config.rules),
-            rule_runs: Mutex::default(),
+            rule_runs: Mutex::new(restored.rule_runs.into_iter().collect()),
             remotes: Mutex::new(config.remotes),
             panels: Mutex::new(config.panels),
             dashboards: Mutex::new(config.dashboards),
-            recent_codes: Mutex::default(),
+            recent_codes: Mutex::new(recent_codes),
             notifications: Mutex::default(),
             commands: Commands::default(),
+            storage,
             time_zone,
             changes: broadcast::channel(64).0,
             shutting_down: watch::channel(false).0,
@@ -137,16 +171,39 @@ impl Hub {
             }
             pending.answer(message.payload.clone());
         }
-        let node_events = self.registry.lock().unwrap().handle(message, now);
+        let at = Timestamp::now();
+        let node_events = {
+            let mut registry = self.registry.lock().unwrap();
+            let node_events = registry.handle(message, now);
+            let describes_node = matches!(
+                message.payload,
+                Payload::Hello { .. }
+                    | Payload::Heartbeat { .. }
+                    | Payload::State {
+                        entity: management::ENTITY,
+                        ..
+                    }
+            );
+            if describes_node && let Some(stored) = registry.stored(&message.src) {
+                self.storage.write(Write::Node(stored));
+            }
+            node_events
+        };
         updates.extend(state.apply(message));
-        let event = self.events.lock().unwrap().apply(message, now);
+        for update in &updates {
+            self.storage.write(Write::Value(update.clone(), at));
+        }
+        let event = self.events.lock().unwrap().apply(message, at);
+        if let Some(event) = &event {
+            self.storage.write(Write::Event(event.clone(), at));
+        }
         if let Some(code) = event.as_ref().and_then(learnable_code) {
             let mut recent = self.recent_codes.lock().unwrap();
             recent.retain(|received| received.code != code);
             recent.push_front(ReceivedCode {
                 code: code.to_string(),
                 device_id: message.src.clone(),
-                at: now,
+                at,
             });
             recent.truncate(RECENT_CODES);
         }
@@ -166,6 +223,11 @@ impl Hub {
 
     pub fn shut_down(&self) {
         self.shutting_down.send_replace(true);
+    }
+
+    /// Waits until everything that happened is in the database.
+    pub async fn flush_storage(&self) {
+        self.storage.flush().await;
     }
 
     /// Resolves once `shut_down` is called.
@@ -431,6 +493,8 @@ impl Hub {
     }
 
     pub fn record_rule_run(&self, name: &str, run: RuleRun) {
+        self.storage
+            .write(Write::RuleRun(name.to_string(), run.clone()));
         self.rule_runs.lock().unwrap().insert(name.to_string(), run);
     }
 

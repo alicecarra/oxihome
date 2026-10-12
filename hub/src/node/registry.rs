@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::time::{Duration, Instant};
 
+use jiff::Timestamp;
 use oxihome_protocol::management::{self, HEARTBEAT_INTERVAL};
 use oxihome_protocol::{Access, Channel, EntityDescriptor, Message, Payload, Value, ValueType};
 
@@ -11,7 +12,10 @@ pub struct Node {
     pub firmware_version: String,
     pub entities: Vec<EntityDescriptor>,
     pub online: bool,
+    /// For presence.
     pub last_seen: Instant,
+    /// For showing and storing; survives a restart.
+    pub last_seen_at: Timestamp,
     pub uptime_seconds: Option<u32>,
     pub rssi: Option<i8>,
     /// From the node's `HeartbeatInterval`; the default until it reports one.
@@ -84,6 +88,18 @@ impl Node {
     fn offline_after(&self, missed_heartbeats: u32) -> Duration {
         self.heartbeat_interval * missed_heartbeats
     }
+}
+
+/// What the hub keeps of a node across restarts.
+#[derive(Debug, Clone)]
+pub struct StoredNode {
+    pub device_id: String,
+    pub firmware_version: String,
+    pub entities: Vec<EntityDescriptor>,
+    pub last_seen: Timestamp,
+    pub uptime_seconds: Option<u32>,
+    pub rssi: Option<i8>,
+    pub heartbeat_interval: Duration,
 }
 
 #[derive(Debug, PartialEq)]
@@ -177,6 +193,35 @@ impl Registry {
         self.nodes.get(device_id)
     }
 
+    pub fn stored(&self, device_id: &str) -> Option<StoredNode> {
+        self.nodes.get(device_id).map(|node| StoredNode {
+            device_id: device_id.to_string(),
+            firmware_version: node.firmware_version.clone(),
+            entities: node.entities.clone(),
+            last_seen: node.last_seen_at,
+            uptime_seconds: node.uptime_seconds,
+            rssi: node.rssi,
+            heartbeat_interval: node.heartbeat_interval,
+        })
+    }
+
+    /// A node from before the restart, offline until it talks again.
+    pub fn restore(&mut self, stored: StoredNode, now: Instant) {
+        self.nodes.insert(
+            stored.device_id,
+            Node {
+                firmware_version: stored.firmware_version,
+                entities: stored.entities,
+                online: false,
+                last_seen: now,
+                last_seen_at: stored.last_seen,
+                uptime_seconds: stored.uptime_seconds,
+                rssi: stored.rssi,
+                heartbeat_interval: stored.heartbeat_interval,
+            },
+        );
+    }
+
     pub fn handle(&mut self, message: &Message, now: Instant) -> Vec<NodeEvent> {
         if let Payload::Hello {
             fw_version,
@@ -198,6 +243,7 @@ impl Registry {
                     entities: entities.clone(),
                     online: true,
                     last_seen: now,
+                    last_seen_at: Timestamp::now(),
                     uptime_seconds,
                     rssi,
                     heartbeat_interval,
@@ -222,6 +268,7 @@ impl Registry {
 
         let mut events = Vec::new();
         node.last_seen = now;
+        node.last_seen_at = Timestamp::now();
         if !node.online {
             node.online = true;
             events.push(NodeEvent::Online(message.src.clone()));

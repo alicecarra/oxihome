@@ -9,6 +9,7 @@ mod mqtt;
 mod node;
 mod notifications;
 mod schedule;
+mod storage;
 mod web;
 
 use std::path::PathBuf;
@@ -27,6 +28,7 @@ use hub::Hub;
 use mqtt::{Incoming, Mqtt};
 use node::registry::DEFAULT_MISSED_HEARTBEATS;
 use schedule::Schedule;
+use storage::Storage;
 
 const PRESENCE_CHECK_INTERVAL: Duration = Duration::from_secs(10);
 const CLOCK_INTERVAL: Duration = Duration::from_secs(1);
@@ -42,6 +44,20 @@ struct Config {
     presence: PresenceConfig,
     #[serde(default)]
     time: TimeConfig,
+    storage: StorageConfig,
+}
+
+#[derive(Deserialize)]
+struct StorageConfig {
+    /// SQLite database with the nodes' last state and the history; created when missing.
+    path: PathBuf,
+    /// Days of readings and events kept.
+    #[serde(default = "default_retention_days")]
+    retention_days: u32,
+}
+
+fn default_retention_days() -> u32 {
+    7
 }
 
 #[derive(Default, Deserialize)]
@@ -105,6 +121,10 @@ async fn main() -> anyhow::Result<()> {
         config.presence.missed_heartbeats >= 1,
         "{path}: presence.missed_heartbeats must be at least 1"
     );
+    ensure!(
+        config.storage.retention_days >= 1,
+        "{path}: storage.retention_days must be at least 1"
+    );
 
     let time_zone = match &config.time.zone {
         Some(name) => TimeZone::get(name).with_context(|| format!("{path}: time.zone"))?,
@@ -127,6 +147,13 @@ async fn main() -> anyhow::Result<()> {
         }
         None => None,
     };
+    let retention = Duration::from_secs(u64::from(config.storage.retention_days) * 86400);
+    let (storage, restored) = Storage::open(&config.storage.path, retention).await?;
+    println!(
+        "{} nodes restored from {}",
+        restored.nodes.len(),
+        config.storage.path.display()
+    );
     let (mqtt, mut incoming) = Mqtt::connect(&config.mqtt.host, config.mqtt.port, password);
     let hub = Arc::new(Hub::new(
         mqtt,
@@ -134,6 +161,8 @@ async fn main() -> anyhow::Result<()> {
         config.config.dir.clone(),
         home_config,
         time_zone,
+        storage,
+        restored,
     ));
 
     let listener = TcpListener::bind((config.http.host.as_str(), config.http.port)).await?;
@@ -161,12 +190,15 @@ async fn main() -> anyhow::Result<()> {
             _ = presence_check.tick() => dispatch::on_presence_check(&hub),
             _ = clock.tick() => dispatch::on_clock_tick(&hub, &mut schedule),
             result = &mut web_server => {
+                hub.flush_storage().await;
                 return Ok(result??);
             }
             () = &mut signal => {
                 println!("shutting down");
                 hub.shut_down();
-                return Ok(web_server.await??);
+                let result = web_server.await;
+                hub.flush_storage().await;
+                return Ok(result??);
             }
         }
     }

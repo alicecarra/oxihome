@@ -179,7 +179,46 @@ each other.
 Ctrl+C or `SIGTERM` stops the hub at once: it logs `shutting down`, stops handling messages and
 rules, closes the pages' event streams and gives other requests up to 3 s to finish. (Before
 2026-10-12 it took 30 s with a page open, waiting for the event streams, which never end on their
-own.)
+own.) Before exiting it waits for the pending database writes.
+
+### Database
+
+The hub keeps its state and history in SQLite, in the file set in `[storage] path` (default
+config: `hub/oxihome.sqlite`, out of git, with its `-wal` and `-shm` files). The file and its tables are created
+at start when missing; the schema is in `hub/migrations/` and is applied by `sqlx` on start. SQLite
+is built into the binary (`sqlite-bundled`), so no system package is needed. Dependencies added
+on 2026-10-12:
+
+```sh
+cargo add -p oxihome-hub sqlx@0.9 --no-default-features -F runtime-tokio,sqlite-bundled,migrate,macros
+cargo add -p oxihome-hub serde_json@1
+```
+
+What it keeps:
+
+- `nodes`: the last `Hello` of each node (firmware, entities), when it was last seen, uptime, RSSI
+  and heartbeat interval. After a restart the nodes show as offline with all their channels
+  instead of "not seen", until they talk again; a lower uptime in the first heartbeat still shows
+  as a reboot.
+- `channel_values`: the last value of each channel, with its confidence, shown right after a
+  restart; the `Query State` sent on connecting updates it.
+- `readings`: every value change (history), with a `number` column for `Bool` (0 or 1), `Int` and
+  `Float`, for charts.
+- `events`: every event (button, IR code). The last event of each channel and the recent codes
+  of the Learn section on `/remotes` are read back from it at start.
+- `rule_runs`: the last run of each rule, shown on `/rules`.
+
+`readings` and `events` keep `[storage] retention_days` days (default 7), pruned at start and
+then every hour. Writes go to a task of their own, in one transaction per batch, so the MQTT loop
+never waits for the disk. Times are milliseconds since the Unix epoch. To look inside (with the
+`sqlite` package):
+
+```sh
+sqlite3 hub/oxihome.sqlite "SELECT device_id, entity, channel, datetime(at / 1000, 'unixepoch', 'localtime'), value FROM readings ORDER BY at DESC LIMIT 20"
+```
+
+Deleting the file starts from scratch: the nodes rebuild the state as before, from their `Hello`
+and `State`.
 
 The home's configuration lives in TOML files in the directory set in `[config] dir` (default
 `hub/config/`, versioned in git). The hub reads them at start. They can be edited on `/settings`,
@@ -223,7 +262,8 @@ previous configuration stays in use.
   - a local time, every day or on some days: `when = { at = "07:00", days = ["monday", "friday"] }`;
   - a numeric channel crossing a limit: `when = { device = "...", entity = 3, channel = 0, above = 28 }`
     (or `below = 27`). It runs when a value confirmed by the node crosses the limit, not again while
-    the value stays past it; the first value the hub learns counts as a crossing. A pair of rules
+    the value stays past it; the first value the hub learns counts as a crossing (a value kept in the
+    database from before a restart is not a first value, so a restart does not run the rule again). A pair of rules
     (on above 28, off below 27) gives hysteresis;
   - a cron expression, standard five fields (minute, hour, day of month, month, day of week):
     `when = { cron = "*/30 8-22 * * mon-fri" }`. When both the day of month and the day of week
@@ -285,8 +325,8 @@ name and parameters, **Edit names** for entity and channel names), which turns o
 into fields; it stops updating while edited. Saving writes `nodes.toml` with `toml_edit`, keeping
 comments and the `entities.1 = { ... }` lines: an empty field removes the name or parameter, a field
 left out stays as it is, the whole configuration is validated first (an error shows at the top and
-keeps what was typed), and changed parameters go to the node right away. A node that has not sent
-a `Hello` since the hub started shows as unknown. At the bottom, **Rules** lists, one line per rule, the rules
+keeps what was typed), and changed parameters go to the node right away. A node that never sent
+a `Hello` (none in the database either) shows as unknown. At the bottom, **Rules** lists, one line per rule, the rules
 that run on something from the node (an event or value of one of its channels, the node going
 offline, `offline = "*"` included) and the channels they act on; each name links to the rule's card
 on `/rules`, which is highlighted. A channel used by rules shows a "N rules" mark (their names on

@@ -1,12 +1,11 @@
 use std::fmt;
 use std::sync::Arc;
-use std::time::Instant;
 
 use anyhow::bail;
 use croner::Cron;
 use croner::parser::{CronParser, Seconds, Year};
 use jiff::civil::{DateTime, Time, Weekday};
-use jiff::{ToSpan, Zoned};
+use jiff::{Timestamp, ToSpan, Zoned};
 use oxihome_protocol::{Confidence, EventKind, Value};
 use serde::Deserialize;
 use toml_edit::{DocumentMut, value};
@@ -453,7 +452,7 @@ impl fmt::Display for Action {
 /// How the last run of a rule went; `errors` is empty when every action worked.
 #[derive(Debug, Clone)]
 pub struct RuleRun {
-    pub at: Instant,
+    pub at: Timestamp,
     pub errors: Vec<String>,
 }
 
@@ -647,7 +646,7 @@ impl Rules {
 
 /// Runs the actions in order; a failed action does not stop the next ones.
 pub async fn run(hub: Arc<Hub>, rule: Rule) {
-    let at = Instant::now();
+    let at = Timestamp::now();
     let mut errors = Vec::new();
     for action in &rule.then {
         match perform(&hub, action, &rule.name).await {

@@ -1,12 +1,12 @@
 //! What the pages show, built from a `Hub::snapshot`.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use jiff::Zoned;
+use jiff::{Timestamp, Zoned};
 use oxihome_protocol::management::{self, PARAMETERS, Parameter};
 use oxihome_protocol::{Access, Channel, EventKind, Quantity, Unit, Value, ValueType};
 
-use super::format::{channel_label, entity_label, unit_symbol, value_label};
+use super::format::{channel_label, elapsed, entity_label, unit_symbol, value_label};
 use crate::config::dashboard::ChannelReference;
 use crate::config::nodes::{ConfiguredEntity, NameTarget, Nodes};
 use crate::config::remotes::Remotes;
@@ -117,7 +117,7 @@ pub struct ActionOverview {
 /// The registered nodes and the configured ones not seen yet, by presence then device id.
 pub fn nodes(hub: &Hub) -> Vec<NodeOverview> {
     let snapshot = hub.snapshot();
-    let now = Instant::now();
+    let now = Timestamp::now();
     let mut nodes: Vec<NodeOverview> = snapshot
         .registry
         .nodes()
@@ -201,10 +201,15 @@ pub fn dashboard_channels(hub: &Hub, references: &[ChannelReference]) -> Vec<Das
 pub fn node(hub: &Hub, device_id: &str) -> Option<NodeOverview> {
     let snapshot = hub.snapshot();
     let node = snapshot.registry.node(device_id)?;
-    Some(node_overview(&snapshot, device_id, node, Instant::now()))
+    Some(node_overview(&snapshot, device_id, node, Timestamp::now()))
 }
 
-fn node_overview(snapshot: &Snapshot, device_id: &str, node: &Node, now: Instant) -> NodeOverview {
+fn node_overview(
+    snapshot: &Snapshot,
+    device_id: &str,
+    node: &Node,
+    now: Timestamp,
+) -> NodeOverview {
     let name = |target: NameTarget| snapshot.nodes.name(&target).map(String::from);
     NodeOverview {
         device_id: device_id.to_string(),
@@ -215,7 +220,7 @@ fn node_overview(snapshot: &Snapshot, device_id: &str, node: &Node, now: Instant
         } else {
             Presence::Offline
         },
-        last_seen: Some(now - node.last_seen),
+        last_seen: Some(elapsed(node.last_seen_at, now)),
         uptime_seconds: node.uptime_seconds,
         rssi: node.rssi,
         channels: node
@@ -243,7 +248,7 @@ fn node_overview(snapshot: &Snapshot, device_id: &str, node: &Node, now: Instant
                                 last.data
                                     .as_ref()
                                     .map(|data| event_data_label(data, &snapshot.remotes)),
-                                now - last.at,
+                                elapsed(last.at, now),
                             )
                         },
                     ),
@@ -365,7 +370,7 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
     let rules = hub.rules();
     let mut runs = hub.rule_runs();
     let snapshot = hub.snapshot();
-    let now = Instant::now();
+    let now = Timestamp::now();
     let local_now = Zoned::now().with_time_zone(hub.time_zone().clone());
     rules
         .into_iter()
@@ -386,7 +391,7 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
                 .collect(),
             last_run: runs
                 .remove(&rule.name)
-                .map(|run| (now - run.at, run.errors)),
+                .map(|run| (elapsed(run.at, now), run.errors)),
             name: rule.name,
             enabled: rule.enabled,
         })
@@ -705,7 +710,7 @@ mod tests {
                 }],
             },
         );
-        registry.handle(&hello, Instant::now());
+        registry.handle(&hello, std::time::Instant::now());
         let trigger = ThresholdTrigger {
             device: "esp32-test".into(),
             entity: 3,

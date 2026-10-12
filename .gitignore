@@ -1,5 +1,6 @@
 /target
 *.sqlite
+*.sqlite-*
 /tmp
 /weather/weather.toml
 /linux-monitor/linux-monitor.toml

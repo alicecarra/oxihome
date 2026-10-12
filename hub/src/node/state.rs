@@ -3,7 +3,7 @@ use std::fmt;
 
 use oxihome_protocol::{Confidence, Message, Payload, Value};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ChannelUpdate {
     pub device_id: String,
     pub entity: u8,
@@ -35,6 +35,19 @@ impl State {
         self.values
             .get(&(device_id.to_string(), entity, channel))
             .map(|(value, _)| value)
+    }
+
+    /// A value from before the restart.
+    pub fn restore(
+        &mut self,
+        device_id: String,
+        entity: u8,
+        channel: u8,
+        value: Value,
+        confidence: Confidence,
+    ) {
+        self.values
+            .insert((device_id, entity, channel), (value, confidence));
     }
 
     /// Returns the channels whose value or confidence changed.

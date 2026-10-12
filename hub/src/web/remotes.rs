@@ -1,6 +1,6 @@
 use std::sync::Arc;
-use std::time::Instant;
 
+use jiff::Timestamp;
 use serde::Deserialize;
 use topcoat::{
     Result,
@@ -9,7 +9,7 @@ use topcoat::{
     view::{View, ViewExt, ViewHandle, attributes, component, view},
 };
 
-use super::format::ago_label;
+use super::format::{ago_label, elapsed};
 use super::layout::layout;
 use crate::components::badge::{BadgeVariant, badge};
 use crate::components::button::{ButtonSize, ButtonVariant, button};
@@ -62,7 +62,7 @@ struct RemoteOverview {
 fn learning(hub: &Hub) -> Vec<LearningCode> {
     let recent = hub.recent_codes();
     let snapshot = hub.snapshot();
-    let now = Instant::now();
+    let now = Timestamp::now();
     recent
         .into_iter()
         .map(|received| LearningCode {
@@ -70,7 +70,7 @@ fn learning(hub: &Hub) -> Vec<LearningCode> {
                 .nodes
                 .name(&NameTarget::Node(received.device_id.clone()))
                 .map_or(received.device_id.clone(), String::from),
-            ago: ago_label(now - received.at),
+            ago: ago_label(elapsed(received.at, now)),
             known: snapshot.remotes.key_for(&received.code),
             suggested_remote: snapshot
                 .remotes

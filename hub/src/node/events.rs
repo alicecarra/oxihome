@@ -1,10 +1,9 @@
+use jiff::Timestamp;
+use oxihome_protocol::{EventKind, Message, Payload, Value};
 use std::collections::HashMap;
 use std::fmt;
-use std::time::Instant;
 
-use oxihome_protocol::{EventKind, Message, Payload, Value};
-
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EventRecord {
     pub device_id: String,
     pub entity: u8,
@@ -39,17 +38,17 @@ pub fn data_label(data: &Value) -> String {
 pub struct LastEvent {
     pub kind: EventKind,
     pub data: Option<Value>,
-    pub at: Instant,
+    pub at: Timestamp,
 }
 
-/// Last event of every (node, entity, channel), since the hub started.
+/// Last event of every (node, entity, channel).
 #[derive(Default)]
 pub struct Events {
     last: HashMap<(String, u8, u8), LastEvent>,
 }
 
 impl Events {
-    pub fn apply(&mut self, message: &Message, now: Instant) -> Option<EventRecord> {
+    pub fn apply(&mut self, message: &Message, now: Timestamp) -> Option<EventRecord> {
         let Payload::Event {
             entity,
             channel,
@@ -76,6 +75,18 @@ impl Events {
         })
     }
 
+    /// An event from before the restart.
+    pub fn restore(&mut self, event: EventRecord, at: Timestamp) {
+        self.last.insert(
+            (event.device_id, event.entity, event.channel),
+            LastEvent {
+                kind: event.kind,
+                data: event.data,
+                at,
+            },
+        );
+    }
+
     pub fn last(&self, device_id: &str, entity: u8, channel: u8) -> Option<&LastEvent> {
         self.last.get(&(device_id.to_string(), entity, channel))
     }
@@ -83,7 +94,7 @@ impl Events {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use jiff::SignedDuration;
 
     use super::*;
 
@@ -105,7 +116,7 @@ mod tests {
     #[test]
     fn records_the_last_event() {
         let mut events = Events::default();
-        let now = Instant::now();
+        let now = Timestamp::now();
         let record = events.apply(&event(EventKind::Press), now);
 
         assert_eq!(record.map(|record| record.kind), Some(EventKind::Press));
@@ -122,13 +133,16 @@ mod tests {
     #[test]
     fn newer_event_replaces_the_previous_one() {
         let mut events = Events::default();
-        let start = Instant::now();
+        let start = Timestamp::now();
         events.apply(&event(EventKind::Press), start);
-        events.apply(&event(EventKind::LongPress), start + Duration::from_secs(1));
+        events.apply(
+            &event(EventKind::LongPress),
+            start + SignedDuration::from_secs(1),
+        );
 
         assert_eq!(
             events.last(DEVICE, 2, 0).map(|last| (last.kind, last.at)),
-            Some((EventKind::LongPress, start + Duration::from_secs(1)))
+            Some((EventKind::LongPress, start + SignedDuration::from_secs(1)))
         );
     }
 
@@ -141,7 +155,7 @@ mod tests {
             event: EventKind::Received,
             data: Some(Value::Text("NEC 00 45".into())),
         });
-        let record = events.apply(&received, Instant::now()).unwrap();
+        let record = events.apply(&received, Timestamp::now()).unwrap();
 
         assert_eq!(
             record.to_string(),
@@ -157,7 +171,7 @@ mod tests {
     #[test]
     fn other_messages_are_ignored() {
         let mut events = Events::default();
-        let record = events.apply(&message(Payload::Ack { ok: true }), Instant::now());
+        let record = events.apply(&message(Payload::Ack { ok: true }), Timestamp::now());
 
         assert_eq!(record, None);
         assert_eq!(events.last(DEVICE, 2, 0), None);

@@ -15,3 +15,7 @@ missed_heartbeats = 3
 
 [time]
 zone = "America/Sao_Paulo"
+
+[storage]
+path = "hub/oxihome.sqlite"
+retention_days = 7

@@ -1,6 +1,12 @@
 use std::time::Duration;
 
+use jiff::Timestamp;
 use oxihome_protocol::{Quantity, Unit, Value};
+
+/// Zero when `at` is in the future (clock adjusted).
+pub fn elapsed(at: Timestamp, now: Timestamp) -> Duration {
+    Duration::try_from(now.duration_since(at)).unwrap_or_default()
+}
 
 pub fn ago_label(ago: Duration) -> String {
     format!("{} ago", duration_label(ago))
