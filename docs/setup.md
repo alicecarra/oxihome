@@ -165,6 +165,9 @@ previous configuration stays in use.
   - an event of a channel: `when = { device = "...", entity = 2, channel = 0, event = "Press" }`;
     `data = "NEC 00 52"` also requires the event's text to be exactly that (a held key's
     `NEC 00 52 repeat` does not match);
+  - a button of a panel in `panels.toml`, pressed on the `/panel` page:
+    `when = { panel = "Test board", button = "Turn on" }` (a button can run several rules; an unknown
+    panel or button is an error when the configuration loads);
   - a key of a remote named in `remotes.toml`, from any IR receiver:
     `when = { remote = "Kit Lafvin", key = "0" }` (repeats do not match; an unknown key is an
     error when the configuration loads);
@@ -200,6 +203,16 @@ previous configuration stays in use.
   name = "Test board LED blinks: on at even minutes"
   when = { cron = "*/2 * * * *" }
   then = [{ set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = true } }]
+  ```
+
+- `panels.toml`: panels of buttons for the `/panel` page, in file order. Each button shows the
+  rules it runs ("no rule yet" and disabled when none is enabled). Panel names, and button names
+  within a panel, are unique.
+
+  ```toml
+  [[panels]]
+  name = "Test board"
+  buttons = ["Turn on", "Turn off"]
   ```
 
 - `remotes.toml`: infrared remotes and the codes of their keys. The `/remotes` page lists them and

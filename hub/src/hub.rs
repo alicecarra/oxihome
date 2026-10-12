@@ -12,6 +12,7 @@ use tokio::sync::broadcast;
 
 use crate::commands::Commands;
 use crate::config::nodes::{NameTarget, Nodes};
+use crate::config::panels::{Panel, Panels};
 use crate::config::remotes::Remotes;
 use crate::config::rules::{Rule, RuleRun, Rules};
 use crate::config::{ConfigFile, FILES, HomeConfig, read_file, write_file};
@@ -68,6 +69,7 @@ pub struct Hub {
     /// Last run of each rule, by name.
     rule_runs: Mutex<HashMap<String, RuleRun>>,
     remotes: Mutex<Remotes>,
+    panels: Mutex<Panels>,
     /// Newest first, without repeats of held keys.
     recent_codes: Mutex<VecDeque<ReceivedCode>>,
     /// The remote the last learned key went to, offered first for the next one.
@@ -97,6 +99,7 @@ impl Hub {
             rules: Mutex::new(config.rules),
             rule_runs: Mutex::default(),
             remotes: Mutex::new(config.remotes),
+            panels: Mutex::new(config.panels),
             recent_codes: Mutex::default(),
             last_learned_remote: Mutex::default(),
             notifications: Mutex::default(),
@@ -265,6 +268,7 @@ impl Hub {
         *self.nodes.lock().unwrap() = config.nodes;
         *self.rules.lock().unwrap() = config.rules;
         *self.remotes.lock().unwrap() = config.remotes;
+        *self.panels.lock().unwrap() = config.panels;
         self.announce(Change::Nodes);
         rule_count
     }
@@ -307,6 +311,24 @@ impl Hub {
         let remotes = self.remotes.lock().unwrap();
         rules
             .matching(event, &remotes)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    pub fn panels(&self) -> Vec<Panel> {
+        self.panels.lock().unwrap().all().to_vec()
+    }
+
+    pub fn rules_for_button(&self, panel: &str, button: &str) -> Vec<(String, bool)> {
+        self.rules.lock().unwrap().for_button(panel, button)
+    }
+
+    pub fn pressed_rules(&self, panel: &str, button: &str) -> Vec<Rule> {
+        self.rules
+            .lock()
+            .unwrap()
+            .pressed(panel, button)
             .into_iter()
             .cloned()
             .collect()

@@ -1,4 +1,5 @@
 pub mod nodes;
+pub mod panels;
 pub mod remotes;
 pub mod rules;
 
@@ -9,6 +10,7 @@ use anyhow::Context;
 use serde::de::DeserializeOwned;
 
 use nodes::Nodes;
+use panels::Panels;
 use remotes::Remotes;
 use rules::Rules;
 
@@ -17,10 +19,11 @@ pub struct HomeConfig {
     pub nodes: Nodes,
     pub rules: Rules,
     pub remotes: Remotes,
+    pub panels: Panels,
 }
 
 /// The files the web interface can edit.
-pub const FILES: [&str; 3] = ["nodes.toml", "rules.toml", "remotes.toml"];
+pub const FILES: [&str; 4] = ["nodes.toml", "rules.toml", "remotes.toml", "panels.toml"];
 
 /// A config file's text and when it was last modified (`None` if it does not exist).
 pub struct ConfigFile {
@@ -54,13 +57,20 @@ impl HomeConfig {
             .with_context(|| format!("{}", path.display()))?;
         let path = directory.join("rules.toml");
         let rules: Rules = parse(&path, &text("rules.toml")?)?;
+        let panels_path = directory.join("panels.toml");
+        let panels: Panels = parse(&panels_path, &text("panels.toml")?)?;
+        panels
+            .validate()
+            .with_context(|| format!("{}", panels_path.display()))?;
         rules
             .check_remote_keys(&remotes)
+            .and_then(|()| rules.check_panel_buttons(&panels))
             .with_context(|| format!("{}", path.display()))?;
         Ok(Self {
             nodes,
             rules,
             remotes,
+            panels,
         })
     }
 }

@@ -84,3 +84,22 @@ then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, val
 name = "Receiver power toggles the external LED"
 when = { remote = "Receiver", key = "power" }
 then = [{ toggle = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0 } }]
+
+[[rules]]
+name = "Panel: turn on the LEDs with a beep"
+when = { panel = "Test board", button = "Turn on" }
+then = [
+    { set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = true } },
+    { set = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0, value = true } },
+    { invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Short" } },
+]
+
+[[rules]]
+name = "Panel: turn off every light"
+when = { panel = "Test board", button = "Turn off" }
+then = [
+    { set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = false } },
+    { set = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0, value = false } },
+    { set = { device = "sim-living-room", entity = 1, channel = 0, value = false } },
+    { set = { device = "sim-bedroom", entity = 1, channel = 0, value = false } },
+]

@@ -4,6 +4,7 @@ mod home;
 mod layout;
 mod nodes;
 mod overview;
+mod panel;
 mod remotes;
 mod rules;
 mod settings;
@@ -31,6 +32,7 @@ pub fn router(hub: Arc<Hub>) -> Router {
     Router::builder()
         .page(home::home)
         .page(home::nodes_fragment)
+        .page(panel::panel)
         .page(rules::rules)
         .page(remotes::remotes_page)
         .page(remotes::remotes_fragment)
@@ -38,6 +40,7 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route(home::set)
         .route(home::invoke)
         .route(remotes::learn_key)
+        .route(panel::press)
         .route(settings::reload)
         .route(settings::save)
         .route(toasts::toasts)

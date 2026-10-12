@@ -29,6 +29,7 @@ pub async fn layout(cx: &Cx, title: &str, #[default] child: Child<'_>) -> Result
                     <a href="/" class="text-2xl font-bold">"Oxihome Hub"</a>
                     <nav class="flex gap-4 text-sm text-muted-foreground">
                         <a href="/" class="hover:text-foreground hover:underline">"Nodes"</a>
+                        <a href="/panel" class="hover:text-foreground hover:underline">"Panel"</a>
                         <a href="/rules" class="hover:text-foreground hover:underline">"Rules"</a>
                         <a href="/remotes" class="hover:text-foreground hover:underline">"Remotes"</a>
                         <a href="/settings" class="hover:text-foreground hover:underline">"Settings"</a>

@@ -10,6 +10,7 @@ use jiff::{ToSpan, Zoned};
 use oxihome_protocol::{Confidence, EventKind, Value};
 use serde::Deserialize;
 
+use super::panels::Panels;
 use super::remotes::Remotes;
 use crate::hub::Hub;
 use crate::node::events::EventRecord;
@@ -33,6 +34,7 @@ pub enum Trigger {
     Threshold(ThresholdTrigger),
     Offline(OfflineTrigger),
     RemoteKey(RemoteKeyTrigger),
+    Button(ButtonTrigger),
 }
 
 impl Trigger {
@@ -42,7 +44,8 @@ impl Trigger {
             Trigger::Event(_)
             | Trigger::Threshold(_)
             | Trigger::Offline(_)
-            | Trigger::RemoteKey(_) => None,
+            | Trigger::RemoteKey(_)
+            | Trigger::Button(_) => None,
             Trigger::Schedule(trigger) => trigger.next_run(now),
             Trigger::Cron(trigger) => trigger.cron.find_next_occurrence(now, false).ok(),
         }
@@ -53,7 +56,8 @@ impl Trigger {
             Trigger::Event(_)
             | Trigger::Threshold(_)
             | Trigger::Offline(_)
-            | Trigger::RemoteKey(_) => false,
+            | Trigger::RemoteKey(_)
+            | Trigger::Button(_) => false,
             Trigger::Schedule(trigger) => trigger.is_due(minute),
             Trigger::Cron(trigger) => trigger.cron.is_time_matching(&minute).unwrap_or(false),
         }
@@ -78,12 +82,33 @@ struct TriggerFields {
     offline: Option<String>,
     remote: Option<String>,
     key: Option<String>,
+    panel: Option<String>,
+    button: Option<String>,
 }
 
 impl TryFrom<TriggerFields> for Trigger {
     type Error = String;
 
     fn try_from(fields: TriggerFields) -> Result<Self, String> {
+        if fields.panel.is_some() || fields.button.is_some() {
+            let alone = fields.device.is_none()
+                && fields.entity.is_none()
+                && fields.channel.is_none()
+                && fields.event.is_none()
+                && fields.data.is_none()
+                && fields.above.is_none()
+                && fields.below.is_none()
+                && fields.at.is_none()
+                && fields.days.is_empty()
+                && fields.cron.is_none()
+                && fields.offline.is_none()
+                && fields.remote.is_none()
+                && fields.key.is_none();
+            let (Some(panel), Some(button), true) = (fields.panel, fields.button, alone) else {
+                return Err("a panel button trigger is `panel` and `button` alone".into());
+            };
+            return Ok(Trigger::Button(ButtonTrigger { panel, button }));
+        }
         if fields.remote.is_some() || fields.key.is_some() {
             let alone = fields.device.is_none()
                 && fields.entity.is_none()
@@ -221,6 +246,13 @@ fn number(value: &Value) -> Option<f32> {
         Value::Float(number) => Some(*number),
         _ => None,
     }
+}
+
+/// A button of a panel in `panels.toml`, pressed on the `/panel` page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ButtonTrigger {
+    pub panel: String,
+    pub button: String,
 }
 
 /// Runs when any IR receiver gets the key's code (not its repeats), by the names in
@@ -441,6 +473,46 @@ impl Rules {
             .collect()
     }
 
+    /// The rules a panel button runs, with whether each is enabled.
+    pub fn for_button(&self, panel: &str, button: &str) -> Vec<(String, bool)> {
+        self.rules
+            .iter()
+            .filter(|rule| {
+                matches!(&rule.when, Trigger::Button(trigger)
+                    if trigger.panel == panel && trigger.button == button)
+            })
+            .map(|rule| (rule.name.clone(), rule.enabled))
+            .collect()
+    }
+
+    pub fn pressed(&self, panel: &str, button: &str) -> Vec<&Rule> {
+        self.rules
+            .iter()
+            .filter(|rule| {
+                rule.enabled
+                    && matches!(&rule.when, Trigger::Button(trigger)
+                        if trigger.panel == panel && trigger.button == button)
+            })
+            .collect()
+    }
+
+    /// Every panel button a rule names exists in `panels.toml`.
+    pub fn check_panel_buttons(&self, panels: &Panels) -> anyhow::Result<()> {
+        for rule in &self.rules {
+            if let Trigger::Button(trigger) = &rule.when
+                && !panels.has(&trigger.panel, &trigger.button)
+            {
+                bail!(
+                    "rule \"{}\": panel \"{}\" has no button \"{}\" in panels.toml",
+                    rule.name,
+                    trigger.panel,
+                    trigger.button
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Every `remote`/`key` a rule names exists in `remotes.toml`.
     pub fn check_remote_keys(&self, remotes: &Remotes) -> anyhow::Result<()> {
         for rule in &self.rules {
@@ -564,6 +636,68 @@ mod tests {
         fn matching_without_remotes(&self, event: &EventRecord) -> Vec<&Rule> {
             self.matching(event, &Remotes::default())
         }
+    }
+
+    const BUTTONS: &str = r#"
+        [[rules]]
+        name = "LED"
+        when = { panel = "Test board", button = "LED" }
+        then = []
+
+        [[rules]]
+        name = "LED also beeps"
+        when = { panel = "Test board", button = "LED" }
+        then = []
+
+        [[rules]]
+        name = "LED, disabled"
+        enabled = false
+        when = { panel = "Test board", button = "LED" }
+        then = []
+    "#;
+
+    #[test]
+    fn panel_buttons_run_their_enabled_rules() {
+        let rules: Rules = toml::from_str(BUTTONS).unwrap();
+        assert_eq!(
+            rules.for_button("Test board", "LED"),
+            [
+                ("LED".to_string(), true),
+                ("LED also beeps".to_string(), true),
+                ("LED, disabled".to_string(), false),
+            ]
+        );
+        assert_eq!(
+            names(rules.pressed("Test board", "LED")),
+            ["LED", "LED also beeps"]
+        );
+        assert!(rules.pressed("Test board", "Alarm").is_empty());
+        assert!(rules.for_button("Other", "LED").is_empty());
+        let panels: Panels =
+            toml::from_str("[[panels]]\nname = \"Test board\"\nbuttons = [\"LED\"]").unwrap();
+        assert!(rules.check_panel_buttons(&panels).is_ok());
+        let error = rules
+            .check_panel_buttons(&Panels::default())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("panel \"Test board\" has no button \"LED\""),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn button_triggers_need_panel_and_button_alone() {
+        assert!(
+            when(r#"{ button = "A" }"#)
+                .unwrap_err()
+                .contains("`panel` and `button`")
+        );
+        assert!(
+            when(r#"{ panel = "P", button = "A", at = "07:00" }"#)
+                .unwrap_err()
+                .contains("alone")
+        );
     }
 
     const REMOTE_KEYS: &str = r#"

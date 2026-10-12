@@ -1,0 +1,6 @@
+# Panels of buttons for the /panel page. What a button does comes from rules.toml:
+# when = { panel = "Test board", button = "Turn on" }
+
+[[panels]]
+name = "Test board"
+buttons = ["Turn on", "Turn off"]

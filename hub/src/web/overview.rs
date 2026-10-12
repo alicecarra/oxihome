@@ -258,6 +258,7 @@ fn trigger_description(nodes: &Nodes, registry: &Registry, trigger: &Trigger) ->
         Trigger::Cron(trigger) => cron_description(trigger),
         Trigger::Offline(trigger) => offline_description(nodes, trigger),
         Trigger::RemoteKey(trigger) => format!("{}: key {}", trigger.remote, trigger.key),
+        Trigger::Button(trigger) => format!("Panel {} › {}", trigger.panel, trigger.button),
     }
 }
 
