@@ -61,6 +61,26 @@ when = { offline = "*" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
 
 [[rules]]
+name = "Pi-hole stopped: buzzer alarm"
+when = { device = "docker-host", entity = 50, channel = 6, event = "Received", data = "stopped" }
+then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
+
+[[rules]]
+name = "Jellyfin stopped: buzzer alarm"
+when = { device = "docker-host", entity = 51, channel = 6, event = "Received", data = "stopped" }
+then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
+
+[[rules]]
+name = "Trilium stopped: buzzer alarm"
+when = { device = "docker-host", entity = 52, channel = 6, event = "Received", data = "stopped" }
+then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
+
+[[rules]]
+name = "Portainer stopped: buzzer alarm"
+when = { device = "docker-host", entity = 53, channel = 6, event = "Received", data = "stopped" }
+then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
+
+[[rules]]
 name = "Remote key 0 toggles the external LED"
 when = { remote = "Kit Lafvin", key = "0" }
 then = [{ toggle = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0 } }]

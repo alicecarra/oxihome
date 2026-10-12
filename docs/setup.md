@@ -354,17 +354,22 @@ cargo run -p oxihome-linux-monitor -- linux-monitor/linux-monitor.toml
 `[node] id` the node takes the hostname. The program prints the mount points and interfaces it
 finds when it starts.
 
-To keep it running on a machine, as a systemd user service (the binary and the config in
-`~/oxihome-linux-monitor`):
+To keep it running on a machine, as a systemd user service in `~/oxihome-linux-monitor` (binary,
+config and log in the journal), here or on another machine over ssh:
 
 ```sh
-cp linux-monitor/oxihome-linux-monitor.service ~/.config/systemd/user/
-systemctl --user daemon-reload && systemctl --user enable --now oxihome-linux-monitor
-sudo loginctl enable-linger $USER   # starts at boot, without logging in
+linux-monitor/install-as-service.sh                        # this machine
+linux-monitor/install-as-service.sh alice@192.168.15.100   # another one
+sudo loginctl enable-linger $USER   # on servers: start at boot, without logging in
 ```
 
-Copying a release binary built here works on another x86_64 machine with the same or a newer glibc
-(`objdump -T` shows the versions it needs).
+The script builds in release, replaces the binary, installs `oxihome-linux-monitor.service` and
+restarts the service; run it again after changing the code. It never overwrites an installed
+`linux-monitor.toml`: the first time it copies `linux-monitor/linux-monitor.toml` here and starts,
+or copies the example on another machine and waits for it to be edited. The service reads that copy, not
+the one in the repository. It also stops when the other machine has an older glibc than the binary
+needs (x86_64 only; a Raspberry Pi needs its own build). Extra ssh options go in `SSH_OPTIONS`,
+e.g. to reuse a master connection: `SSH_OPTIONS='-o ControlPath=~/.ssh/cm-%r@%h:%p'`.
 
 Entities, all read only: 1 CPU (usage %, load over 1, 5 and 15 minutes, average frequency MHz,
 temperature °C when a known sensor exists), 2 memory (used %, used, available and total GB, swap
