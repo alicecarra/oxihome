@@ -70,13 +70,14 @@ impl IrReceiver {
     }
 
     fn describe(&mut self, durations: &[u32]) -> Option<String> {
-        if is_nec_repeat(durations) {
+        let merged = merge_glitches(durations);
+        if is_nec_repeat(&merged) {
             return self.last_nec.as_ref().map(|code| format!("{code} repeat"));
         }
         if durations.len() < MIN_DURATIONS {
             return None;
         }
-        if let Some(code) = nec(durations) {
+        if let Some(code) = nec(&merged) {
             self.last_nec = Some(code.clone());
             return Some(code);
         }
@@ -92,32 +93,59 @@ impl IrReceiver {
     }
 }
 
-/// Within 25 % of the expected duration in µs.
-fn near(duration: u32, expected: u32) -> bool {
-    duration.abs_diff(expected) <= expected / 4
+/// Pulses shorter than this are noise (lamps, a remote at an angle): they are merged with their
+/// neighbours, which keeps marks and spaces alternating.
+const GLITCH: u32 = 250;
+
+fn merge_glitches(durations: &[u32]) -> Vec<u32> {
+    let mut merged: Vec<u32> = Vec::with_capacity(durations.len());
+    let mut index = 0;
+    while index < durations.len() {
+        let duration = durations[index];
+        match (merged.last_mut(), durations.get(index + 1)) {
+            (Some(previous), Some(next)) if duration < GLITCH => {
+                *previous += duration + next;
+                index += 2;
+            }
+            _ => {
+                merged.push(duration);
+                index += 1;
+            }
+        }
+    }
+    merged
 }
 
+/// A NEC repeat: a long mark, a 2.25 ms space and a short mark, alone in its frame.
 fn is_nec_repeat(durations: &[u32]) -> bool {
-    matches!(durations, [mark, space, end, ..] if near(*mark, 9000) && near(*space, 2250) && near(*end, 560))
+    matches!(durations, [mark, space, end] | [mark, space, end, _]
+        if *mark >= 6000 && (1800..=2700).contains(space) && (200..=1100).contains(end))
 }
 
 /// `NEC 00 45` (8-bit address and command, in hex) or `NEC 1234 45` (extended 16-bit address).
+/// The header's 4.5 ms space may come anywhere (noise before it is skipped); each bit is a short
+/// mark and a space below 1.1 ms for 0 or up to 2.4 ms for 1. The inverted command byte rules out
+/// wrong readings.
 fn nec(durations: &[u32]) -> Option<String> {
-    let [leader_mark, leader_space, bits @ ..] = durations else {
-        return None;
-    };
-    if !near(*leader_mark, 9000) || !near(*leader_space, 4500) || bits.len() < 64 {
+    (1..durations.len())
+        .step_by(2)
+        .filter(|&index| (3500..=5500).contains(&durations[index]))
+        .find_map(|index| nec_bits(&durations[index + 1..]))
+}
+
+fn nec_bits(bits: &[u32]) -> Option<String> {
+    if bits.len() < 64 {
         return None;
     }
     let mut value: u32 = 0;
     for (index, pair) in bits[..64].chunks(2).enumerate() {
-        if !near(pair[0], 560) {
+        if !(200..=1100).contains(&pair[0]) {
             return None;
         }
-        if near(pair[1], 1690) {
-            value |= 1 << index;
-        } else if !near(pair[1], 560) {
-            return None;
+        match pair[1] {
+            200..1100 => {}
+            1100..=2400 => value |= 1 << index,
+            _ => return None,
         }
     }
     let [address, address_check, command, command_check] = value.to_le_bytes();
