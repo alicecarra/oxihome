@@ -25,7 +25,7 @@ pub async fn remotes_page(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         layout(
             title: "Oxihome remotes",
-            <div class="max-w-3xl space-y-4">
+            <div class="space-y-4">
                 <div class="flex items-center justify-between gap-4">
                     <p class="text-sm text-muted-foreground">"Infrared remotes and the codes of their keys. Rules can use a key by name. They come from remotes.toml."</p>
                     <a href="/settings/remotes.toml" class="text-sm font-medium whitespace-nowrap hover:underline">"Edit in Settings"</a>
@@ -41,9 +41,7 @@ pub async fn remotes_page(cx: &Cx) -> Result<impl View> {
 #[page("/remotes/fragment")]
 pub async fn remotes_fragment(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
-    Ok(
-        view! { remotes_content(learning: learning(hub), remotes: remote_list(hub)) },
-    )
+    Ok(view! { remotes_content(learning: learning(hub), remotes: remote_list(hub)) })
 }
 
 struct LearningCode {
@@ -74,7 +72,10 @@ fn learning(hub: &Hub) -> Vec<LearningCode> {
                 .map_or(received.device_id.clone(), String::from),
             ago: ago_label(now - received.at),
             known: snapshot.remotes.key_for(&received.code),
-            suggested_remote: snapshot.remotes.remote_for(&received.code).map(String::from),
+            suggested_remote: snapshot
+                .remotes
+                .remote_for(&received.code)
+                .map(String::from),
             code: received.code,
         })
         .collect()
@@ -124,19 +125,22 @@ async fn remotes_content(
                 </datalist>
             )
         )
-        for remote in remotes {
-            card(
-                card_header(card_title((remote.name)))
-                card_content(
-                    <dl class="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-2 text-sm">
-                        for (key, code) in remote.keys {
-                            <dt class="font-medium">(key)</dt>
-                            <dd><code class="font-mono text-muted-foreground">(code)</code></dd>
-                        }
-                    </dl>
+        <div class="mt-4 grid gap-4 md:grid-cols-3">
+            for remote in remotes {
+                card(
+                    attrs: attributes! { class="h-full" },
+                    card_header(card_title((remote.name)))
+                    card_content(
+                        <dl class="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-2 text-sm">
+                            for (key, code) in remote.keys {
+                                <dt class="font-medium">(key)</dt>
+                                <dd><code class="font-mono text-muted-foreground">(code)</code></dd>
+                            }
+                        </dl>
+                    )
                 )
-            )
-        }
+            }
+        </div>
     })
 }
 

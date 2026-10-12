@@ -15,7 +15,7 @@ use crate::hub::Hub;
 pub(super) const MENU: [(&str, &str, IconData); 6] = [
     ("/", "Dashboard", icons::DASHBOARD),
     ("/nodes", "Nodes", icons::NODES),
-    ("/panel", "Panel", icons::PANEL),
+    ("/panel", "Panels", icons::PANELS),
     ("/rules", "Rules", icons::RULES),
     ("/remotes", "Remotes", icons::REMOTES),
     ("/settings", "Settings", icons::SETTINGS),
@@ -28,9 +28,8 @@ pub async fn layout(cx: &Cx, title: &str, #[default] child: Child<'_>) -> Result
     let since = hub.last_notification_id();
     let path = uri(cx).path().to_string();
     // A section's own pages, like `/nodes/<id>`, light up its item too.
-    let current = |href: &str| {
-        path == href || (href != "/" && path.starts_with(&format!("{href}/")))
-    };
+    let current =
+        |href: &str| path == href || (href != "/" && path.starts_with(&format!("{href}/")));
     let menu: Vec<(&str, &str, IconData, bool)> = MENU
         .into_iter()
         .map(|(href, label, data)| (href, label, data, current(href)))

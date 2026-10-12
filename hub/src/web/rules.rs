@@ -23,17 +23,19 @@ pub async fn rules(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         layout(
             title: "Oxihome rules",
-            <div class="max-w-3xl space-y-4">
+            <div class="space-y-4">
                 <div class="flex items-center justify-between gap-4">
                     <p class="text-sm text-muted-foreground">"Rules run when their event happens or at their time. They come from rules.toml."</p>
-                    <a href="/settings/rules.toml" class="text-sm font-medium hover:underline">"Edit in Settings"</a>
+                    <a href="/settings/rules.toml" class="text-sm font-medium whitespace-nowrap hover:underline">"Edit in Settings"</a>
                 </div>
                 if rules.is_empty() {
                     <p class="text-muted-foreground">"No rules yet."</p>
                 }
-                for rule in rules {
-                    rule_card(rule: rule)
-                }
+                <div class="grid items-start gap-4 md:grid-cols-2">
+                    for rule in rules {
+                        rule_card(rule: rule)
+                    }
+                </div>
             </div>
         )
     })
@@ -61,7 +63,7 @@ async fn rule_card(rule: RuleOverview) -> Result<impl View> {
             attrs: attributes! {
                 id=(rule_anchor(&rule.name))
                 // Highlighted when a link from a node's page points at it.
-                class=(if rule.enabled { "scroll-mt-4 target:ring-2 target:ring-ring" } else { "scroll-mt-4 opacity-60 target:ring-2 target:ring-ring" })
+                class=(if rule.enabled { "scroll-mt-4 target:ring-2 target:ring-ring h-full" } else { "scroll-mt-4 opacity-60 target:ring-2 target:ring-ring h-full" })
             },
             card_header(
                 <div class="flex items-center justify-between gap-2">
@@ -70,6 +72,7 @@ async fn rule_card(rule: RuleOverview) -> Result<impl View> {
                         badge(variant: variant, (status))
                         // Answered with this card, replaced in place.
                         <form
+                            class="flex"
                             hx-post="/rules/enabled"
                             hx-trigger="change"
                             hx-target=(format!("#{}", rule_anchor(&rule.name)))
