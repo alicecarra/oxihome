@@ -4,6 +4,8 @@
 host = "localhost"
 port = 1883
 password = "the node's broker password"
+# Outgoing messages waiting to be sent; new ones are dropped while it is full.
+# queue_size = 4096
 
 [node]
 id = "weather"

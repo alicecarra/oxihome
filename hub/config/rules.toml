@@ -58,7 +58,6 @@ then = [
 
 [[rules]]
 name = "Any node offline: buzzer alarm"
-enabled = false
 when = { offline = "*" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
 
@@ -76,7 +75,6 @@ then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, val
 
 [[rules]]
 name = "Trilium stopped: buzzer alarm"
-enabled = false
 when = { device = "docker-host", entity = 52, channel = 6, event = "Received", data = "stopped" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
 

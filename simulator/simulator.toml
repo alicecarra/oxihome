@@ -2,6 +2,8 @@
 host = "localhost"
 port = 1883
 secrets = "simulator/secrets.toml"
+# Outgoing messages waiting to be sent; new ones are dropped while it is full.
+# queue_size = 4096
 
 [[nodes]]
 id = "sim-living-room"

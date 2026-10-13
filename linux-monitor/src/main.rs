@@ -33,6 +33,8 @@ struct MqttConfig {
     port: u16,
     /// The node's password on the broker; anonymous when missing.
     password: Option<String>,
+    /// Outgoing messages waiting for the connection; `mqtt::DEFAULT_QUEUE_SIZE` when missing.
+    queue_size: Option<usize>,
 }
 
 #[derive(Deserialize, Default)]
@@ -109,6 +111,7 @@ async fn main() -> anyhow::Result<()> {
             port: config.mqtt.port,
             password: config.mqtt.password,
             report_interval: REPORT_INTERVAL,
+            queue_size: config.mqtt.queue_size.unwrap_or(mqtt::DEFAULT_QUEUE_SIZE),
         },
     );
     tokio::signal::ctrl_c().await?;

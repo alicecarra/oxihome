@@ -40,6 +40,8 @@ struct MqttConfig {
     /// A TOML file out of git with a `[passwords]` table (device id = password); anonymous when
     /// missing.
     secrets: Option<PathBuf>,
+    /// Outgoing messages waiting for the connection, per node; `mqtt::DEFAULT_QUEUE_SIZE` when missing.
+    queue_size: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -95,6 +97,7 @@ async fn main() -> anyhow::Result<()> {
             port: config.mqtt.port,
             password: passwords.remove(&node_config.id),
             report_interval: REPORT_INTERVAL,
+            queue_size: config.mqtt.queue_size.unwrap_or(mqtt::DEFAULT_QUEUE_SIZE),
         };
         handles.insert(node_config.id.clone(), mqtt::spawn(node, broker));
     }
