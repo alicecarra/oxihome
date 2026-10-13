@@ -5,35 +5,27 @@ mod config;
 mod ir;
 mod node;
 mod ota;
+mod peripheral;
 mod potentiometer;
 mod settings;
 mod transport;
 mod wifi;
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::delay::FreeRtos;
-use esp_idf_svc::hal::gpio::{PinDriver, Pull};
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use oxihome_protocol::management::{HEARTBEAT_INTERVAL, WIFI_CHECK_INTERVAL};
 
-use button::Button;
-use buzzer::Buzzer;
-use climate::Climate;
-use config::{CONFIG, Wiring};
-use ir::IrReceiver;
+use config::CONFIG;
 use node::{Board, Node};
 use ota::Ota;
-use potentiometer::Potentiometer;
 use settings::Settings;
 use transport::MqttTransport;
 
 const POLL_INTERVAL_MS: u32 = 10;
-/// The DHT11 needs at least 1 s between reads.
-const CLIMATE_READ_INTERVAL: Duration = Duration::from_secs(30);
-const POTENTIOMETER_READ_INTERVAL: Duration = Duration::from_millis(100);
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -41,28 +33,11 @@ fn main() -> anyhow::Result<()> {
     let started = Instant::now();
 
     let peripherals = Peripherals::take()?;
-    let pins = peripherals.pins;
-
-    let led = PinDriver::output(pins.gpio2)?;
-    let mut button = Button::new(PinDriver::input(pins.gpio0, Pull::Up)?);
-    let wired = Wiring::parse(CONFIG.peripherals)?;
-    let climate = wired
-        .climate
-        .then(|| Climate::new(PinDriver::input_output_od(pins.gpio4, Pull::Floating)?))
-        .transpose()?;
-    let external_led = wired
-        .external_led
-        .then(|| PinDriver::output(pins.gpio18))
-        .transpose()?;
-    let buzzer = wired
-        .buzzer
-        .then(|| Buzzer::new(PinDriver::output(pins.gpio19)?))
-        .transpose()?;
-    let ir = wired.ir.then(|| IrReceiver::new(pins.gpio23)).transpose()?;
-    let potentiometer = wired
-        .potentiometer
-        .then(|| Potentiometer::new(peripherals.adc1, pins.gpio34))
-        .transpose()?;
+    let hardware = config::default_hardware(CONFIG.peripherals)?;
+    if let Some(problem) = hardware.validate(env!("MCU")).first() {
+        anyhow::bail!("hardware in cfg.toml: {problem}");
+    }
+    let (entities, _failures) = peripheral::mount(&hardware, peripherals.adc1);
 
     let device_id = device_id()?;
     log::info!("Oxihome node {device_id} started");
@@ -78,12 +53,7 @@ fn main() -> anyhow::Result<()> {
     )?;
     let transport = MqttTransport::new(CONFIG.mqtt_url, &device_id, CONFIG.mqtt_password)?;
     let board = Board {
-        led,
-        external_led,
-        climate,
-        buzzer,
-        potentiometer,
-        ir,
+        entities,
         pending_update: None,
         settings,
     };
@@ -91,8 +61,6 @@ fn main() -> anyhow::Result<()> {
 
     let mut last_wifi_check = Instant::now();
     let mut last_heartbeat = Instant::now();
-    let mut last_climate_read: Option<Instant> = None;
-    let mut last_potentiometer_read = Instant::now();
     loop {
         if node.update_unverified() && started.elapsed() >= ota::VALIDATION_TIMEOUT {
             log::error!("New image did not reach the broker; restarting to roll back");
@@ -106,18 +74,7 @@ fn main() -> anyhow::Result<()> {
             node.send_heartbeat(uptime_seconds(), wifi::rssi())?;
             last_heartbeat = Instant::now();
         }
-        if last_climate_read.is_none_or(|last| last.elapsed() >= CLIMATE_READ_INTERVAL) {
-            node.read_climate()?;
-            last_climate_read = Some(Instant::now());
-        }
-        if last_potentiometer_read.elapsed() >= POTENTIOMETER_READ_INTERVAL {
-            node.read_potentiometer()?;
-            last_potentiometer_read = Instant::now();
-        }
         node.poll()?;
-        if let Some(event) = button.poll() {
-            node.handle_button(event)?;
-        }
         FreeRtos::delay_ms(POLL_INTERVAL_MS);
     }
 }

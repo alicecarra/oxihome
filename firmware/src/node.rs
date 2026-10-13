@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use esp_idf_svc::hal::gpio::{Output, PinDriver};
 use oxihome_node::{Device, NodeCore, Rejection};
 use oxihome_protocol::management::{self, ManagementChannel, PARAMETERS};
@@ -6,21 +8,13 @@ use oxihome_protocol::{
     EventKind, Message, Payload, Quantity, Unit, Value, ValueType,
 };
 
-use crate::buzzer::{self, Buzzer};
-use crate::climate::Climate;
-use crate::ir::{self, IrReceiver};
+use crate::buzzer;
+use crate::ir;
 use crate::ota::Ota;
-use crate::potentiometer::Potentiometer;
+use crate::peripheral::{Entity, POTENTIOMETER_READ_INTERVAL, Peripheral};
 use crate::settings::Settings;
 use crate::transport::{Transport, TransportEvent};
 
-pub const LED_ENTITY: u8 = 1;
-pub const BUTTON_ENTITY: u8 = 2;
-pub const CLIMATE_ENTITY: u8 = 3;
-pub const EXTERNAL_LED_ENTITY: u8 = 4;
-pub const BUZZER_ENTITY: u8 = 5;
-pub const IR_ENTITY: u8 = 6;
-pub const POTENTIOMETER_ENTITY: u8 = 7;
 const MAIN_CHANNEL: u8 = 0;
 const TEMPERATURE_CHANNEL: u8 = 0;
 const HUMIDITY_CHANNEL: u8 = 1;
@@ -28,12 +22,7 @@ const HUMIDITY_CHANNEL: u8 = 1;
 /// The board's peripherals as `oxihome-node` sees them.
 pub struct Board {
     pub settings: Settings,
-    pub led: PinDriver<'static, Output>,
-    pub external_led: Option<PinDriver<'static, Output>>,
-    pub climate: Option<Climate>,
-    pub buzzer: Option<Buzzer>,
-    pub potentiometer: Option<Potentiometer>,
-    pub ir: Option<IrReceiver>,
+    pub entities: Vec<Entity>,
     /// Set by an `Ota` command, run by `Node::poll` once the `Ack` is out.
     pub pending_update: Option<String>,
 }
@@ -85,30 +74,75 @@ impl<T: Transport> Node<T> {
                 }
             }
         }
-        if let Some(code) = self.board.ir.as_mut().and_then(IrReceiver::poll) {
-            log::info!("IR: {code}");
-            let event = self.core.event(
-                IR_ENTITY,
-                MAIN_CHANNEL,
-                EventKind::Received,
-                Some(Value::Text(code)),
-            );
-            self.send(event)?;
-        }
-        match &mut self.board.buzzer {
-            Some(buzzer) => buzzer.poll(),
-            None => Ok(()),
-        }
+        self.poll_peripherals()
     }
 
-    pub fn handle_button(&mut self, event: EventKind) -> anyhow::Result<()> {
-        let message = self.core.event(BUTTON_ENTITY, MAIN_CHANNEL, event, None);
-        self.send(message)?;
+    fn poll_peripherals(&mut self) -> anyhow::Result<()> {
+        let mut outcomes = Vec::new();
+        for entity in &mut self.board.entities {
+            let id = entity.id;
+            match &mut entity.peripheral {
+                Peripheral::Output { .. } => {}
+                Peripheral::Button { button, toggles } => {
+                    if let Some(event) = button.poll() {
+                        outcomes.push(Outcome::Event(id, event, None));
+                        if let (EventKind::Press, Some(output)) = (event, *toggles) {
+                            outcomes.push(Outcome::Toggle(output));
+                        }
+                    }
+                }
+                Peripheral::Climate {
+                    climate,
+                    read_interval,
+                    last_read,
+                } => {
+                    if last_read.is_none_or(|last| last.elapsed() >= *read_interval) {
+                        *last_read = Some(Instant::now());
+                        // A failed read sends nothing.
+                        if climate.read().is_some() {
+                            outcomes.push(Outcome::State(id));
+                        }
+                    }
+                }
+                Peripheral::Buzzer(buzzer) => buzzer.poll()?,
+                Peripheral::IrReceiver(receiver) => {
+                    if let Some(code) = receiver.poll() {
+                        log::info!("IR: {code}");
+                        outcomes.push(Outcome::Event(
+                            id,
+                            EventKind::Received,
+                            Some(Value::Text(code)),
+                        ));
+                    }
+                }
+                Peripheral::Potentiometer {
+                    potentiometer,
+                    last_read,
+                } => {
+                    if last_read.elapsed() >= POTENTIOMETER_READ_INTERVAL {
+                        *last_read = Instant::now();
+                        if potentiometer.poll()? {
+                            outcomes.push(Outcome::State(id));
+                        }
+                    }
+                }
+            }
+        }
 
-        // Hardcoded local binding: press toggles the LED.
-        if event == EventKind::Press {
-            self.board.led.toggle()?;
-            self.send_state(LED_ENTITY)?;
+        for outcome in outcomes {
+            match outcome {
+                Outcome::Event(entity, event, value) => {
+                    let message = self.core.event(entity, MAIN_CHANNEL, event, value);
+                    self.send(message)?;
+                }
+                Outcome::State(entity) => self.send_state(entity)?,
+                Outcome::Toggle(entity) => {
+                    if let Some((pin, _)) = self.board.output(entity) {
+                        pin.toggle()?;
+                        self.send_state(entity)?;
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -116,24 +150,6 @@ impl<T: Transport> Node<T> {
     pub fn send_heartbeat(&mut self, uptime_seconds: u32, rssi: Option<i8>) -> anyhow::Result<()> {
         let message = self.core.heartbeat(uptime_seconds, rssi, None);
         self.send(message)
-    }
-
-    /// Sends the reading as `State`; a failed read sends nothing.
-    pub fn read_climate(&mut self) -> anyhow::Result<()> {
-        match self.board.climate.as_mut().and_then(Climate::read) {
-            Some(_) => self.send_state(CLIMATE_ENTITY),
-            None => Ok(()),
-        }
-    }
-
-    pub fn read_potentiometer(&mut self) -> anyhow::Result<()> {
-        let Some(potentiometer) = &mut self.board.potentiometer else {
-            return Ok(());
-        };
-        if potentiometer.poll()? {
-            self.send_state(POTENTIOMETER_ENTITY)?;
-        }
-        Ok(())
     }
 
     pub fn update_unverified(&self) -> bool {
@@ -177,13 +193,31 @@ impl<T: Transport> Node<T> {
     }
 }
 
+enum Outcome {
+    Event(u8, EventKind, Option<Value>),
+    State(u8),
+    Toggle(u8),
+}
+
 impl Board {
-    /// Only called with `LED_ENTITY` or `EXTERNAL_LED_ENTITY`.
-    fn led_pin(&mut self, entity: u8) -> Option<&mut PinDriver<'static, Output>> {
-        if entity == EXTERNAL_LED_ENTITY {
-            self.external_led.as_mut()
-        } else {
-            Some(&mut self.led)
+    fn peripheral(&self, entity: u8) -> Option<&Peripheral> {
+        self.entities
+            .iter()
+            .find(|candidate| candidate.id == entity)
+            .map(|found| &found.peripheral)
+    }
+
+    fn peripheral_mut(&mut self, entity: u8) -> Option<&mut Peripheral> {
+        self.entities
+            .iter_mut()
+            .find(|candidate| candidate.id == entity)
+            .map(|found| &mut found.peripheral)
+    }
+
+    fn output(&mut self, entity: u8) -> Option<(&mut PinDriver<'static, Output>, bool)> {
+        match self.peripheral_mut(entity)? {
+            Peripheral::Output { pin, inverted } => Some((pin, *inverted)),
+            _ => None,
         }
     }
 }
@@ -192,94 +226,12 @@ impl Device for Board {
     fn entities(&self) -> Vec<EntityDescriptor> {
         let mut management = management::descriptor();
         management.channels.push(management::ota_descriptor());
-        let mut entities = vec![
-            management,
-            led_descriptor(LED_ENTITY),
-            EntityDescriptor {
-                id: BUTTON_ENTITY,
-                channels: vec![channel(MAIN_CHANNEL, Access::Event, None)],
-            },
-        ];
-        if self.climate.is_some() {
-            entities.push(EntityDescriptor {
-                id: CLIMATE_ENTITY,
-                channels: vec![
-                    Channel {
-                        quantity: Some(Quantity::Temperature),
-                        unit: Some(Unit::Celsius),
-                        ..channel(
-                            TEMPERATURE_CHANNEL,
-                            Access::Read,
-                            Some(ValueType::Float {
-                                min: 0.0,
-                                max: 50.0,
-                                step: 1.0,
-                            }),
-                        )
-                    },
-                    Channel {
-                        quantity: Some(Quantity::Humidity),
-                        unit: Some(Unit::Percent),
-                        ..channel(
-                            HUMIDITY_CHANNEL,
-                            Access::Read,
-                            Some(ValueType::Float {
-                                min: 20.0,
-                                max: 90.0,
-                                step: 1.0,
-                            }),
-                        )
-                    },
-                ],
-            });
-        }
-        if self.external_led.is_some() {
-            entities.push(led_descriptor(EXTERNAL_LED_ENTITY));
-        }
-        if self.buzzer.is_some() {
-            entities.push(EntityDescriptor {
-                id: BUZZER_ENTITY,
-                channels: vec![channel(
-                    MAIN_CHANNEL,
-                    Access::Trigger,
-                    Some(ValueType::Enum(
-                        buzzer::PATTERNS
-                            .iter()
-                            .map(|pattern| pattern.to_string())
-                            .collect(),
-                    )),
-                )],
-            });
-        }
-        if self.ir.is_some() {
-            entities.push(EntityDescriptor {
-                id: IR_ENTITY,
-                channels: vec![channel(
-                    MAIN_CHANNEL,
-                    Access::Event,
-                    Some(ValueType::Text {
-                        max_length: ir::MAX_CODE_LENGTH,
-                    }),
-                )],
-            });
-        }
-        if self.potentiometer.is_some() {
-            entities.push(EntityDescriptor {
-                id: POTENTIOMETER_ENTITY,
-                channels: vec![Channel {
-                    unit: Some(Unit::Percent),
-                    ..channel(
-                        MAIN_CHANNEL,
-                        Access::Read,
-                        Some(ValueType::Int {
-                            min: 0,
-                            max: 100,
-                            step: 1,
-                        }),
-                    )
-                }],
-            });
-        }
+        let mut entities = vec![management];
+        entities.extend(
+            self.entities
+                .iter()
+                .map(|entity| descriptor(entity.id, &entity.peripheral)),
+        );
         entities
     }
 
@@ -296,20 +248,13 @@ impl Device for Board {
                     })
                     .collect(),
             ),
-            LED_ENTITY => Some(vec![confirmed(
-                MAIN_CHANNEL,
-                Value::Bool(self.led.is_set_high()),
-            )]),
-            EXTERNAL_LED_ENTITY => self
-                .external_led
-                .as_ref()
-                .map(|pin| vec![confirmed(MAIN_CHANNEL, Value::Bool(pin.is_set_high()))]),
-            // Nothing before the first good reading.
-            CLIMATE_ENTITY => self
-                .climate
-                .as_ref()
-                .and_then(Climate::last)
-                .map(|reading| {
+            _ => match self.peripheral(entity)? {
+                Peripheral::Output { pin, inverted } => Some(vec![confirmed(
+                    MAIN_CHANNEL,
+                    Value::Bool(pin.is_set_high() != *inverted),
+                )]),
+                // Nothing before the first good reading.
+                Peripheral::Climate { climate, .. } => climate.last().map(|reading| {
                     vec![
                         confirmed(
                             TEMPERATURE_CHANNEL,
@@ -321,12 +266,13 @@ impl Device for Board {
                         ),
                     ]
                 }),
-            POTENTIOMETER_ENTITY => self
-                .potentiometer
-                .as_ref()
-                .and_then(Potentiometer::percent)
-                .map(|percent| vec![confirmed(MAIN_CHANNEL, Value::Int(percent.into()))]),
-            _ => None,
+                Peripheral::Potentiometer { potentiometer, .. } => potentiometer
+                    .percent()
+                    .map(|percent| vec![confirmed(MAIN_CHANNEL, Value::Int(percent.into()))]),
+                Peripheral::Button { .. } | Peripheral::Buzzer(_) | Peripheral::IrReceiver(_) => {
+                    None
+                }
+            },
         }
     }
 
@@ -352,28 +298,104 @@ impl Device for Board {
                 self.pending_update = Some(url.clone());
                 Ok(())
             }
-            (LED_ENTITY | EXTERNAL_LED_ENTITY, CommandOp::Set(Value::Bool(on))) => {
-                let Some(pin) = self.led_pin(entity) else {
-                    return Err(not_wired(entity));
-                };
-                let result = if *on { pin.set_high() } else { pin.set_low() };
-                result.map_err(|error| internal("LED", &error))
-            }
-            (BUZZER_ENTITY, CommandOp::Invoke(Some(Value::Enum(pattern)))) => {
-                let Some(buzzer) = &mut self.buzzer else {
-                    return Err(not_wired(entity));
-                };
-                match buzzer.play(pattern) {
+            (management::ENTITY, _) => Err(unsupported(entity, channel, op)),
+            _ => match (self.peripheral_mut(entity), op) {
+                (None, _) => Err(not_wired(entity)),
+                (Some(Peripheral::Output { pin, inverted }), CommandOp::Set(Value::Bool(on))) => {
+                    let result = if *on != *inverted {
+                        pin.set_high()
+                    } else {
+                        pin.set_low()
+                    };
+                    result.map_err(|error| internal("output", &error))
+                }
+                (
+                    Some(Peripheral::Buzzer(buzzer)),
+                    CommandOp::Invoke(Some(Value::Enum(pattern))),
+                ) => match buzzer.play(pattern) {
                     Ok(_) => Ok(()),
                     Err(error) => Err(internal("buzzer", &error)),
-                }
-            }
-            _ => Err(Rejection::new(
-                ErrorCode::Unsupported,
-                format!("{op:?} on entity {entity} channel {channel} is declared but not handled"),
-            )),
+                },
+                _ => Err(unsupported(entity, channel, op)),
+            },
         }
     }
+}
+
+fn unsupported(entity: u8, channel: u8, op: &CommandOp) -> Rejection {
+    Rejection::new(
+        ErrorCode::Unsupported,
+        format!("{op:?} on entity {entity} channel {channel} is declared but not handled"),
+    )
+}
+
+fn descriptor(id: u8, peripheral: &Peripheral) -> EntityDescriptor {
+    let channels = match peripheral {
+        Peripheral::Output { .. } => vec![channel(
+            MAIN_CHANNEL,
+            Access::ReadWrite,
+            Some(ValueType::Bool),
+        )],
+        Peripheral::Button { .. } => vec![channel(MAIN_CHANNEL, Access::Event, None)],
+        Peripheral::Climate { .. } => vec![
+            Channel {
+                quantity: Some(Quantity::Temperature),
+                unit: Some(Unit::Celsius),
+                ..channel(
+                    TEMPERATURE_CHANNEL,
+                    Access::Read,
+                    Some(ValueType::Float {
+                        min: 0.0,
+                        max: 50.0,
+                        step: 1.0,
+                    }),
+                )
+            },
+            Channel {
+                quantity: Some(Quantity::Humidity),
+                unit: Some(Unit::Percent),
+                ..channel(
+                    HUMIDITY_CHANNEL,
+                    Access::Read,
+                    Some(ValueType::Float {
+                        min: 20.0,
+                        max: 90.0,
+                        step: 1.0,
+                    }),
+                )
+            },
+        ],
+        Peripheral::Buzzer(_) => vec![channel(
+            MAIN_CHANNEL,
+            Access::Trigger,
+            Some(ValueType::Enum(
+                buzzer::PATTERNS
+                    .iter()
+                    .map(|pattern| pattern.to_string())
+                    .collect(),
+            )),
+        )],
+        Peripheral::IrReceiver(_) => vec![channel(
+            MAIN_CHANNEL,
+            Access::Event,
+            Some(ValueType::Text {
+                max_length: ir::MAX_CODE_LENGTH,
+            }),
+        )],
+        Peripheral::Potentiometer { .. } => vec![Channel {
+            unit: Some(Unit::Percent),
+            ..channel(
+                MAIN_CHANNEL,
+                Access::Read,
+                Some(ValueType::Int {
+                    min: 0,
+                    max: 100,
+                    step: 1,
+                }),
+            )
+        }],
+    };
+    EntityDescriptor { id, channels }
 }
 
 fn channel(id: u8, access: Access, value: Option<ValueType>) -> Channel {
@@ -392,17 +414,6 @@ fn not_wired(entity: u8) -> Rejection {
         ErrorCode::UnknownEntity,
         format!("entity {entity} is not wired on this board"),
     )
-}
-
-fn led_descriptor(entity: u8) -> EntityDescriptor {
-    EntityDescriptor {
-        id: entity,
-        channels: vec![channel(
-            MAIN_CHANNEL,
-            Access::ReadWrite,
-            Some(ValueType::Bool),
-        )],
-    }
 }
 
 fn confirmed(channel: u8, value: Value) -> ChannelValue {
