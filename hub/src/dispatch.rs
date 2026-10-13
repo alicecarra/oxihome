@@ -8,8 +8,8 @@ use oxihome_protocol::{Message, Payload, QueryKind, management};
 
 use crate::config::rules;
 use crate::hub::Hub;
-use crate::node::parameters;
 use crate::node::registry::NodeEvent;
+use crate::node::{hardware, parameters};
 use crate::schedule::Schedule;
 
 /// (Re)connected to the broker: ask every node to introduce itself and report its state.
@@ -28,11 +28,18 @@ pub async fn on_connected(hub: &Hub) -> anyhow::Result<()> {
 pub async fn on_message(hub: &Arc<Hub>, message: &Message) -> anyhow::Result<()> {
     let (node_events, updates, event) = hub.handle(message, Instant::now());
     match &message.payload {
-        Payload::Hello { build, .. } => hub.settle_update(&message.src, &build.version),
+        Payload::Hello { build, .. } => {
+            hub.settle_update(&message.src, &build.version);
+            hub.hardware_restarted(&message.src);
+        }
         Payload::Error {
             detail: Some(detail),
             ..
         } if detail.starts_with("OTA:") => hub.fail_update(&message.src, detail),
+        Payload::Error {
+            detail: Some(detail),
+            ..
+        } if message.reply_to.is_none() => hub.record_node_report(&message.src, detail),
         _ => {}
     }
 
@@ -48,6 +55,7 @@ pub async fn on_message(hub: &Arc<Hub>, message: &Message) -> anyhow::Result<()>
         .any(|node_event| matches!(node_event, NodeEvent::Online(_)));
     if reports_parameters || came_back {
         tokio::spawn(parameters::apply(hub.clone(), message.src.clone()));
+        tokio::spawn(hardware::apply(hub.clone(), message.src.clone()));
     }
 
     for node_event in node_events {

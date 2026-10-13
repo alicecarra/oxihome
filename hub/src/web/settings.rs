@@ -17,7 +17,7 @@ use crate::components::card::{card, card_content, card_description, card_header,
 use crate::components::textarea::textarea;
 use crate::config::FILES;
 use crate::hub::Hub;
-use crate::node::parameters;
+use crate::node::{hardware, parameters};
 
 path_param!(file);
 
@@ -52,7 +52,7 @@ pub async fn settings(cx: &Cx) -> Result<impl View> {
                             </form>
                         </div>
                         card_description(
-                            (format!("Nodes (names and parameters), rules, remotes, panels and the dashboard live in TOML files in {directory}. Edit them here, or in an editor and then reload. Each node's page also edits its names and parameters."))
+                            (format!("Nodes (names, parameters and hardware), rules, remotes, panels and the dashboard live in TOML files in {directory}. Edit them here, or in an editor and then reload. Each node's page also edits its names and parameters."))
                         )
                     )
                     card_content(
@@ -117,7 +117,7 @@ pub async fn settings_file(cx: &Cx) -> Result<impl View> {
 
 fn file_description(file: &str) -> &'static str {
     match file {
-        "nodes.toml" => "Names of nodes, entities and channels, and the operation parameters the hub sets.",
+        "nodes.toml" => "Names of nodes, entities and channels, and the operation parameters and hardware the hub sets.",
         "rules.toml" => "What happens on events, values, schedules, remote keys and panel buttons.",
         "remotes.toml" => "Infrared remotes and the names of their keys.",
         "panels.toml" => "Panels of buttons that run rules.",
@@ -146,7 +146,8 @@ pub async fn reload(cx: &Cx) -> Result<ViewHandle> {
     let result = hub.reload_config();
     if let Ok(rule_count) = &result {
         for device_id in hub.device_ids() {
-            tokio::spawn(parameters::apply(hub.clone(), device_id));
+            tokio::spawn(parameters::apply(hub.clone(), device_id.clone()));
+            tokio::spawn(hardware::apply(hub.clone(), device_id));
         }
         hub.notify(
             "Config reloaded".into(),
@@ -219,7 +220,8 @@ pub async fn save(cx: &Cx, Form(form): Form<SaveForm>) -> Result<ViewHandle> {
     let editor = match result {
         Ok(rule_count) => {
             for device_id in hub.device_ids() {
-                tokio::spawn(parameters::apply(hub.clone(), device_id));
+                tokio::spawn(parameters::apply(hub.clone(), device_id.clone()));
+                tokio::spawn(hardware::apply(hub.clone(), device_id));
             }
             hub.notify(
                 format!("{} saved", form.file),

@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 
-use anyhow::bail;
+use anyhow::{Context, bail};
+use oxihome_protocol::hardware::{Hardware, HardwareEntity};
 use oxihome_protocol::management::{HEARTBEAT_INTERVAL, Parameter, WIFI_CHECK_INTERVAL};
 use serde::Deserialize;
 use toml_edit::{DocumentMut, InlineTable, Item, Table, TableLike, Value};
 
-/// What `nodes.toml` says about each node, by the id from its `Hello`: friendly names and the
-/// desired operation parameters. The hub is the source of truth for the parameters: a node that
-/// reports another value gets a `Set`.
+/// What `nodes.toml` says about each node, by the id from its `Hello`: friendly names, the
+/// desired operation parameters and the hardware. The hub is the source of truth for both: a node
+/// that reports something else gets a `Set`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Nodes {
@@ -24,6 +25,8 @@ struct NodeConfig {
     entities: HashMap<String, EntityConfig>,
     #[serde(default)]
     parameters: Parameters,
+    /// Read into `HardwareEntity` by `parse_hardware`, which also refuses unknown options.
+    hardware: Option<Vec<toml::Table>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -142,9 +145,19 @@ impl Nodes {
             .unwrap_or_default()
     }
 
-    /// Rejects parameter values the nodes would refuse.
+    /// `None` when the hub leaves the node's hardware alone.
+    pub fn hardware(&self, device_id: &str) -> Option<Hardware> {
+        let entries = self.nodes.get(device_id)?.hardware.as_ref()?;
+        parse_hardware(entries).ok()
+    }
+
+    /// Rejects parameter values the nodes would refuse and hardware that does not parse. Pins are
+    /// checked before sending, once the node's target is known.
     pub fn validate(&self) -> anyhow::Result<()> {
         for (device_id, node) in &self.nodes {
+            if let Some(entries) = &node.hardware {
+                parse_hardware(entries).with_context(|| format!("{device_id}: hardware"))?;
+            }
             for (parameter, value) in node.parameters.values() {
                 if !parameter.accepts(value) {
                     bail!(
@@ -158,6 +171,23 @@ impl Nodes {
         }
         Ok(())
     }
+}
+
+/// `serde(flatten)` in `HardwareEntity` lets unknown keys through, so a misspelled option would
+/// silently take its default: each key must come back when the entity is written out again.
+fn parse_hardware(entries: &[toml::Table]) -> anyhow::Result<Hardware> {
+    let mut entities = Vec::new();
+    for (index, entry) in entries.iter().enumerate() {
+        let entity: HardwareEntity = toml::Value::Table(entry.clone())
+            .try_into()
+            .with_context(|| format!("entry {}", index + 1))?;
+        let written = toml::Value::try_from(&entity)?;
+        if let Some(key) = entry.keys().find(|key| written.get(key.as_str()).is_none()) {
+            bail!("entity {}: unknown option `{key}`", entity.id);
+        }
+        entities.push(entity);
+    }
+    Ok(Hardware { entities })
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -280,6 +310,8 @@ fn remove_if_empty(parent: &mut dyn TableLike, key: &str) {
 
 #[cfg(test)]
 mod tests {
+    use oxihome_protocol::hardware::Driver;
+
     use super::*;
 
     const DEVICE: &str = "esp32-test";
@@ -346,6 +378,59 @@ mod tests {
         assert!(parse("[nodes.\"esp32-test\"]\nparameters = { heartbeat = 60 }").is_err());
         assert!(parse("[nodes.\"esp32-test\"]\nnmae = \"Test board\"").is_err());
         assert!(parse("[nodes.\"esp32-test\"]\nentities.1 = { nmae = \"LED\" }").is_err());
+    }
+
+    const HARDWARE: &str = r#"
+        [nodes."esp32-test"]
+        hardware = [
+            { id = 1, pin = 2, driver = "output" },
+            { id = 2, pin = 0, driver = "button", toggles = 1 },
+            { id = 3, pin = 34, driver = "potentiometer", minimum_change = 5 },
+        ]
+    "#;
+
+    #[test]
+    fn hardware_of_a_node() {
+        let nodes = parse(HARDWARE).unwrap();
+        nodes.validate().unwrap();
+        let hardware = nodes.hardware(DEVICE).unwrap();
+        assert_eq!(
+            hardware.entities[1].driver,
+            Driver::Button {
+                pull_up: true,
+                toggles: Some(1)
+            }
+        );
+        assert_eq!(
+            hardware.entities[2].driver,
+            Driver::Potentiometer { minimum_change: 5 }
+        );
+        assert!(nodes.hardware("other").is_none());
+        assert!(parse(EXAMPLE).unwrap().hardware(DEVICE).is_none());
+    }
+
+    #[test]
+    fn hardware_is_compared_by_content() {
+        let nodes = parse(HARDWARE).unwrap();
+        let reported = Hardware::from_json(
+            r#"{"entities":[{"driver":"output","id":1,"pin":2,"inverted":false},{"id":2,"pin":0,"driver":"button","pull_up":true,"toggles":1},{"id":3,"pin":34,"driver":"potentiometer","minimum_change":5}]}"#,
+        )
+        .unwrap();
+        assert_eq!(nodes.hardware(DEVICE), Some(reported));
+    }
+
+    #[test]
+    fn misspelled_hardware_options_are_rejected() {
+        let nodes = parse(
+            "[nodes.\"esp32-test\"]\nhardware = [{ id = 2, pin = 0, driver = \"button\", pull_upp = false }]",
+        )
+        .unwrap();
+        let message = format!("{:#}", nodes.validate().unwrap_err());
+        assert!(message.contains("pull_upp"), "{message}");
+        let unknown_driver =
+            parse("[nodes.\"esp32-test\"]\nhardware = [{ id = 2, pin = 0, driver = \"relay\" }]")
+                .unwrap();
+        assert!(unknown_driver.validate().is_err());
     }
 
     const FILE: &str = r#"# Friendly names and parameters.

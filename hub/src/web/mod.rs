@@ -50,6 +50,7 @@ pub fn router(hub: Arc<Hub>, listen_host: &str) -> Router {
         .page(node::fields_fragment)
         .page(node::fields_edit_fragment)
         .page(node::history_fragment)
+        .page(node::hardware_fragment)
         .page(panel::panel)
         .page(rules::rules)
         .page(remotes::remotes_page)

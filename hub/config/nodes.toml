@@ -3,6 +3,11 @@
 # Channels without a name show their quantity (e.g. Temperature) or "channel N".
 # Parameter ranges: heartbeat_interval 5-300, wifi_check_interval 1-60; a missing one keeps the
 # node's value.
+# hardware: what is wired to each pin of a board, sent when the board mounts something else (it
+# restarts to apply it); without it the hub leaves the board's hardware alone. Drivers and options:
+# output (inverted = false), button (pull_up = true, toggles = <output entity>),
+# dht11 (read_interval_seconds = 30, 2-3600), buzzer, ir_receiver,
+# potentiometer (minimum_change = 2 percent, 1-50).
 
 [nodes."esp32-08d1f9ca41e4"]
 name = "Test board"
@@ -14,12 +19,25 @@ entities.5 = { name = "Buzzer", channels.0 = "Pattern" }
 entities.6 = { name = "IR receiver", channels.0 = "Code" }
 entities.7 = { name = "Potentiometer" }
 parameters = { heartbeat_interval = 30, wifi_check_interval = 5 }
+hardware = [
+    { id = 1, pin = 2, driver = "output" },
+    { id = 2, pin = 0, driver = "button", toggles = 1 },
+    { id = 3, pin = 4, driver = "dht11" },
+    { id = 4, pin = 18, driver = "output" },
+    { id = 5, pin = 19, driver = "buzzer" },
+    { id = 6, pin = 23, driver = "ir_receiver" },
+    { id = 7, pin = 34, driver = "potentiometer" },
+]
 
 [nodes."esp32-14335c2e7270"]
 name = "Outra placa"
 entities.1 = { name = "LED", channels.0 = "Power" }
 entities.2 = { name = "BOOT button", channels.0 = "Press" }
 parameters = { heartbeat_interval = 30, wifi_check_interval = 5 }
+hardware = [
+    { id = 1, pin = 2, driver = "output" },
+    { id = 2, pin = 0, driver = "button", toggles = 1 },
+]
 
 [nodes."sim-living-room"]
 name = "Living room (simulated)"
