@@ -598,6 +598,7 @@ async fn fields_section(
             hx-get=(format!("/nodes/{device_id}/fields{query}"))
             // The form's fields would repeat `range` in the query.
             hx-params="none"
+            hx-disinherit="*"
             hx-trigger="sse:nodes, refresh"
             hx-swap="outerHTML"
         }
