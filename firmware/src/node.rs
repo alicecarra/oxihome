@@ -2,8 +2,8 @@ use esp_idf_svc::hal::gpio::{Output, PinDriver};
 use oxihome_node::{Device, NodeCore, Rejection};
 use oxihome_protocol::management::{self, ManagementChannel, PARAMETERS};
 use oxihome_protocol::{
-    Access, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, ErrorCode, EventKind,
-    Message, Payload, Quantity, Unit, Value, ValueType,
+    Access, Build, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, ErrorCode,
+    EventKind, Message, Payload, Quantity, Unit, Value, ValueType,
 };
 
 use crate::buzzer::{self, Buzzer};
@@ -49,7 +49,10 @@ pub struct Node<T: Transport> {
 impl<T: Transport> Node<T> {
     pub fn new(device_id: String, transport: T, board: Board, ota: Ota) -> Self {
         Self {
-            core: NodeCore::new(device_id, env!("CARGO_PKG_VERSION")),
+            core: NodeCore::new(
+                device_id,
+                Build::new("firmware", env!("CARGO_PKG_VERSION"), env!("MCU")),
+            ),
             board,
             transport,
             ota,
@@ -302,18 +305,22 @@ impl Device for Board {
                 .as_ref()
                 .map(|pin| vec![confirmed(MAIN_CHANNEL, Value::Bool(pin.is_set_high()))]),
             // Nothing before the first good reading.
-            CLIMATE_ENTITY => self.climate.as_ref().and_then(Climate::last).map(|reading| {
-                vec![
-                    confirmed(
-                        TEMPERATURE_CHANNEL,
-                        Value::Float(reading.temperature.into()),
-                    ),
-                    confirmed(
-                        HUMIDITY_CHANNEL,
-                        Value::Float(reading.relative_humidity.into()),
-                    ),
-                ]
-            }),
+            CLIMATE_ENTITY => self
+                .climate
+                .as_ref()
+                .and_then(Climate::last)
+                .map(|reading| {
+                    vec![
+                        confirmed(
+                            TEMPERATURE_CHANNEL,
+                            Value::Float(reading.temperature.into()),
+                        ),
+                        confirmed(
+                            HUMIDITY_CHANNEL,
+                            Value::Float(reading.relative_humidity.into()),
+                        ),
+                    ]
+                }),
             POTENTIOMETER_ENTITY => self
                 .potentiometer
                 .as_ref()
@@ -381,7 +388,10 @@ fn channel(id: u8, access: Access, value: Option<ValueType>) -> Channel {
 
 /// Commands are checked against `entities`, which leaves out what is not wired; kept as a safeguard.
 fn not_wired(entity: u8) -> Rejection {
-    Rejection::new(ErrorCode::UnknownEntity, format!("entity {entity} is not wired on this board"))
+    Rejection::new(
+        ErrorCode::UnknownEntity,
+        format!("entity {entity} is not wired on this board"),
+    )
 }
 
 fn led_descriptor(entity: u8) -> EntityDescriptor {
