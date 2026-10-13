@@ -3,8 +3,8 @@ use std::time::Instant;
 use oxihome_node::mqtt::SoftwareNode;
 use oxihome_node::{Device, NodeCore, Rejection};
 use oxihome_protocol::{
-    Access, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, ErrorCode, Message,
-    Quantity, Unit, Value, ValueType,
+    Access, Build, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, ErrorCode,
+    Message, Quantity, Unit, Value, ValueType,
 };
 
 use crate::open_meteo::Weather;
@@ -27,7 +27,10 @@ struct WeatherDevice {
 impl WeatherNode {
     pub fn new(device_id: String) -> Self {
         Self {
-            core: NodeCore::new(device_id, format!("weather {}", env!("CARGO_PKG_VERSION"))),
+            core: NodeCore::new(
+                device_id,
+                Build::native("weather", env!("CARGO_PKG_VERSION")),
+            ),
             device: WeatherDevice { weather: None },
             started_at: Instant::now(),
         }

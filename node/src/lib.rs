@@ -10,8 +10,8 @@ mod validation;
 use std::collections::HashMap;
 
 use oxihome_protocol::{
-    ChannelValue, CommandOp, EntityDescriptor, ErrorCode, EventKind, Message, Payload, QueryKind,
-    Value,
+    Build, ChannelValue, CommandOp, EntityDescriptor, ErrorCode, EventKind, Message, Payload,
+    QueryKind, Value,
 };
 
 pub use validation::Rejection;
@@ -36,16 +36,16 @@ struct AnsweredCommand {
 
 pub struct NodeCore {
     device_id: String,
-    firmware_version: String,
+    build: Build,
     next_message_id: u32,
     answered_commands: HashMap<String, AnsweredCommand>,
 }
 
 impl NodeCore {
-    pub fn new(device_id: impl Into<String>, firmware_version: impl Into<String>) -> Self {
+    pub fn new(device_id: impl Into<String>, build: Build) -> Self {
         Self {
             device_id: device_id.into(),
-            firmware_version: firmware_version.into(),
+            build,
             next_message_id: 0,
             answered_commands: HashMap::new(),
         }
@@ -216,7 +216,7 @@ impl NodeCore {
 
     fn hello_replying(&mut self, device: &impl Device, reply_to: Option<u32>) -> Message {
         let payload = Payload::Hello {
-            fw_version: self.firmware_version.clone(),
+            build: self.build.clone(),
             entities: device.entities(),
         };
         self.message(payload, reply_to)

@@ -4,8 +4,8 @@ use std::time::Instant;
 use oxihome_node::mqtt::SoftwareNode;
 use oxihome_node::{Device, NodeCore, Rejection};
 use oxihome_protocol::{
-    Access, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, EventKind, Message,
-    Quantity, Unit, Value, ValueType,
+    Access, Build, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, EventKind,
+    Message, Quantity, Unit, Value, ValueType,
 };
 use serde::Deserialize;
 
@@ -52,7 +52,7 @@ impl SimulatedNode {
         Self {
             core: NodeCore::new(
                 device_id,
-                format!("simulator {}", env!("CARGO_PKG_VERSION")),
+                Build::native("simulator", env!("CARGO_PKG_VERSION")),
             ),
             device: SimulatedDevice {
                 entities,

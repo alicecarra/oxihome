@@ -96,7 +96,7 @@ impl Device for TestDevice {
 }
 
 fn core() -> NodeCore {
-    NodeCore::new(DEVICE, "test 1.0")
+    NodeCore::new(DEVICE, Build::new("test", "1.0.0", "test"))
 }
 
 fn from_hub(message_id: u32, payload: Payload) -> Message {
@@ -309,9 +309,9 @@ fn broadcast_queries_are_answered() {
         &answers[..],
         [Message {
             reply_to: Some(3),
-            payload: Payload::Hello { fw_version, entities },
+            payload: Payload::Hello { build, entities },
             ..
-        }] if fw_version == "test 1.0" && entities.len() == 4
+        }] if build.version == "1.0.0" && entities.len() == 4
     ));
 }
 

@@ -1531,7 +1531,7 @@ dependencies = [
 
 [[package]]
 name = "oxihome-linux-monitor"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "jiff",
@@ -1546,7 +1546,7 @@ dependencies = [
 
 [[package]]
 name = "oxihome-node"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oxihome-protocol",
  "rumqttc",
@@ -1563,7 +1563,7 @@ dependencies = [
 
 [[package]]
 name = "oxihome-simulator"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "oxihome-node",
@@ -1575,7 +1575,7 @@ dependencies = [
 
 [[package]]
 name = "oxihome-weather"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "oxihome-node",

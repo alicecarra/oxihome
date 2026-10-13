@@ -3,8 +3,8 @@ use std::time::Instant;
 use oxihome_node::mqtt::SoftwareNode;
 use oxihome_node::{Device, NodeCore, Rejection};
 use oxihome_protocol::{
-    Access, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, ErrorCode, EventKind,
-    Message, Quantity, Unit, Value, ValueType,
+    Access, Build, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, ErrorCode,
+    EventKind, Message, Quantity, Unit, Value, ValueType,
 };
 
 use crate::docker::{self, HEALTH_OPTIONS};
@@ -50,7 +50,7 @@ impl MonitorNode {
         Self {
             core: NodeCore::new(
                 device_id,
-                format!("linux-monitor {}", env!("CARGO_PKG_VERSION")),
+                Build::native("linux-monitor", env!("CARGO_PKG_VERSION")),
             ),
             device: MonitorDevice {
                 info: sampler.info(),
