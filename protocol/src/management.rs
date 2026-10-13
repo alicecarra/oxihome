@@ -1,5 +1,6 @@
 //! Node management entity.
 
+use crate::hardware::HARDWARE_MAX_LENGTH;
 use crate::{Access, Channel, EntityDescriptor, Unit, ValueType};
 
 pub const ENTITY: u8 = 0;
@@ -20,6 +21,8 @@ pub enum ManagementChannel {
     HeartbeatInterval = 5,
     /// `Int` (s): Wi-Fi connection check interval.
     WifiCheckInterval = 6,
+    /// `Text`: the `Hardware` JSON; a `Set` makes the node store it and reboot.
+    Hardware = 7,
 }
 
 impl From<ManagementChannel> for u8 {
@@ -40,6 +43,7 @@ impl TryFrom<u8> for ManagementChannel {
             3 => Ok(Self::ReportInterval),
             5 => Ok(Self::HeartbeatInterval),
             6 => Ok(Self::WifiCheckInterval),
+            7 => Ok(Self::Hardware),
             unknown => Err(unknown),
         }
     }
@@ -111,6 +115,19 @@ pub fn ota_descriptor() -> Channel {
     }
 }
 
+/// For nodes whose hardware the hub configures; added to `descriptor()` by the node.
+pub fn hardware_descriptor() -> Channel {
+    Channel {
+        id: ManagementChannel::Hardware.into(),
+        access: Access::ReadWrite,
+        value: Some(ValueType::Text {
+            max_length: HARDWARE_MAX_LENGTH,
+        }),
+        quantity: None,
+        unit: None,
+    }
+}
+
 /// The management entity as announced in `Hello`.
 pub fn descriptor() -> EntityDescriptor {
     EntityDescriptor {
@@ -132,11 +149,12 @@ mod tests {
             ManagementChannel::ReportInterval,
             ManagementChannel::HeartbeatInterval,
             ManagementChannel::WifiCheckInterval,
+            ManagementChannel::Hardware,
         ] {
             assert_eq!(ManagementChannel::try_from(u8::from(channel)), Ok(channel));
         }
         assert_eq!(ManagementChannel::try_from(4), Err(4));
-        assert_eq!(ManagementChannel::try_from(7), Err(7));
+        assert_eq!(ManagementChannel::try_from(8), Err(8));
     }
 
     #[test]

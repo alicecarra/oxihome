@@ -1,5 +1,6 @@
 mod channel;
 mod error_code;
+pub mod hardware;
 pub mod legacy;
 pub mod management;
 mod message;
