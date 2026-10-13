@@ -17,6 +17,8 @@ pub trait Transport {
     fn poll(&mut self) -> Option<TransportEvent>;
 }
 
+const BUFFER_SIZE: usize = 4096;
+
 pub struct MqttTransport {
     client: EspMqttClient<'static>,
     events: Receiver<TransportEvent>,
@@ -33,6 +35,9 @@ impl MqttTransport {
                 client_id: Some(device_id),
                 username: (!anonymous).then_some(device_id),
                 password: (!anonymous).then_some(password),
+                // A hardware configuration, escaped inside a message, takes more than the default 1024.
+                buffer_size: BUFFER_SIZE,
+                out_buffer_size: BUFFER_SIZE,
                 ..Default::default()
             },
         )?;

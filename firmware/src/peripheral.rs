@@ -41,8 +41,8 @@ pub enum Peripheral {
 }
 
 /// Mounts the entities of an already validated `hardware`. An entity that fails is left out, and
-/// its error comes back with its id.
-pub fn mount(hardware: &Hardware, adc: ADC1<'static>) -> (Vec<Entity>, Vec<(u8, anyhow::Error)>) {
+/// its error comes back as a message.
+pub fn mount(hardware: &Hardware, adc: ADC1<'static>) -> (Vec<Entity>, Vec<String>) {
     let mut adc = Some(adc);
     let mut shared_adc: Option<&'static AdcDriver<'static, ADCU1>> = None;
     let mut entities = Vec::new();
@@ -54,13 +54,14 @@ pub fn mount(hardware: &Hardware, adc: ADC1<'static>) -> (Vec<Entity>, Vec<(u8, 
                 peripheral,
             }),
             Err(error) => {
-                log::error!(
-                    "Entity {} ({} on pin {}): {error:#}",
+                let failure = format!(
+                    "entity {} ({} on pin {}): {error:#}",
                     entity.id,
                     entity.driver.name(),
                     entity.pin
                 );
-                failures.push((entity.id, error));
+                log::error!("{failure}");
+                failures.push(failure);
             }
         }
     }

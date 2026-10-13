@@ -162,6 +162,12 @@ then = [
 
 [[rules]]
 name = "Outra placa button: beep on the test board"
-enabled = false
 when = { device = "esp32-14335c2e7270", entity = 2, channel = 0, event = "Press" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Short" } }, { notify = { title = "BEEP", message = "beep" } }]
+
+[[rules]]
+name = "tablet out of Internet"
+when = { device = "network-devices", entity = 2, channel = 1, event = "Received", data = "offline" }
+then = [
+    { invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } },
+]

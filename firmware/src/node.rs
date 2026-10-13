@@ -1,7 +1,8 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use esp_idf_svc::hal::gpio::{Output, PinDriver};
 use oxihome_node::{Device, NodeCore, Rejection};
+use oxihome_protocol::hardware::Hardware;
 use oxihome_protocol::management::{self, ManagementChannel, PARAMETERS};
 use oxihome_protocol::{
     Access, Build, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, ErrorCode,
@@ -12,19 +13,30 @@ use crate::buzzer;
 use crate::ir;
 use crate::ota::Ota;
 use crate::peripheral::{Entity, POTENTIOMETER_READ_INTERVAL, Peripheral};
+use crate::recovery::SAFE_MODE_BOOTS;
 use crate::settings::Settings;
 use crate::transport::{Transport, TransportEvent};
 
 const MAIN_CHANNEL: u8 = 0;
 const TEMPERATURE_CHANNEL: u8 = 0;
 const HUMIDITY_CHANNEL: u8 = 1;
+/// Time for the `Ack` to leave before a restart.
+const RESTART_DELAY: Duration = Duration::from_secs(1);
 
 /// The board's peripherals as `oxihome-node` sees them.
 pub struct Board {
     pub settings: Settings,
+    /// The hardware in use.
+    pub hardware: Hardware,
+    /// The stored hardware set aside by the safe mode; refused when the hub sends it again.
+    pub failed_hardware: Option<Hardware>,
+    /// Sent to the hub as `Error` on each connection.
+    pub problems: Vec<String>,
     pub entities: Vec<Entity>,
     /// Set by an `Ota` command, run by `Node::poll` once the `Ack` is out.
     pub pending_update: Option<String>,
+    /// Set by a new hardware, run by `Node::poll` once the `Ack` is out.
+    pub pending_restart: bool,
 }
 
 /// The protocol comes from `oxihome-node`; this ties it to the transport and the event sources.
@@ -58,19 +70,23 @@ impl<T: Transport> Node<T> {
             self.send_all(messages)?;
             if connected {
                 self.ota.mark_valid()?;
+                self.board.settings.set_failed_boots(0)?;
+                for problem in self.board.problems.clone() {
+                    self.send_error(ErrorCode::Internal, problem)?;
+                }
             }
+        }
+        if self.board.pending_restart {
+            log::info!("New hardware stored; restarting");
+            std::thread::sleep(RESTART_DELAY);
+            esp_idf_svc::hal::reset::restart();
         }
         if let Some(url) = self.board.pending_update.take() {
             match self.ota.update(&url) {
                 Ok(()) => esp_idf_svc::hal::reset::restart(),
                 Err(error) => {
                     log::warn!("OTA: {error:#}");
-                    let payload = Payload::Error {
-                        code: ErrorCode::Internal.into(),
-                        detail: Some(format!("OTA: {error:#}")),
-                    };
-                    let message = self.core.message(payload, None);
-                    self.send(message)?;
+                    self.send_error(ErrorCode::Internal, format!("OTA: {error:#}"))?;
                 }
             }
         }
@@ -188,6 +204,15 @@ impl<T: Transport> Node<T> {
         Ok(())
     }
 
+    fn send_error(&mut self, code: ErrorCode, detail: String) -> anyhow::Result<()> {
+        let payload = Payload::Error {
+            code: code.into(),
+            detail: Some(detail),
+        };
+        let message = self.core.message(payload, None);
+        self.send(message)
+    }
+
     fn send(&mut self, message: Message) -> anyhow::Result<()> {
         self.transport.send(message.to_json()?.as_bytes())
     }
@@ -214,6 +239,33 @@ impl Board {
             .map(|found| &mut found.peripheral)
     }
 
+    /// Stores a new hardware and asks for the restart that mounts it.
+    fn set_hardware(&mut self, json: &str) -> Result<(), Rejection> {
+        let invalid = |detail: String| Rejection::new(ErrorCode::InvalidValue, detail);
+        let hardware = Hardware::from_json(json)
+            .map_err(|error| invalid(format!("not a hardware configuration: {error}")))?;
+        let problems = hardware.validate(env!("MCU"));
+        if !problems.is_empty() {
+            let problems: Vec<String> = problems.iter().map(ToString::to_string).collect();
+            return Err(invalid(problems.join("; ")));
+        }
+        if self.failed_hardware.as_ref() == Some(&hardware) {
+            return Err(invalid(format!(
+                "this hardware did not reach the broker in {SAFE_MODE_BOOTS} boots"
+            )));
+        }
+        let in_use = hardware == self.hardware;
+        if in_use && self.failed_hardware.is_none() {
+            return Ok(());
+        }
+        self.settings
+            .set_hardware(&hardware.to_json())
+            .map_err(|error| Rejection::new(ErrorCode::Internal, format!("NVS: {error}")))?;
+        self.failed_hardware = None;
+        self.pending_restart = !in_use;
+        Ok(())
+    }
+
     fn output(&mut self, entity: u8) -> Option<(&mut PinDriver<'static, Output>, bool)> {
         match self.peripheral_mut(entity)? {
             Peripheral::Output { pin, inverted } => Some((pin, *inverted)),
@@ -226,6 +278,7 @@ impl Device for Board {
     fn entities(&self) -> Vec<EntityDescriptor> {
         let mut management = management::descriptor();
         management.channels.push(management::ota_descriptor());
+        management.channels.push(management::hardware_descriptor());
         let mut entities = vec![management];
         entities.extend(
             self.entities
@@ -246,6 +299,10 @@ impl Device for Board {
                             Value::Int(self.settings.get(parameter)),
                         )
                     })
+                    .chain([confirmed(
+                        ManagementChannel::Hardware.into(),
+                        Value::Text(self.hardware.to_json()),
+                    )])
                     .collect(),
             ),
             _ => match self.peripheral(entity)? {
@@ -297,6 +354,11 @@ impl Device for Board {
             {
                 self.pending_update = Some(url.clone());
                 Ok(())
+            }
+            (management::ENTITY, CommandOp::Set(Value::Text(json)))
+                if channel == u8::from(ManagementChannel::Hardware) =>
+            {
+                self.set_hardware(json)
             }
             (management::ENTITY, _) => Err(unsupported(entity, channel, op)),
             _ => match (self.peripheral_mut(entity), op) {

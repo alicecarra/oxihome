@@ -7,6 +7,7 @@ mod node;
 mod ota;
 mod peripheral;
 mod potentiometer;
+mod recovery;
 mod settings;
 mod transport;
 mod wifi;
@@ -33,17 +34,24 @@ fn main() -> anyhow::Result<()> {
     let started = Instant::now();
 
     let peripherals = Peripherals::take()?;
-    let hardware = config::default_hardware(CONFIG.peripherals)?;
-    if let Some(problem) = hardware.validate(env!("MCU")).first() {
+    let factory = config::default_hardware(CONFIG.peripherals)?;
+    if let Some(problem) = factory.validate(env!("MCU")).first() {
         anyhow::bail!("hardware in cfg.toml: {problem}");
     }
-    let (entities, _failures) = peripheral::mount(&hardware, peripherals.adc1);
+    let nvs = EspDefaultNvsPartition::take()?;
+    let mut settings = Settings::load(nvs.clone())?;
+    recovery::erase_on_boot_hold(&mut settings)?;
+    let selection = recovery::select(&mut settings, factory)?;
+    let (entities, failures) = peripheral::mount(&selection.hardware, peripherals.adc1);
+    let mut problems = selection.problems;
+    for problem in &problems {
+        log::warn!("{problem}");
+    }
+    problems.extend(failures);
 
     let device_id = device_id()?;
     log::info!("Oxihome node {device_id} started");
 
-    let nvs = EspDefaultNvsPartition::take()?;
-    let settings = Settings::load(nvs.clone())?;
     let mut wifi = wifi::connect(
         peripherals.modem,
         EspSystemEventLoop::take()?,
@@ -53,9 +61,13 @@ fn main() -> anyhow::Result<()> {
     )?;
     let transport = MqttTransport::new(CONFIG.mqtt_url, &device_id, CONFIG.mqtt_password)?;
     let board = Board {
+        settings,
+        hardware: selection.hardware,
+        failed_hardware: selection.failed_hardware,
+        problems,
         entities,
         pending_update: None,
-        settings,
+        pending_restart: false,
     };
     let mut node = Node::new(device_id, transport, board, Ota::new()?);
 

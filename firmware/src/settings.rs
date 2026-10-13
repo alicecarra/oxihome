@@ -1,11 +1,14 @@
 use std::time::Duration;
 
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
+use oxihome_protocol::hardware::HARDWARE_MAX_LENGTH;
 use oxihome_protocol::management::{PARAMETERS, Parameter};
 
 const NAMESPACE: &str = "oxihome";
+const HARDWARE_KEY: &str = "hardware";
+const FAILED_BOOTS_KEY: &str = "failed_boots";
 
-/// Operation parameters set by the hub, persisted in NVS.
+/// What the hub sets on the board, persisted in NVS: operation parameters and the hardware.
 pub struct Settings {
     nvs: EspNvs<NvsDefault>,
     values: Vec<(Parameter, i32)>,
@@ -47,6 +50,33 @@ impl Settings {
             *current = value;
         }
         Ok(())
+    }
+
+    /// The stored hardware JSON, unchecked.
+    pub fn hardware(&self) -> anyhow::Result<Option<String>> {
+        let mut buffer = vec![0; usize::from(HARDWARE_MAX_LENGTH) + 1];
+        Ok(self
+            .nvs
+            .get_str(HARDWARE_KEY, &mut buffer)?
+            .map(str::to_string))
+    }
+
+    pub fn set_hardware(&mut self, json: &str) -> anyhow::Result<()> {
+        Ok(self.nvs.set_str(HARDWARE_KEY, json)?)
+    }
+
+    pub fn remove_hardware(&mut self) -> anyhow::Result<()> {
+        self.nvs.remove(HARDWARE_KEY)?;
+        Ok(())
+    }
+
+    /// Boots since the board last reached the broker.
+    pub fn failed_boots(&self) -> anyhow::Result<u8> {
+        Ok(self.nvs.get_u8(FAILED_BOOTS_KEY)?.unwrap_or(0))
+    }
+
+    pub fn set_failed_boots(&mut self, boots: u8) -> anyhow::Result<()> {
+        Ok(self.nvs.set_u8(FAILED_BOOTS_KEY, boots)?)
     }
 
     pub fn interval(&self, parameter: Parameter) -> Duration {

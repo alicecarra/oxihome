@@ -13,6 +13,7 @@ power = "SONY15 30 15"
 tuner = "SONY15 30 21"
 tv = "SONY15 30 6A"
 mute = "SONY15 30 14"
+menu = "SONY20 1C5A 42"
 
 [remotes."TV Philips".keys]
 youtube = "RC6 00 79"

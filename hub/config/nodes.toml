@@ -41,6 +41,7 @@ entities.3 = { name = "Updated", channels.0 = "At" }
 name = "Network devices"
 entities.1 = { name = "Alice S23", channels.0 = "Online", channels.1 = "Change", channels.2 = "Address", channels.3 = "Since" }
 entities.2 = { name = "tablet", channels.0 = "Online", channels.1 = "Change", channels.2 = "Address", channels.3 = "Since" }
+entities.3 = { name = "Alice Watch6", channels.0 = "Online", channels.1 = "Change", channels.2 = "Address", channels.3 = "Since" }
 entities.100 = { name = "Network", channels.0 = "Answering", channels.1 = "Unknown" }
 
 [nodes.notebook]
