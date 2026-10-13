@@ -18,6 +18,7 @@ const HEIGHT: f64 = 48.0;
 /// How far back the charts go, picked on the page and kept in its `range` query.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ChartRange {
+    FifteenMinutes,
     #[default]
     Hour,
     SixHours,
@@ -25,15 +26,21 @@ pub enum ChartRange {
 }
 
 impl ChartRange {
-    pub const ALL: [ChartRange; 3] = [ChartRange::Hour, ChartRange::SixHours, ChartRange::Day];
+    pub const ALL: [ChartRange; 4] = [
+        ChartRange::FifteenMinutes,
+        ChartRange::Hour,
+        ChartRange::SixHours,
+        ChartRange::Day,
+    ];
 
     pub fn span(self) -> Duration {
-        let hours = match self {
-            ChartRange::Hour => 1,
-            ChartRange::SixHours => 6,
-            ChartRange::Day => 24,
+        let minutes = match self {
+            ChartRange::FifteenMinutes => 15,
+            ChartRange::Hour => 60,
+            ChartRange::SixHours => 6 * 60,
+            ChartRange::Day => 24 * 60,
         };
-        Duration::from_secs(hours * 3600)
+        Duration::from_secs(minutes * 60)
     }
 
     pub fn bucket_length(self) -> Duration {
@@ -51,6 +58,7 @@ impl ChartRange {
     /// As in the query.
     pub fn key(self) -> &'static str {
         match self {
+            ChartRange::FifteenMinutes => "15m",
             ChartRange::Hour => "1h",
             ChartRange::SixHours => "6h",
             ChartRange::Day => "24h",
@@ -59,6 +67,7 @@ impl ChartRange {
 
     pub fn label(self) -> &'static str {
         match self {
+            ChartRange::FifteenMinutes => "15 min",
             ChartRange::Hour => "1 h",
             ChartRange::SixHours => "6 h",
             ChartRange::Day => "24 h",

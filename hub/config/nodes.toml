@@ -12,6 +12,7 @@ entities.3 = { name = "Climate sensor" }
 entities.4 = { name = "External LED", channels.0 = "Power" }
 entities.5 = { name = "Buzzer", channels.0 = "Pattern" }
 entities.6 = { name = "IR receiver", channels.0 = "Code" }
+entities.7 = { name = "Potentiometer" }
 parameters = { heartbeat_interval = 30, wifi_check_interval = 5 }
 
 [nodes."sim-living-room"]

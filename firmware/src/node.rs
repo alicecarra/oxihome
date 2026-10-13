@@ -9,6 +9,7 @@ use oxihome_protocol::{
 use crate::buzzer::{self, Buzzer};
 use crate::climate::Climate;
 use crate::ir::{self, IrReceiver};
+use crate::potentiometer::Potentiometer;
 use crate::settings::Settings;
 use crate::transport::{Transport, TransportEvent};
 
@@ -18,6 +19,7 @@ pub const CLIMATE_ENTITY: u8 = 3;
 pub const EXTERNAL_LED_ENTITY: u8 = 4;
 pub const BUZZER_ENTITY: u8 = 5;
 pub const IR_ENTITY: u8 = 6;
+pub const POTENTIOMETER_ENTITY: u8 = 7;
 const MAIN_CHANNEL: u8 = 0;
 const TEMPERATURE_CHANNEL: u8 = 0;
 const HUMIDITY_CHANNEL: u8 = 1;
@@ -29,6 +31,7 @@ pub struct Board {
     pub external_led: PinDriver<'static, Output>,
     pub climate: Climate,
     pub buzzer: Buzzer,
+    pub potentiometer: Potentiometer,
 }
 
 /// The protocol comes from `oxihome-node`; this ties it to the transport and the event sources.
@@ -93,6 +96,13 @@ impl<T: Transport> Node<T> {
             Some(_) => self.send_state(CLIMATE_ENTITY),
             None => Ok(()),
         }
+    }
+
+    pub fn read_potentiometer(&mut self) -> anyhow::Result<()> {
+        if self.board.potentiometer.poll()? {
+            self.send_state(POTENTIOMETER_ENTITY)?;
+        }
+        Ok(())
     }
 
     pub fn settings(&self) -> &Settings {
@@ -207,6 +217,21 @@ impl Device for Board {
                     }),
                 )],
             },
+            EntityDescriptor {
+                id: POTENTIOMETER_ENTITY,
+                channels: vec![Channel {
+                    unit: Some(Unit::Percent),
+                    ..channel(
+                        MAIN_CHANNEL,
+                        Access::Read,
+                        Some(ValueType::Int {
+                            min: 0,
+                            max: 100,
+                            step: 1,
+                        }),
+                    )
+                }],
+            },
         ]
     }
 
@@ -244,6 +269,10 @@ impl Device for Board {
                     ),
                 ]
             }),
+            POTENTIOMETER_ENTITY => self
+                .potentiometer
+                .percent()
+                .map(|percent| vec![confirmed(MAIN_CHANNEL, Value::Int(percent.into()))]),
             _ => None,
         }
     }

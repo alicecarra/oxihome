@@ -61,13 +61,13 @@ pub struct Block {
     pub panel: Option<String>,
     /// `value` and `history` blocks only.
     pub channel: Option<ChannelReference>,
-    /// `history` blocks only: `1h`, `6h` or `24h` (default).
+    /// `history` blocks only: `15m`, `1h`, `6h` or `24h` (default).
     pub range: Option<String>,
     /// `events` blocks only: how many to show, 1 to 50 (default 10).
     pub limit: Option<usize>,
 }
 
-pub const HISTORY_RANGES: [&str; 3] = ["1h", "6h", "24h"];
+pub const HISTORY_RANGES: [&str; 4] = ["15m", "1h", "6h", "24h"];
 pub const DEFAULT_EVENTS: usize = 10;
 const MAX_EVENTS: usize = 50;
 

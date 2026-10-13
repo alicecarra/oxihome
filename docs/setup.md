@@ -98,8 +98,10 @@ DHT11 module: `+` to 3V3, `-` to GND, `S` to D4 (the module has its pull-up). Ex
 the passive one, with a green board underneath, stays silent on a steady voltage): `+` to D19, the
 other leg to GND. For a louder beep, drive it from 5 V through the kit's PN2222: D19 → 1 kΩ → base,
 emitter to GND, collector to the buzzer's other leg, `+` to VIN. IR receiver module: `G` to GND, `R`
-to 3V3 (not 5 V: the output follows the supply), `Y` to D23. Free pins to use next: 25, 26, 27, 32,
-33 (21 and 22 are kept for I2C); avoid 0, 2, 12 and 15 (boot) and 6–11 (flash).
+to 3V3 (not 5 V: the output follows the supply), `Y` to D23. Potentiometer: outer legs to 3V3 and
+GND (swapping them only reverses the direction), middle leg to D34; never 5 V, and only ADC1 pins
+(32–39) work while Wi-Fi is on. Free pins to use next: 25, 26, 27, 32, 33 (21 and 22 are kept for
+I2C); avoid 0, 2, 12 and 15 (boot) and 6–11 (flash).
 
 The IR receiver is read by the RMT peripheral. NEC frames (most cheap remotes, including the kit's)
 arrive as `NEC 00 45` (8-bit address and command in hex) or `NEC 1234 45` (extended 16-bit

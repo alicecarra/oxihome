@@ -13,7 +13,7 @@ use topcoat::{
 };
 
 use super::chart::{CHART_BUCKETS, Chart, ChartRange, chart, history_chart, series};
-use super::format::{channel_label, duration_label, entity_label, rule_anchor};
+use super::format::{channel_label, duration_label, entity_label, rule_anchor, value_label};
 use super::layout::layout;
 use super::nodes::{channel_controls, channel_value, presence_badge};
 use super::overview::{self, ChannelOverview, NodeOverview, ParameterOverview};
@@ -593,6 +593,13 @@ async fn field_row(
         "{} · {channel_name}",
         entity_label(channel.entity, &channel.entity_name)
     );
+    // With a chart, the value stands out on the right, above the chart's end.
+    let highlighted = chart.as_ref().map(|_| {
+        channel
+            .value
+            .as_ref()
+            .map_or_else(|| "—".to_string(), |value| value_label(value, channel.unit))
+    });
     Ok(view! {
         <li class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3 first:pt-0 last:pb-0">
             <div class="min-w-0 space-y-0.5">
@@ -615,11 +622,14 @@ async fn field_row(
                         </a>
                     }
                 </p>
-                if !editing {
+                if !editing && highlighted.is_none() {
                     channel_value(channel: channel.clone())
                 }
             </div>
             if !editing {
+                if let Some(value) = highlighted {
+                    <p class="text-2xl font-semibold tracking-tight tabular-nums">(value)</p>
+                }
                 channel_controls(device_id: device_id, channel: channel.clone(), label: label)
                 if let Some(chart) = chart {
                     history_chart(chart: chart, unit: channel.unit, range: range)

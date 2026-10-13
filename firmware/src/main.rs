@@ -4,6 +4,7 @@ mod climate;
 mod config;
 mod ir;
 mod node;
+mod potentiometer;
 mod settings;
 mod transport;
 mod wifi;
@@ -23,12 +24,14 @@ use climate::Climate;
 use config::CONFIG;
 use ir::IrReceiver;
 use node::{Board, Node};
+use potentiometer::Potentiometer;
 use settings::Settings;
 use transport::MqttTransport;
 
 const POLL_INTERVAL_MS: u32 = 10;
 /// The DHT11 needs at least 1 s between reads.
 const CLIMATE_READ_INTERVAL: Duration = Duration::from_secs(30);
+const POTENTIOMETER_READ_INTERVAL: Duration = Duration::from_millis(100);
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -43,6 +46,7 @@ fn main() -> anyhow::Result<()> {
     let climate = Climate::new(PinDriver::input_output_od(pins.gpio4, Pull::Floating)?)?;
     let buzzer = Buzzer::new(PinDriver::output(pins.gpio19)?)?;
     let ir = IrReceiver::new(pins.gpio23)?;
+    let potentiometer = Potentiometer::new(peripherals.adc1, pins.gpio34)?;
 
     let device_id = device_id()?;
     log::info!("Oxihome node {device_id} started");
@@ -62,6 +66,7 @@ fn main() -> anyhow::Result<()> {
         external_led,
         climate,
         buzzer,
+        potentiometer,
         settings,
     };
     let mut node = Node::new(device_id, transport, board, ir);
@@ -69,6 +74,7 @@ fn main() -> anyhow::Result<()> {
     let mut last_wifi_check = Instant::now();
     let mut last_heartbeat = Instant::now();
     let mut last_climate_read: Option<Instant> = None;
+    let mut last_potentiometer_read = Instant::now();
     loop {
         if last_wifi_check.elapsed() >= node.settings().interval(WIFI_CHECK_INTERVAL) {
             wifi::ensure_connected(&mut wifi)?;
@@ -81,6 +87,10 @@ fn main() -> anyhow::Result<()> {
         if last_climate_read.is_none_or(|last| last.elapsed() >= CLIMATE_READ_INTERVAL) {
             node.read_climate()?;
             last_climate_read = Some(Instant::now());
+        }
+        if last_potentiometer_read.elapsed() >= POTENTIOMETER_READ_INTERVAL {
+            node.read_potentiometer()?;
+            last_potentiometer_read = Instant::now();
         }
         node.poll()?;
         if let Some(event) = button.poll() {
