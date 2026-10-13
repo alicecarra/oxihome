@@ -28,6 +28,7 @@ pub enum Write {
     RuleRun(String, RuleRun),
     Notification(StoredNotification),
     Update(StoredUpdate),
+    Command(StoredCommand),
     /// Answered once everything sent before it is written.
     Flush(oneshot::Sender<()>),
 }
@@ -93,6 +94,107 @@ impl UpdateOutcome {
             "no_answer" => Self::NoAnswer,
             other => anyhow::bail!("unknown update outcome {other}"),
         })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Operation {
+    Set,
+    Invoke,
+}
+
+impl Operation {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Set => "set",
+            Self::Invoke => "invoke",
+        }
+    }
+
+    fn from_key(key: &str) -> anyhow::Result<Self> {
+        Ok(match key {
+            "set" => Self::Set,
+            "invoke" => Self::Invoke,
+            other => anyhow::bail!("unknown operation {other}"),
+        })
+    }
+}
+
+/// A command sent from the web interface or by a rule.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredCommand {
+    pub device_id: String,
+    pub entity: u8,
+    pub channel: u8,
+    pub at: Timestamp,
+    pub operation: Operation,
+    pub value: Option<Value>,
+    /// `None` when sent from the web interface.
+    pub rule: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimelineKind {
+    Events,
+    Rules,
+    Commands,
+    Notifications,
+    Updates,
+}
+
+impl TimelineKind {
+    pub const ALL: [Self; 5] = [
+        Self::Events,
+        Self::Rules,
+        Self::Commands,
+        Self::Notifications,
+        Self::Updates,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Events => "events",
+            Self::Rules => "rules",
+            Self::Commands => "commands",
+            Self::Notifications => "notifications",
+            Self::Updates => "updates",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.key() == key)
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct TimelineQuery {
+    /// Everything when `None`.
+    pub kind: Option<TimelineKind>,
+    /// Rule runs are about no node, so they are left out.
+    pub device_id: Option<String>,
+    pub before: Option<Timestamp>,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum TimelineEntry {
+    Event(EventRecord, Timestamp),
+    RuleRun(String, RuleRun),
+    Command(StoredCommand),
+    Notification(StoredNotification),
+    Update(StoredUpdate),
+}
+
+impl TimelineEntry {
+    pub fn at(&self) -> Timestamp {
+        match self {
+            Self::Event(_, at) => *at,
+            Self::RuleRun(_, run) => run.at,
+            Self::Command(command) => command.at,
+            Self::Notification(notification) => notification.at,
+            Self::Update(update) => update.finished_at,
+        }
     }
 }
 
@@ -280,6 +382,147 @@ impl Storage {
         Ok(updates)
     }
 
+    /// Newest first. Held IR keys (` repeat` codes) are left out.
+    pub async fn timeline(&self, query: &TimelineQuery) -> anyhow::Result<Vec<TimelineEntry>> {
+        let wanted = |kind: TimelineKind| query.kind.is_none_or(|chosen| chosen == kind);
+        let before = query.before.map_or(i64::MAX, Timestamp::as_millisecond);
+        let device_id = query.device_id.as_deref();
+        let limit = i64::try_from(query.limit)?;
+        let mut entries = Vec::new();
+        if wanted(TimelineKind::Events) {
+            for row in self
+                .timeline_rows(
+                    "SELECT device_id, entity, channel, at, kind, data FROM events
+                     WHERE at < ? {device} AND NOT (kind = 'Received' AND COALESCE(data, '') LIKE '% repeat\"}')
+                     ORDER BY at DESC LIMIT ?",
+                    "device_id",
+                    before,
+                    device_id,
+                    limit,
+                )
+                .await?
+            {
+                let (event, at) = event_row(&row)?;
+                entries.push(TimelineEntry::Event(event, at));
+            }
+        }
+        if wanted(TimelineKind::Rules) && device_id.is_none() {
+            for row in self
+                .timeline_rows(
+                    "SELECT name, at, errors FROM rule_executions WHERE at < ? {device}
+                     ORDER BY at DESC LIMIT ?",
+                    "name",
+                    before,
+                    None,
+                    limit,
+                )
+                .await?
+            {
+                entries.push(TimelineEntry::RuleRun(
+                    row.get("name"),
+                    RuleRun {
+                        at: Timestamp::from_millisecond(row.get("at"))?,
+                        errors: serde_json::from_str(row.get("errors"))?,
+                    },
+                ));
+            }
+        }
+        if wanted(TimelineKind::Commands) {
+            for row in self
+                .timeline_rows(
+                    "SELECT device_id, entity, channel, at, operation, value, rule, error
+                     FROM commands WHERE at < ? {device} ORDER BY at DESC LIMIT ?",
+                    "device_id",
+                    before,
+                    device_id,
+                    limit,
+                )
+                .await?
+            {
+                let value: Option<&str> = row.get("value");
+                entries.push(TimelineEntry::Command(StoredCommand {
+                    device_id: row.get("device_id"),
+                    entity: row.get("entity"),
+                    channel: row.get("channel"),
+                    at: Timestamp::from_millisecond(row.get("at"))?,
+                    operation: Operation::from_key(row.get("operation"))?,
+                    value: value.map(serde_json::from_str).transpose()?,
+                    rule: row.get("rule"),
+                    error: row.get("error"),
+                }));
+            }
+        }
+        if wanted(TimelineKind::Notifications) {
+            for row in self
+                .timeline_rows(
+                    "SELECT at, title, message, source FROM notifications WHERE at < ? {device}
+                     ORDER BY at DESC LIMIT ?",
+                    "source",
+                    before,
+                    device_id,
+                    limit,
+                )
+                .await?
+            {
+                entries.push(TimelineEntry::Notification(StoredNotification {
+                    title: row.get("title"),
+                    message: row.get("message"),
+                    source: row.get("source"),
+                    at: Timestamp::from_millisecond(row.get("at"))?,
+                }));
+            }
+        }
+        if wanted(TimelineKind::Updates) {
+            for row in self
+                .timeline_rows(
+                    "SELECT device_id, started_at, finished_at, from_version, to_version, outcome,
+                            detail
+                     FROM updates WHERE finished_at < ? {device} ORDER BY finished_at DESC LIMIT ?",
+                    "device_id",
+                    before,
+                    device_id,
+                    limit,
+                )
+                .await?
+            {
+                entries.push(TimelineEntry::Update(StoredUpdate {
+                    device_id: row.get("device_id"),
+                    started_at: Timestamp::from_millisecond(row.get("started_at"))?,
+                    finished_at: Timestamp::from_millisecond(row.get("finished_at"))?,
+                    from_version: row.get("from_version"),
+                    to_version: row.get("to_version"),
+                    outcome: UpdateOutcome::from_key(row.get("outcome"))?,
+                    detail: row.get("detail"),
+                }));
+            }
+        }
+        entries.sort_by_key(|entry| std::cmp::Reverse(entry.at()));
+        entries.truncate(query.limit);
+        Ok(entries)
+    }
+
+    /// Runs `sql` with `{device}` replaced by a filter on `device_column` when `device_id` is set.
+    async fn timeline_rows(
+        &self,
+        sql: &str,
+        device_column: &str,
+        before: i64,
+        device_id: Option<&str>,
+        limit: i64,
+    ) -> anyhow::Result<Vec<sqlx::sqlite::SqliteRow>> {
+        let filter = match device_id {
+            Some(_) => format!("AND {device_column} = ?"),
+            None => String::new(),
+        };
+        let sql = sql.replace("{device}", &filter);
+        // The filter only names a column given by the code.
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(before);
+        if let Some(device_id) = device_id {
+            query = query.bind(device_id);
+        }
+        Ok(query.bind(limit).fetch_all(&self.pool).await?)
+    }
+
     /// Waits for the queued writes.
     pub async fn flush(&self) {
         let (sender, receiver) = oneshot::channel();
@@ -329,9 +572,37 @@ async fn write_batch(pool: &SqlitePool, batch: Vec<Write>) -> anyhow::Result<()>
                     "INSERT INTO rule_runs (name, at, errors) VALUES (?, ?, ?)
                      ON CONFLICT (name) DO UPDATE SET at = excluded.at, errors = excluded.errors",
                 )
-                .bind(name)
+                .bind(&name)
                 .bind(run.at.as_millisecond())
                 .bind(serde_json::to_string(&run.errors)?)
+                .execute(&mut *transaction)
+                .await?;
+                sqlx::query("INSERT INTO rule_executions (name, at, errors) VALUES (?, ?, ?)")
+                    .bind(name)
+                    .bind(run.at.as_millisecond())
+                    .bind(serde_json::to_string(&run.errors)?)
+                    .execute(&mut *transaction)
+                    .await?;
+            }
+            Write::Command(command) => {
+                sqlx::query(
+                    "INSERT INTO commands (device_id, entity, channel, at, operation, value, rule,
+                     error) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(command.device_id)
+                .bind(command.entity)
+                .bind(command.channel)
+                .bind(command.at.as_millisecond())
+                .bind(command.operation.key())
+                .bind(
+                    command
+                        .value
+                        .as_ref()
+                        .map(serde_json::to_string)
+                        .transpose()?,
+                )
+                .bind(command.rule)
+                .bind(command.error)
                 .execute(&mut *transaction)
                 .await?;
             }
@@ -478,9 +749,20 @@ async fn prune_older(pool: &SqlitePool, retention: Duration) -> anyhow::Result<(
         .execute(pool)
         .await?
         .rows_affected();
-    if readings + events + notifications > 0 {
+    let rule_runs = sqlx::query("DELETE FROM rule_executions WHERE at < ?")
+        .bind(before)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    let commands = sqlx::query("DELETE FROM commands WHERE at < ?")
+        .bind(before)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    if readings + events + notifications + rule_runs + commands > 0 {
         println!(
-            "storage: pruned {readings} readings, {events} events and {notifications} notifications"
+            "storage: pruned {readings} readings, {events} events, {notifications} notifications, \
+             {rule_runs} rule runs and {commands} commands"
         );
     }
     Ok(())
@@ -725,6 +1007,85 @@ mod tests {
         );
         assert_eq!(restored.received_events, vec![(received, at_milliseconds)]);
         assert_eq!(restored.rule_runs[0].1.errors, vec!["failed".to_string()]);
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn timeline_merges_newest_first_and_filters() {
+        let directory = std::env::temp_dir().join(format!(
+            "oxihome-storage-timeline-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("hub.sqlite");
+        let _ = std::fs::remove_file(&path);
+        let (storage, _) = Storage::open(&path, Duration::from_secs(3600))
+            .await
+            .unwrap();
+        let start = Timestamp::from_millisecond(Timestamp::now().as_millisecond()).unwrap();
+        let at = |seconds: i64| start + SignedDuration::from_secs(seconds);
+        let received = |code: &str| EventRecord {
+            device_id: "esp32-a".into(),
+            entity: 6,
+            channel: 0,
+            kind: EventKind::Received,
+            data: Some(Value::Text(code.into())),
+        };
+        storage.write(Write::Event(received("NEC 00 45"), at(0)));
+        storage.write(Write::Event(received("NEC 00 45 repeat"), at(1)));
+        storage.write(Write::RuleRun(
+            "Night".into(),
+            RuleRun {
+                at: at(2),
+                errors: Vec::new(),
+            },
+        ));
+        storage.write(Write::Command(StoredCommand {
+            device_id: "esp32-b".into(),
+            entity: 5,
+            channel: 0,
+            at: at(3),
+            operation: Operation::Invoke,
+            value: Some(Value::Enum("Alarm".into())),
+            rule: Some("Night".into()),
+            error: None,
+        }));
+        storage.flush().await;
+
+        let everything = storage
+            .timeline(&TimelineQuery {
+                limit: 10,
+                ..TimelineQuery::default()
+            })
+            .await
+            .unwrap();
+        let times: Vec<Timestamp> = everything.iter().map(TimelineEntry::at).collect();
+        assert_eq!(times, vec![at(3), at(2), at(0)]);
+        let TimelineEntry::Command(command) = &everything[0] else {
+            panic!("{:?}", everything[0]);
+        };
+        assert_eq!(command.value, Some(Value::Enum("Alarm".into())));
+
+        let about_b = storage
+            .timeline(&TimelineQuery {
+                device_id: Some("esp32-b".into()),
+                limit: 10,
+                ..TimelineQuery::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(about_b.len(), 1);
+
+        let older = storage
+            .timeline(&TimelineQuery {
+                kind: Some(TimelineKind::Rules),
+                before: Some(at(2)),
+                limit: 10,
+                ..TimelineQuery::default()
+            })
+            .await
+            .unwrap();
+        assert!(older.is_empty());
         std::fs::remove_dir_all(&directory).unwrap();
     }
 

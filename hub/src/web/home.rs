@@ -9,7 +9,7 @@ use topcoat::{
     view::{ViewExt, ViewHandle, view},
 };
 
-use crate::hub::Hub;
+use crate::hub::{CommandOrigin, Hub};
 
 #[derive(Deserialize)]
 struct SetForm {
@@ -35,7 +35,13 @@ struct InvokeForm {
 pub async fn invoke(cx: &Cx, Form(form): Form<InvokeForm>) -> Result<ViewHandle> {
     let hub: &Arc<Hub> = app_context(cx);
     let result = hub
-        .invoke(&form.device_id, form.entity, form.channel, form.value)
+        .invoke(
+            &form.device_id,
+            form.entity,
+            form.channel,
+            form.value,
+            CommandOrigin::Web,
+        )
         .await;
 
     view! { cx =>
@@ -57,6 +63,7 @@ pub async fn set(cx: &Cx, Form(form): Form<SetForm>) -> Result<ViewHandle> {
             form.entity,
             form.channel,
             Value::Bool(form.value),
+            CommandOrigin::Web,
         )
         .await;
 

@@ -12,7 +12,7 @@ use toml_edit::{DocumentMut, value};
 
 use super::panels::Panels;
 use super::remotes::Remotes;
-use crate::hub::Hub;
+use crate::hub::{CommandOrigin, Hub};
 use crate::node::events::EventRecord;
 use crate::node::state::ChannelUpdate;
 
@@ -945,7 +945,14 @@ async fn perform(hub: &Hub, action: &Action, rule_name: &str) -> anyhow::Result<
             channel,
             value,
         } => {
-            hub.invoke(device, *entity, *channel, value.clone()).await?;
+            hub.invoke(
+                device,
+                *entity,
+                *channel,
+                value.clone(),
+                CommandOrigin::Rule(rule_name.to_string()),
+            )
+            .await?;
             return Ok("done".into());
         }
         Action::Set {
@@ -964,7 +971,14 @@ async fn perform(hub: &Hub, action: &Action, rule_name: &str) -> anyhow::Result<
             None => bail!("current value is unknown"),
         },
     };
-    hub.set(device, entity, channel, Value::Bool(value)).await?;
+    hub.set(
+        device,
+        entity,
+        channel,
+        Value::Bool(value),
+        CommandOrigin::Rule(rule_name.to_string()),
+    )
+    .await?;
     Ok(value.to_string())
 }
 

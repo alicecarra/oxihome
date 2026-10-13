@@ -763,7 +763,7 @@ fn action_warning(registry: &Registry, action: &Action) -> Option<String> {
 }
 
 /// `Test board › LED`; the channel only shows when it is not the entity's first.
-fn channel_description(
+pub fn channel_description(
     nodes: &Nodes,
     device_id: &str,
     entity: u8,

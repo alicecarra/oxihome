@@ -14,6 +14,7 @@ mod panel;
 mod remotes;
 mod rules;
 mod settings;
+mod timeline;
 mod toasts;
 
 use std::sync::Arc;
@@ -53,6 +54,9 @@ pub fn router(hub: Arc<Hub>, listen_host: &str) -> Router {
         .page(node::hardware_fragment)
         .page(panel::panel)
         .page(rules::rules)
+        .page(timeline::timeline)
+        .page(timeline::timeline_fragment)
+        .page(timeline::timeline_more)
         .page(remotes::remotes_page)
         .page(remotes::remotes_fragment)
         .page(settings::settings)

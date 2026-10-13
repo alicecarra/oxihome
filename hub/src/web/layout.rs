@@ -12,11 +12,12 @@ use super::icons;
 use super::toasts::toast_poller;
 use crate::hub::Hub;
 
-pub(super) const MENU: [(&str, &str, IconData); 6] = [
+pub(super) const MENU: [(&str, &str, IconData); 7] = [
     ("/", "Dashboard", icons::DASHBOARD),
     ("/nodes", "Nodes", icons::NODES),
     ("/panel", "Panels", icons::PANELS),
     ("/rules", "Rules", icons::RULES),
+    ("/timeline", "Timeline", icons::TIMELINE),
     ("/remotes", "Remotes", icons::REMOTES),
     ("/settings", "Settings", icons::SETTINGS),
 ];

@@ -27,7 +27,8 @@ use crate::node::state::{ChannelUpdate, State};
 use crate::notifications::{self, Notification, Notifications};
 use crate::ota::{Ota, Update};
 use crate::storage::{
-    History, Restored, Storage, StoredNotification, StoredUpdate, UpdateOutcome, Write,
+    History, Operation, Restored, Storage, StoredCommand, StoredNotification, StoredUpdate,
+    TimelineEntry, TimelineQuery, UpdateOutcome, Write,
 };
 
 /// Read access for the web interface, see `Hub::snapshot`.
@@ -54,6 +55,7 @@ const RECENT_CODES: usize = 10;
 pub enum Change {
     Nodes,
     Notifications,
+    Timeline,
 }
 
 impl Change {
@@ -61,8 +63,18 @@ impl Change {
         match self {
             Change::Nodes => "nodes",
             Change::Notifications => "notifications",
+            Change::Timeline => "timeline",
         }
     }
+}
+
+/// Who sends a command. The timeline keeps the ones from the web interface and from rules.
+#[derive(Clone)]
+pub enum CommandOrigin {
+    Web,
+    Rule(String),
+    /// Management commands: parameters, hardware, updates.
+    Hub,
 }
 
 /// A newer firmware image for a node, or one being installed.
@@ -217,6 +229,7 @@ impl Hub {
         let event = self.events.lock().unwrap().apply(message, at);
         if let Some(event) = &event {
             self.storage.write(Write::Event(event.clone(), at));
+            self.announce(Change::Timeline);
         }
         if let Some(code) = event.as_ref().and_then(learnable_code) {
             let mut recent = self.recent_codes.lock().unwrap();
@@ -273,6 +286,11 @@ impl Hub {
         self.storage.recent_notifications(limit).await
     }
 
+    /// Newest first.
+    pub async fn timeline(&self, query: &TimelineQuery) -> anyhow::Result<Vec<TimelineEntry>> {
+        self.storage.timeline(query).await
+    }
+
     /// Waits until everything that happened is in the database.
     pub async fn flush_storage(&self) {
         self.storage.flush().await;
@@ -302,8 +320,20 @@ impl Hub {
         entity: u8,
         channel: u8,
         value: Value,
+        origin: CommandOrigin,
     ) -> anyhow::Result<()> {
-        self.commands
+        let command = StoredCommand {
+            device_id: device_id.to_string(),
+            entity,
+            channel,
+            at: Timestamp::now(),
+            operation: Operation::Set,
+            value: Some(value.clone()),
+            rule: None,
+            error: None,
+        };
+        let result = self
+            .commands
             .send(
                 &self.mqtt,
                 device_id,
@@ -311,7 +341,9 @@ impl Hub {
                 channel,
                 CommandOp::Set(value),
             )
-            .await
+            .await;
+        self.record_command(origin, command, &result);
+        result
     }
 
     /// Sends an `Invoke` and waits for the node's answer. The node's declaration picks `Enum` or
@@ -322,6 +354,7 @@ impl Hub {
         entity: u8,
         channel: u8,
         value: Option<String>,
+        origin: CommandOrigin,
     ) -> anyhow::Result<()> {
         let declared = self
             .registry
@@ -334,7 +367,18 @@ impl Hub {
             Some(Err(error)) => bail!("{device_id}: {error}"),
             None => value.map(Value::Enum),
         };
-        self.commands
+        let command = StoredCommand {
+            device_id: device_id.to_string(),
+            entity,
+            channel,
+            at: Timestamp::now(),
+            operation: Operation::Invoke,
+            value: value.clone(),
+            rule: None,
+            error: None,
+        };
+        let result = self
+            .commands
             .send(
                 &self.mqtt,
                 device_id,
@@ -342,7 +386,28 @@ impl Hub {
                 channel,
                 CommandOp::Invoke(value),
             )
-            .await
+            .await;
+        self.record_command(origin, command, &result);
+        result
+    }
+
+    fn record_command(
+        &self,
+        origin: CommandOrigin,
+        command: StoredCommand,
+        result: &anyhow::Result<()>,
+    ) {
+        let rule = match origin {
+            CommandOrigin::Web => None,
+            CommandOrigin::Rule(name) => Some(name),
+            CommandOrigin::Hub => return,
+        };
+        self.storage.write(Write::Command(StoredCommand {
+            rule,
+            error: result.as_ref().err().map(|error| format!("{error:#}")),
+            ..command
+        }));
+        self.announce(Change::Timeline);
     }
 
     /// Everything the web interface reads, locked together in one fixed order (the same as
@@ -638,6 +703,7 @@ impl Hub {
         self.storage
             .write(Write::RuleRun(name.to_string(), run.clone()));
         self.rule_runs.lock().unwrap().insert(name.to_string(), run);
+        self.announce(Change::Timeline);
     }
 
     pub fn rule_runs(&self) -> HashMap<String, RuleRun> {
@@ -723,7 +789,13 @@ impl Hub {
         self.announce(Change::Nodes);
         let channel = u8::from(ManagementChannel::Ota);
         if let Err(error) = self
-            .invoke(device_id, management::ENTITY, channel, Some(url))
+            .invoke(
+                device_id,
+                management::ENTITY,
+                channel,
+                Some(url),
+                CommandOrigin::Hub,
+            )
             .await
         {
             if let Some(update) = ota.finish(device_id) {

@@ -83,6 +83,18 @@ pub fn rule_anchor(name: &str) -> String {
     format!("rule-{}", words.join("-"))
 }
 
+/// Percent-encoded for a query string: `/rules/edit?name=Lamp%20at%20seven`.
+pub fn query_value(text: &str) -> String {
+    text.bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                char::from(byte).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

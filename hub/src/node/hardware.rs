@@ -5,7 +5,7 @@ use oxihome_protocol::Value;
 use oxihome_protocol::hardware::Hardware;
 use oxihome_protocol::management::{self, ManagementChannel};
 
-use crate::hub::Hub;
+use crate::hub::{CommandOrigin, Hub};
 
 /// What the hub knows about sending each node its hardware, by device id.
 #[derive(Default)]
@@ -61,6 +61,7 @@ pub async fn apply(hub: Arc<Hub>, device_id: String) {
             management::ENTITY,
             channel,
             Value::Text(desired.to_json()),
+            CommandOrigin::Hub,
         )
         .await;
     match &result {
