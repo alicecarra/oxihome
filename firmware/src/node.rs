@@ -28,10 +28,11 @@ const HUMIDITY_CHANNEL: u8 = 1;
 pub struct Board {
     pub settings: Settings,
     pub led: PinDriver<'static, Output>,
-    pub external_led: PinDriver<'static, Output>,
-    pub climate: Climate,
-    pub buzzer: Buzzer,
-    pub potentiometer: Potentiometer,
+    pub external_led: Option<PinDriver<'static, Output>>,
+    pub climate: Option<Climate>,
+    pub buzzer: Option<Buzzer>,
+    pub potentiometer: Option<Potentiometer>,
+    pub ir: Option<IrReceiver>,
 }
 
 /// The protocol comes from `oxihome-node`; this ties it to the transport and the event sources.
@@ -39,16 +40,14 @@ pub struct Node<T: Transport> {
     core: NodeCore,
     board: Board,
     transport: T,
-    ir: IrReceiver,
 }
 
 impl<T: Transport> Node<T> {
-    pub fn new(device_id: String, transport: T, board: Board, ir: IrReceiver) -> Self {
+    pub fn new(device_id: String, transport: T, board: Board) -> Self {
         Self {
             core: NodeCore::new(device_id, env!("CARGO_PKG_VERSION")),
             board,
             transport,
-            ir,
         }
     }
 
@@ -60,7 +59,7 @@ impl<T: Transport> Node<T> {
             };
             self.send_all(messages)?;
         }
-        if let Some(code) = self.ir.poll() {
+        if let Some(code) = self.board.ir.as_mut().and_then(IrReceiver::poll) {
             log::info!("IR: {code}");
             let event = self.core.event(
                 IR_ENTITY,
@@ -70,7 +69,10 @@ impl<T: Transport> Node<T> {
             );
             self.send(event)?;
         }
-        self.board.buzzer.poll()
+        match &mut self.board.buzzer {
+            Some(buzzer) => buzzer.poll(),
+            None => Ok(()),
+        }
     }
 
     pub fn handle_button(&mut self, event: EventKind) -> anyhow::Result<()> {
@@ -92,14 +94,17 @@ impl<T: Transport> Node<T> {
 
     /// Sends the reading as `State`; a failed read sends nothing.
     pub fn read_climate(&mut self) -> anyhow::Result<()> {
-        match self.board.climate.read() {
+        match self.board.climate.as_mut().and_then(Climate::read) {
             Some(_) => self.send_state(CLIMATE_ENTITY),
             None => Ok(()),
         }
     }
 
     pub fn read_potentiometer(&mut self) -> anyhow::Result<()> {
-        if self.board.potentiometer.poll()? {
+        let Some(potentiometer) = &mut self.board.potentiometer else {
+            return Ok(());
+        };
+        if potentiometer.poll()? {
             self.send_state(POTENTIOMETER_ENTITY)?;
         }
         Ok(())
@@ -144,25 +149,27 @@ impl<T: Transport> Node<T> {
 
 impl Board {
     /// Only called with `LED_ENTITY` or `EXTERNAL_LED_ENTITY`.
-    fn led_pin(&mut self, entity: u8) -> &mut PinDriver<'static, Output> {
+    fn led_pin(&mut self, entity: u8) -> Option<&mut PinDriver<'static, Output>> {
         if entity == EXTERNAL_LED_ENTITY {
-            &mut self.external_led
+            self.external_led.as_mut()
         } else {
-            &mut self.led
+            Some(&mut self.led)
         }
     }
 }
 
 impl Device for Board {
     fn entities(&self) -> Vec<EntityDescriptor> {
-        vec![
+        let mut entities = vec![
             management::descriptor(),
             led_descriptor(LED_ENTITY),
             EntityDescriptor {
                 id: BUTTON_ENTITY,
                 channels: vec![channel(MAIN_CHANNEL, Access::Event, None)],
             },
-            EntityDescriptor {
+        ];
+        if self.climate.is_some() {
+            entities.push(EntityDescriptor {
                 id: CLIMATE_ENTITY,
                 channels: vec![
                     Channel {
@@ -192,9 +199,13 @@ impl Device for Board {
                         )
                     },
                 ],
-            },
-            led_descriptor(EXTERNAL_LED_ENTITY),
-            EntityDescriptor {
+            });
+        }
+        if self.external_led.is_some() {
+            entities.push(led_descriptor(EXTERNAL_LED_ENTITY));
+        }
+        if self.buzzer.is_some() {
+            entities.push(EntityDescriptor {
                 id: BUZZER_ENTITY,
                 channels: vec![channel(
                     MAIN_CHANNEL,
@@ -206,8 +217,10 @@ impl Device for Board {
                             .collect(),
                     )),
                 )],
-            },
-            EntityDescriptor {
+            });
+        }
+        if self.ir.is_some() {
+            entities.push(EntityDescriptor {
                 id: IR_ENTITY,
                 channels: vec![channel(
                     MAIN_CHANNEL,
@@ -216,8 +229,10 @@ impl Device for Board {
                         max_length: ir::MAX_CODE_LENGTH,
                     }),
                 )],
-            },
-            EntityDescriptor {
+            });
+        }
+        if self.potentiometer.is_some() {
+            entities.push(EntityDescriptor {
                 id: POTENTIOMETER_ENTITY,
                 channels: vec![Channel {
                     unit: Some(Unit::Percent),
@@ -231,8 +246,9 @@ impl Device for Board {
                         }),
                     )
                 }],
-            },
-        ]
+            });
+        }
+        entities
     }
 
     fn state(&self, entity: u8) -> Option<Vec<ChannelValue>> {
@@ -252,12 +268,12 @@ impl Device for Board {
                 MAIN_CHANNEL,
                 Value::Bool(self.led.is_set_high()),
             )]),
-            EXTERNAL_LED_ENTITY => Some(vec![confirmed(
-                MAIN_CHANNEL,
-                Value::Bool(self.external_led.is_set_high()),
-            )]),
+            EXTERNAL_LED_ENTITY => self
+                .external_led
+                .as_ref()
+                .map(|pin| vec![confirmed(MAIN_CHANNEL, Value::Bool(pin.is_set_high()))]),
             // Nothing before the first good reading.
-            CLIMATE_ENTITY => self.climate.last().map(|reading| {
+            CLIMATE_ENTITY => self.climate.as_ref().and_then(Climate::last).map(|reading| {
                 vec![
                     confirmed(
                         TEMPERATURE_CHANNEL,
@@ -271,7 +287,8 @@ impl Device for Board {
             }),
             POTENTIOMETER_ENTITY => self
                 .potentiometer
-                .percent()
+                .as_ref()
+                .and_then(Potentiometer::percent)
                 .map(|percent| vec![confirmed(MAIN_CHANNEL, Value::Int(percent.into()))]),
             _ => None,
         }
@@ -294,12 +311,17 @@ impl Device for Board {
                 Ok(())
             }
             (LED_ENTITY | EXTERNAL_LED_ENTITY, CommandOp::Set(Value::Bool(on))) => {
-                let pin = self.led_pin(entity);
+                let Some(pin) = self.led_pin(entity) else {
+                    return Err(not_wired(entity));
+                };
                 let result = if *on { pin.set_high() } else { pin.set_low() };
                 result.map_err(|error| internal("LED", &error))
             }
             (BUZZER_ENTITY, CommandOp::Invoke(Some(Value::Enum(pattern)))) => {
-                match self.buzzer.play(pattern) {
+                let Some(buzzer) = &mut self.buzzer else {
+                    return Err(not_wired(entity));
+                };
+                match buzzer.play(pattern) {
                     Ok(_) => Ok(()),
                     Err(error) => Err(internal("buzzer", &error)),
                 }
@@ -320,6 +342,11 @@ fn channel(id: u8, access: Access, value: Option<ValueType>) -> Channel {
         quantity: None,
         unit: None,
     }
+}
+
+/// Commands are checked against `entities`, which leaves out what is not wired; kept as a safeguard.
+fn not_wired(entity: u8) -> Rejection {
+    Rejection::new(ErrorCode::UnknownEntity, format!("entity {entity} is not wired on this board"))
 }
 
 fn led_descriptor(entity: u8) -> EntityDescriptor {

@@ -21,7 +21,7 @@ use oxihome_protocol::management::{HEARTBEAT_INTERVAL, WIFI_CHECK_INTERVAL};
 use button::Button;
 use buzzer::Buzzer;
 use climate::Climate;
-use config::CONFIG;
+use config::{CONFIG, Wiring};
 use ir::IrReceiver;
 use node::{Board, Node};
 use potentiometer::Potentiometer;
@@ -41,12 +41,25 @@ fn main() -> anyhow::Result<()> {
     let pins = peripherals.pins;
 
     let led = PinDriver::output(pins.gpio2)?;
-    let external_led = PinDriver::output(pins.gpio18)?;
     let mut button = Button::new(PinDriver::input(pins.gpio0, Pull::Up)?);
-    let climate = Climate::new(PinDriver::input_output_od(pins.gpio4, Pull::Floating)?)?;
-    let buzzer = Buzzer::new(PinDriver::output(pins.gpio19)?)?;
-    let ir = IrReceiver::new(pins.gpio23)?;
-    let potentiometer = Potentiometer::new(peripherals.adc1, pins.gpio34)?;
+    let wired = Wiring::parse(CONFIG.peripherals)?;
+    let climate = wired
+        .climate
+        .then(|| Climate::new(PinDriver::input_output_od(pins.gpio4, Pull::Floating)?))
+        .transpose()?;
+    let external_led = wired
+        .external_led
+        .then(|| PinDriver::output(pins.gpio18))
+        .transpose()?;
+    let buzzer = wired
+        .buzzer
+        .then(|| Buzzer::new(PinDriver::output(pins.gpio19)?))
+        .transpose()?;
+    let ir = wired.ir.then(|| IrReceiver::new(pins.gpio23)).transpose()?;
+    let potentiometer = wired
+        .potentiometer
+        .then(|| Potentiometer::new(peripherals.adc1, pins.gpio34))
+        .transpose()?;
 
     let device_id = device_id()?;
     log::info!("Oxihome node {device_id} started");
@@ -67,9 +80,10 @@ fn main() -> anyhow::Result<()> {
         climate,
         buzzer,
         potentiometer,
+        ir,
         settings,
     };
-    let mut node = Node::new(device_id, transport, board, ir);
+    let mut node = Node::new(device_id, transport, board);
 
     let mut last_wifi_check = Instant::now();
     let mut last_heartbeat = Instant::now();
