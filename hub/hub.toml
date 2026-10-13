@@ -19,3 +19,9 @@ zone = "America/Sao_Paulo"
 [storage]
 path = "hub/oxihome.sqlite"
 retention_days = 7
+
+[ota]
+# Image server for over-the-air updates, reachable by the boards; only single-use links work.
+listen = "0.0.0.0:8081"
+public_url = "http://192.168.15.10:8081"
+images = "hub/firmware"

@@ -8,6 +8,7 @@ mod hub;
 mod mqtt;
 mod node;
 mod notifications;
+mod ota;
 mod schedule;
 mod storage;
 mod web;
@@ -27,6 +28,7 @@ use config::HomeConfig;
 use hub::Hub;
 use mqtt::{Incoming, Mqtt};
 use node::registry::DEFAULT_MISSED_HEARTBEATS;
+use ota::{Ota, OtaConfig};
 use schedule::Schedule;
 use storage::Storage;
 
@@ -45,6 +47,8 @@ struct Config {
     #[serde(default)]
     time: TimeConfig,
     storage: StorageConfig,
+    /// Over-the-air updates; off when missing.
+    ota: Option<OtaConfig>,
 }
 
 #[derive(Deserialize)]
@@ -154,6 +158,18 @@ async fn main() -> anyhow::Result<()> {
         restored.nodes.len(),
         config.storage.path.display()
     );
+    let ota = match &config.ota {
+        Some(ota_config) => {
+            let ota = Arc::new(Ota::new(ota_config));
+            let listener = TcpListener::bind(ota_config.listen.as_str())
+                .await
+                .with_context(|| format!("{path}: ota.listen"))?;
+            println!("firmware images on {}", ota_config.listen);
+            tokio::spawn(ota::serve(listener, ota.clone()));
+            Some(ota)
+        }
+        None => None,
+    };
     let (mqtt, mut incoming) = Mqtt::connect(&config.mqtt.host, config.mqtt.port, password);
     let hub = Arc::new(Hub::new(
         mqtt,
@@ -163,6 +179,7 @@ async fn main() -> anyhow::Result<()> {
         time_zone,
         storage,
         restored,
+        ota,
     ));
 
     let listener = TcpListener::bind((config.http.host.as_str(), config.http.port)).await?;

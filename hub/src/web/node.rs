@@ -13,7 +13,9 @@ use topcoat::{
 };
 
 use super::chart::{CHART_BUCKETS, Chart, ChartRange, chart, history_chart, series};
-use super::format::{channel_label, duration_label, entity_label, rule_anchor, value_label};
+use super::format::{
+    ago_label, channel_label, duration_label, elapsed, entity_label, rule_anchor, value_label,
+};
 use super::layout::layout;
 use super::nodes::{channel_controls, channel_value, presence_badge};
 use super::overview::{self, ChannelOverview, NodeOverview, ParameterOverview};
@@ -22,14 +24,28 @@ use crate::components::card::{card, card_content, card_description, card_header,
 use crate::components::input::input;
 use crate::config::nodes::{EntityEdit, NodeEdits, parameter_key};
 use crate::config::rules::{RuleRole, RuleUse};
-use crate::hub::Hub;
+use crate::hub::{Hub, UpdateStatus};
 use crate::node::parameters;
+use crate::storage::{StoredNotification, StoredUpdate, UpdateOutcome};
+
+/// Rows of the node's history card.
+const HISTORY_ROWS: usize = 10;
 
 path_param!(device_id);
+
+/// What happened to the node: its over-the-air updates (kept for good) and the notifications about
+/// it (kept as long as the rest of the history).
+#[derive(Clone, Default)]
+struct History {
+    updates: Vec<StoredUpdate>,
+    notifications: Vec<StoredNotification>,
+}
 
 struct NodeView {
     node: NodeOverview,
     parameters: Vec<ParameterOverview>,
+    update: Option<UpdateStatus>,
+    history: History,
     rules: Vec<RuleUse>,
     /// By entity and channel; only the fields section draws them.
     charts: HashMap<(u8, u8), Chart>,
@@ -64,7 +80,14 @@ async fn node_view(
     } else {
         HashMap::new()
     };
+    let history = if section.is_none() {
+        history(hub, device_id).await
+    } else {
+        History::default()
+    };
     Some(NodeView {
+        update: hub.update_status(device_id),
+        history,
         node,
         parameters,
         rules,
@@ -114,8 +137,9 @@ pub async fn node_page(cx: &Cx) -> Result<impl View> {
                 match node {
                     None => <p class="text-muted-foreground">(format!("Unknown node {device_id}: it has never sent a Hello."))</p>,
                     Some(node) => {
-                        overview_section(node: node.node.clone(), parameters: node.parameters, editing: false)
+                        overview_section(node: node.node.clone(), parameters: node.parameters, update: node.update, editing: false)
                         fields_section(node: node.node.clone(), rules: node.rules.clone(), charts: node.charts, range: node.range, editing: false)
+                        history_section(device_id: device_id.clone(), history: node.history)
                         rules_section(channels: node.node.channels, rules: node.rules)
                     },
                 }
@@ -180,7 +204,7 @@ async fn section_body(
     Ok(view! {
         if let Some(node) = node {
             match section {
-                Section::Overview => overview_section(node: node.node, parameters: node.parameters, editing: editing, out_of_band: out_of_band),
+                Section::Overview => overview_section(node: node.node, parameters: node.parameters, update: node.update, editing: editing, out_of_band: out_of_band),
                 Section::Fields => fields_section(node: node.node, rules: node.rules, charts: node.charts, range: node.range, editing: editing, out_of_band: out_of_band),
             }
         }
@@ -191,6 +215,7 @@ async fn section_body(
 async fn overview_section(
     node: NodeOverview,
     parameters: Vec<ParameterOverview>,
+    update: Option<UpdateStatus>,
     editing: bool,
     #[default] out_of_band: bool,
 ) -> Result<impl View> {
@@ -247,10 +272,114 @@ async fn overview_section(
                             parameter_stat(row: row, editing: editing)
                         }
                     </dl>
+                    if !editing {
+                        match update {
+                            Some(UpdateStatus::Available(version)) => {
+                                <div class="mt-4">
+                                    button(
+                                        variant: ButtonVariant::Outline,
+                                        size: ButtonSize::Sm,
+                                        attrs: attributes! { type="button" hx-post="/nodes/update" hx-target="#status" },
+                                        (format!("Update to {version}"))
+                                    )
+                                </div>
+                            },
+                            Some(UpdateStatus::InProgress(version)) => {
+                                <p class="mt-4 text-sm text-muted-foreground">(format!("Updating to {version}…"))</p>
+                            },
+                            None => {},
+                        }
+                    }
                 )
             )
         </form>
     })
+}
+
+async fn history(hub: &Hub, device_id: &str) -> History {
+    History {
+        updates: hub.updates(device_id, HISTORY_ROWS).await,
+        notifications: hub.notifications_about(device_id, HISTORY_ROWS).await,
+    }
+}
+
+#[page("/nodes/{device_id}/history")]
+pub async fn history_fragment(cx: &Cx) -> Result<impl View> {
+    let hub: &Arc<Hub> = app_context(cx);
+    let device_id = path_param::<DeviceId>(cx).to_string();
+    let history = history(hub, &device_id).await;
+    Ok(view! { history_section(device_id: device_id, history: history) })
+}
+
+/// Between the fields and the rules; refreshes on node changes and new notifications.
+#[component]
+async fn history_section(device_id: String, history: History) -> Result<impl View> {
+    let now = Timestamp::now();
+    Ok(view! {
+        <div
+            id="node-history"
+            hx-get=(format!("/nodes/{device_id}/history"))
+            hx-trigger="sse:nodes, sse:notifications, refresh"
+            hx-swap="outerHTML"
+        >
+            card(
+                card_header(card_title("History"))
+                card_content(
+                    <div class="grid gap-6 md:grid-cols-2">
+                        <div>
+                            <h3 class="mb-2 text-sm font-medium">"Firmware updates"</h3>
+                            if history.updates.is_empty() {
+                                <p class="text-sm text-muted-foreground">"None yet."</p>
+                            }
+                            <ul class="divide-y divide-border text-sm">
+                                for update in history.updates {
+                                    <li class="flex justify-between gap-3 py-2 first:pt-0 last:pb-0">
+                                        <div class="min-w-0">
+                                            <p class="font-medium">(format!("{} → {}", update.from_version, update.to_version))</p>
+                                            <p class="truncate text-muted-foreground" title=(update_outcome_label(&update))>(update_outcome_label(&update))</p>
+                                        </div>
+                                        <span class="shrink-0 text-xs text-muted-foreground">(ago_label(elapsed(update.finished_at, now)))</span>
+                                    </li>
+                                }
+                            </ul>
+                        </div>
+                        <div>
+                            <h3 class="mb-2 text-sm font-medium">"Activity"</h3>
+                            if history.notifications.is_empty() {
+                                <p class="text-sm text-muted-foreground">"Nothing in the last days."</p>
+                            }
+                            <ul class="divide-y divide-border text-sm">
+                                for notification in history.notifications {
+                                    <li class="flex justify-between gap-3 py-2 first:pt-0 last:pb-0">
+                                        <div class="min-w-0">
+                                            <p class="font-medium">(notification.title)</p>
+                                            <p class="truncate text-muted-foreground" title=(notification.message.clone())>(notification.message)</p>
+                                        </div>
+                                        <span class="shrink-0 text-xs text-muted-foreground">(ago_label(elapsed(notification.at, now)))</span>
+                                    </li>
+                                }
+                            </ul>
+                        </div>
+                    </div>
+                )
+            )
+        </div>
+    })
+}
+
+fn update_outcome_label(update: &StoredUpdate) -> String {
+    match update.outcome {
+        UpdateOutcome::Updated => {
+            let took = elapsed(update.started_at, update.finished_at);
+            format!("Updated in {}", duration_label(took))
+        }
+        UpdateOutcome::RolledBack => "Rolled back: the new version did not reach the broker".into(),
+        UpdateOutcome::Failed => format!(
+            "Failed: {}",
+            update.detail.as_deref().unwrap_or("error")
+        ),
+        UpdateOutcome::NoAnswer => "No answer after the update".into(),
+    }
 }
 
 /// Edit swaps the section for its form; Cancel and Save swap it back.
@@ -670,6 +799,26 @@ pub async fn edit(cx: &Cx, Form(form): Form<EditForm>) -> Result<ViewHandle> {
             <pre class="text-sm whitespace-pre-wrap text-destructive">(format!("{error:#}"))</pre>
         }
         section_body(node: node, section: section, editing: false, out_of_band: true)
+    }
+    .single()
+    .await
+}
+
+#[derive(Deserialize)]
+struct UpdateForm {
+    device_id: String,
+}
+
+/// Answers with the content of `#status`: empty on success, the error otherwise. Progress and the
+/// outcome come as notifications.
+#[route(POST "/nodes/update")]
+pub async fn start_update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<ViewHandle> {
+    let hub: &Arc<Hub> = app_context(cx);
+    let result = hub.start_update(&form.device_id).await;
+    view! { cx =>
+        if let Err(error) = result {
+            <p class="text-sm text-destructive">(format!("{error:#}"))</p>
+        }
     }
     .single()
     .await

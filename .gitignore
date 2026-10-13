@@ -8,3 +8,4 @@
 /simulator/secrets.toml
 /infra/mosquitto/passwd
 /infra/mosquitto/observer-password
+/hub/firmware

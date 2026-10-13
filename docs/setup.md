@@ -55,15 +55,25 @@ With the board on USB, from `firmware/`. The CH9102 adapter shows up as `/dev/tt
 depending on the order devices were plugged in; the `/dev/serial/by-id/` path does not change:
 
 ```sh
-espflash flash --port /dev/serial/by-id/usb-1a86_* target/xtensa-esp32-espidf/debug/firmware
+./flash.sh --port /dev/serial/by-id/usb-1a86_* target/xtensa-esp32-espidf/release/firmware
 espflash monitor --port /dev/serial/by-id/usb-1a86_*
 ```
 
-Or build, flash and monitor in one step (uses the runner in `.cargo/config.toml`):
+Or build, flash and monitor in one step (uses the runner in `.cargo/config.toml`, which is
+`flash.sh`):
 
 ```sh
-cargo run
+cargo run --release
 ```
+
+Always flash through `flash.sh`, not plain `espflash flash`. The flash has two app slots for
+over-the-air updates (`partitions.csv`: `nvs`, `otadata`, `phy_init`, `ota_0` and `ota_1` of
+1984 KiB each), and the script writes that table and the bootloader of our build, which rolls back
+a new image that does not mark itself valid (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` in
+`sdkconfig.defaults`); `espflash` alone writes its own bootloader and its single-app table. The
+script also erases `otadata`, so the board boots the flashed image from `ota_0` even if an update
+had moved it to `ota_1`. Images go over the air in release (about 70% of a slot); debug ones fill
+over 85%.
 
 ## Firmware configuration
 
@@ -78,10 +88,64 @@ chmod 600 firmware/cfg.toml
 `mqtt_url` must use the LAN address of the machine running the broker, e.g. `mqtt://192.168.15.10:1883`.
 `mqtt_password` is the board's own password; its user name is its device id (`esp32-<mac>`, printed
 by `espflash` as the MAC address), so each board needs its own build. Empty connects anonymously.
+`peripherals` lists what is wired to the board besides the onboard LED and BOOT button (`climate`,
+`external_led`, `buzzer`, `ir`, `potentiometer`); the firmware declares and drives only those, with
+the entity numbers of the table below. Without the line, all of them; `""` for none. An unknown
+name stops the board at boot with an error on the serial log.
+
+## Over-the-air updates
+
+Each board has its own configuration in `firmware/boards/<device id>.toml` (ignored by git), with
+the same keys as `cfg.toml`. After changing the firmware and its version in `firmware/Cargo.toml`:
+
+```sh
+firmware/build-images.sh                      # every board
+firmware/build-images.sh esp32-14335c2e7270   # or some of them
+```
+
+The script builds a release image per board into `hub/firmware/<device id>/<version>.bin` (ignored
+by git and readable only by the owner: the images hold the passwords) and puts `cfg.toml` back as
+it was. The hub serves them when `hub.toml` has an `[ota]` section:
+
+```toml
+[ota]
+listen = "0.0.0.0:8081"                     # reachable by the boards
+public_url = "http://192.168.15.10:8081"    # how the boards reach it
+images = "hub/firmware"
+```
+
+With firewalld (the laptop has it, `wlan0` in the `public` zone), the boards cannot reach port
+8081 until it is open to the home network. The MQTT port works without this because Docker opens
+its published ports itself. Until the next reboot:
+
+```sh
+sudo firewall-cmd --zone=public --add-rich-rule='rule family="ipv4" source address="192.168.15.0/24" port port="8081" protocol="tcp" accept'
+```
+
+Add `--permanent` and run `sudo firewall-cmd --reload` to keep it. Without the rule, the board
+reports `OTA: ESP_ERR_HTTP_CONNECT` after about 18 s and stays on its version.
+
+That server is separate from the web interface, which stays on `127.0.0.1`, and answers only
+`GET /ota/<token>`: a random link that works once and for 5 minutes. When an online node that
+declares the `Ota` channel has an image newer than its firmware, its page shows **Update to x.y.z**.
+The hub sends the link in an `Ota` command over MQTT; the board answers, downloads the image into
+its other app slot and reboots into it. The new image is on trial until it reaches the broker and
+sends its `Hello`; if it does not within 60 s, the board restarts and the bootloader goes back to
+the previous one. The hub notifies the outcome: updated (the `Hello` has the new version), rolled
+back (it has the old one), failed (the board reported an error, e.g. a broken download) or no
+answer within 5 minutes.
+
+Each finished update is also stored in the `updates` table, which is never pruned: the node page's
+**History** section (between the fields and the rules, refreshed live) lists the last 10
+(versions, outcome, how long it took), next to the last 10
+notifications about the node (offline, back online, rebooted, updates), which go away with the
+rest of the history after `retention_days`.
 
 ## Test board wiring
 
-ESP32 DevKit V1 (30 pins), `esp32-08d1f9ca41e4`. Entities the firmware declares:
+ESP32 DevKit V1 (30 pins), `esp32-08d1f9ca41e4`, with every peripheral. The second board,
+`esp32-14335c2e7270` (a third-party module, FCC ID 2BB77-ES32-32X, same ESP32 chip), has nothing
+wired: `peripherals = ""`. Entities the firmware declares:
 
 | Entity | What | Pin |
 |---|---|---|
@@ -92,6 +156,7 @@ ESP32 DevKit V1 (30 pins), `esp32-08d1f9ca41e4`. Entities the firmware declares:
 | 4 | External LED on the breadboard, `Bool` | GPIO18 (D18) |
 | 5 | Active buzzer, `Trigger` with the patterns `Short`, `Long` and `Alarm` | GPIO19 (D19) |
 | 6 | VS1838B IR receiver module, event `Received` with the code as `Text` | GPIO23 (D23) |
+| 7 | Potentiometer, `Int` 0–100 %, sent when it moves 2 points or more | GPIO34 (D34) |
 
 DHT11 module: `+` to 3V3, `-` to GND, `S` to D4 (the module has its pull-up). External LED: D18 →
 220–330 Ω resistor → LED long leg; short leg (flat side) to GND. Active buzzer (sealed black bottom;

@@ -15,6 +15,12 @@ entities.6 = { name = "IR receiver", channels.0 = "Code" }
 entities.7 = { name = "Potentiometer" }
 parameters = { heartbeat_interval = 30, wifi_check_interval = 5 }
 
+[nodes."esp32-14335c2e7270"]
+name = "Outra placa"
+entities.1 = { name = "LED", channels.0 = "Power" }
+entities.2 = { name = "BOOT button", channels.0 = "Press" }
+parameters = { heartbeat_interval = 30, wifi_check_interval = 5 }
+
 [nodes."sim-living-room"]
 name = "Living room (simulated)"
 entities.1 = { name = "Lamp", channels.0 = "Power" }

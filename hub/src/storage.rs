@@ -27,6 +27,7 @@ pub enum Write {
     Event(EventRecord, Timestamp),
     RuleRun(String, RuleRun),
     Notification(StoredNotification),
+    Update(StoredUpdate),
     /// Answered once everything sent before it is written.
     Flush(oneshot::Sender<()>),
 }
@@ -49,6 +50,50 @@ pub struct StoredNotification {
     pub message: String,
     pub source: String,
     pub at: Timestamp,
+}
+
+/// A finished over-the-air update.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredUpdate {
+    pub device_id: String,
+    pub started_at: Timestamp,
+    pub finished_at: Timestamp,
+    pub from_version: String,
+    pub to_version: String,
+    pub outcome: UpdateOutcome,
+    /// Why it failed, as the node or the hub put it.
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateOutcome {
+    Updated,
+    /// The node came back with the old version.
+    RolledBack,
+    /// Refused or reported an error; the node kept its version.
+    Failed,
+    NoAnswer,
+}
+
+impl UpdateOutcome {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Updated => "updated",
+            Self::RolledBack => "rolled_back",
+            Self::Failed => "failed",
+            Self::NoAnswer => "no_answer",
+        }
+    }
+
+    fn from_key(key: &str) -> anyhow::Result<Self> {
+        Ok(match key {
+            "updated" => Self::Updated,
+            "rolled_back" => Self::RolledBack,
+            "failed" => Self::Failed,
+            "no_answer" => Self::NoAnswer,
+            other => anyhow::bail!("unknown update outcome {other}"),
+        })
+    }
 }
 
 /// Numeric readings of one channel, grouped in buckets of equal length.
@@ -180,6 +225,57 @@ impl Storage {
         Ok(notifications)
     }
 
+    /// Notifications about one node (its device id is their source), newest first.
+    pub async fn notifications_about(
+        &self,
+        device_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<StoredNotification>> {
+        let mut notifications = Vec::new();
+        for row in sqlx::query(
+            "SELECT at, title, message, source FROM notifications WHERE source = ?
+             ORDER BY at DESC LIMIT ?",
+        )
+        .bind(device_id)
+        .bind(i64::try_from(limit)?)
+        .fetch_all(&self.pool)
+        .await?
+        {
+            notifications.push(StoredNotification {
+                title: row.get("title"),
+                message: row.get("message"),
+                source: row.get("source"),
+                at: Timestamp::from_millisecond(row.get("at"))?,
+            });
+        }
+        Ok(notifications)
+    }
+
+    /// Newest first.
+    pub async fn updates(&self, device_id: &str, limit: usize) -> anyhow::Result<Vec<StoredUpdate>> {
+        let mut updates = Vec::new();
+        for row in sqlx::query(
+            "SELECT device_id, started_at, finished_at, from_version, to_version, outcome, detail
+             FROM updates WHERE device_id = ? ORDER BY finished_at DESC LIMIT ?",
+        )
+        .bind(device_id)
+        .bind(i64::try_from(limit)?)
+        .fetch_all(&self.pool)
+        .await?
+        {
+            updates.push(StoredUpdate {
+                device_id: row.get("device_id"),
+                started_at: Timestamp::from_millisecond(row.get("started_at"))?,
+                finished_at: Timestamp::from_millisecond(row.get("finished_at"))?,
+                from_version: row.get("from_version"),
+                to_version: row.get("to_version"),
+                outcome: UpdateOutcome::from_key(row.get("outcome"))?,
+                detail: row.get("detail"),
+            });
+        }
+        Ok(updates)
+    }
+
     /// Waits for the queued writes.
     pub async fn flush(&self) {
         let (sender, receiver) = oneshot::channel();
@@ -243,6 +339,21 @@ async fn write_batch(pool: &SqlitePool, batch: Vec<Write>) -> anyhow::Result<()>
                 .bind(notification.title)
                 .bind(notification.message)
                 .bind(notification.source)
+                .execute(&mut *transaction)
+                .await?;
+            }
+            Write::Update(update) => {
+                sqlx::query(
+                    "INSERT INTO updates (device_id, started_at, finished_at, from_version,
+                     to_version, outcome, detail) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(update.device_id)
+                .bind(update.started_at.as_millisecond())
+                .bind(update.finished_at.as_millisecond())
+                .bind(update.from_version)
+                .bind(update.to_version)
+                .bind(update.outcome.key())
+                .bind(update.detail)
                 .execute(&mut *transaction)
                 .await?;
             }
@@ -598,6 +709,46 @@ mod tests {
         );
         assert_eq!(restored.received_events, vec![(received, at_milliseconds)]);
         assert_eq!(restored.rule_runs[0].1.errors, vec!["failed".to_string()]);
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn updates_and_notifications_by_node() {
+        let directory = std::env::temp_dir().join(format!(
+            "oxihome-storage-updates-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("hub.sqlite");
+        let _ = std::fs::remove_file(&path);
+        let (storage, _) = Storage::open(&path, Duration::from_secs(3600))
+            .await
+            .unwrap();
+        let at = Timestamp::from_millisecond(Timestamp::now().as_millisecond()).unwrap();
+        let update = StoredUpdate {
+            device_id: "esp32-a".into(),
+            started_at: at,
+            finished_at: at,
+            from_version: "0.12.1".into(),
+            to_version: "0.12.2".into(),
+            outcome: UpdateOutcome::RolledBack,
+            detail: None,
+        };
+        storage.write(Write::Update(update.clone()));
+        for source in ["esp32-a", "esp32-b"] {
+            storage.write(Write::Notification(StoredNotification {
+                title: format!("{source} offline"),
+                message: "Stopped sending messages".into(),
+                source: source.into(),
+                at,
+            }));
+        }
+        storage.flush().await;
+        assert_eq!(storage.updates("esp32-a", 10).await.unwrap(), vec![update]);
+        assert!(storage.updates("esp32-b", 10).await.unwrap().is_empty());
+        let about_a = storage.notifications_about("esp32-a", 10).await.unwrap();
+        assert_eq!(about_a.len(), 1);
+        assert_eq!(about_a[0].title, "esp32-a offline");
         std::fs::remove_dir_all(&directory).unwrap();
     }
 }

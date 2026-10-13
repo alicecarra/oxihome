@@ -27,6 +27,14 @@ pub async fn on_connected(hub: &Hub) -> anyhow::Result<()> {
 
 pub async fn on_message(hub: &Arc<Hub>, message: &Message) -> anyhow::Result<()> {
     let (node_events, updates, event) = hub.handle(message, Instant::now());
+    match &message.payload {
+        Payload::Hello { fw_version, .. } => hub.settle_update(&message.src, fw_version),
+        Payload::Error {
+            detail: Some(detail),
+            ..
+        } if detail.starts_with("OTA:") => hub.fail_update(&message.src, detail),
+        _ => {}
+    }
 
     let reports_parameters = matches!(
         message.payload,
@@ -75,6 +83,7 @@ pub async fn on_message(hub: &Arc<Hub>, message: &Message) -> anyhow::Result<()>
 
 /// Marks nodes that went quiet as offline.
 pub fn on_presence_check(hub: &Arc<Hub>) {
+    hub.check_updates(Instant::now());
     for node_event in hub.check_presence(Instant::now()) {
         on_node_event(hub, &node_event);
     }
