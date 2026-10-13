@@ -527,6 +527,13 @@ and connect again. The simulator is built this way. The firmware uses only the c
 implements `Device` (entities, LED and parameter state, LED, parameter and buzzer commands) and its
 own MQTT client carries the messages.
 
+Publishing never waits: outgoing messages go into a queue of `Broker::queue_size` messages
+(`mqtt::DEFAULT_QUEUE_SIZE`, 4096; `queue_size` under `[mqtt]` in each node's configuration) and
+new ones are dropped, with a log line, while it is full. While disconnected the node drops its
+reports and answers instead of queuing them, since the announcement after reconnecting carries the
+current state. (Until 2026-10-13 a full queue of 32 blocked the loop for good: a node that lost
+the broker for a few minutes stopped reconnecting, though its service still showed as running.)
+
 `NodeCore::new` takes the node's `Build`, sent in its `Hello`: a short `name` that says what the
 program is (`firmware`, `weather`, `linux-monitor`, `network-devices`, `simulator`), its `version`
 (`major.minor.patch`, from its `Cargo.toml`: raise it when the node changes) and its `target`
@@ -546,7 +553,7 @@ notified once per node ("speaks another protocol"). So a node may lag one versio
 nodes updated afterwards.
 
 ```sh
-cargo test -p oxihome-node
+cargo test -p oxihome-node --features mqtt
 cargo clippy -p oxihome-node --features mqtt
 ```
 

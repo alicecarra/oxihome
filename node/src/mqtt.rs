@@ -8,6 +8,9 @@ use tokio::sync::mpsc;
 
 const BROADCAST_TOPIC: &str = "oxihome/broadcast/down";
 
+/// Messages waiting for the connection; a computer can hold far more than a board.
+pub const DEFAULT_QUEUE_SIZE: usize = 4096;
+
 /// A node that runs on a computer: the protocol side usually comes from a [`crate::NodeCore`].
 pub trait SoftwareNode: Send + 'static {
     fn device_id(&self) -> &str;
@@ -30,6 +33,8 @@ pub struct Broker {
     /// How often [`SoftwareNode::report`] runs; heartbeats should match the node's
     /// `HeartbeatInterval` (30 s by default).
     pub report_interval: Duration,
+    /// How many outgoing messages wait for the connection before new ones are dropped.
+    pub queue_size: usize,
 }
 
 /// Changes a node from outside the MQTT loop, e.g. a console or a chat bot.
@@ -96,17 +101,19 @@ async fn run<N: SoftwareNode>(
         if let Some(password) = &broker.password {
             options.set_credentials(device_id.clone(), password.clone());
         }
-        let (client, mut event_loop) = AsyncClient::new(options, 32);
+        let (client, mut event_loop) = AsyncClient::new(options, broker.queue_size.max(1));
         let mut report = tokio::time::interval(broker.report_interval);
         report.tick().await;
+        let mut connected = false;
 
         let disconnected = loop {
             let outgoing = tokio::select! {
                 event = event_loop.poll() => match event {
                     Ok(Event::Incoming(Packet::ConnAck(_))) => {
                         println!("{device_id} connected");
+                        connected = true;
                         for topic in [down_topic.as_str(), BROADCAST_TOPIC] {
-                            if let Err(error) = client.subscribe(topic, QoS::AtLeastOnce).await {
+                            if let Err(error) = client.try_subscribe(topic, QoS::AtLeastOnce) {
                                 println!("{device_id} subscribe failed: {error}");
                             }
                         }
@@ -124,6 +131,7 @@ async fn run<N: SoftwareNode>(
                     Ok(_) => Vec::new(),
                     Err(error) => {
                         println!("{device_id} connection error: {error}");
+                        connected = false;
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         Vec::new()
                     }
@@ -140,7 +148,11 @@ async fn run<N: SoftwareNode>(
                     None => break false,
                 },
             };
-            publish(&client, &device_id, &up_topic, outgoing).await;
+            // Offline, the event loop takes no messages: they would fill the queue, and the
+            // announcement after reconnecting sends the current state anyway.
+            if connected {
+                publish(&client, &device_id, &up_topic, outgoing);
+            }
         };
         if !disconnected || !wait_for_connect(&mut node, &device_id, &mut controls).await {
             return;
@@ -169,7 +181,8 @@ async fn wait_for_connect<N>(
     }
 }
 
-async fn publish(client: &AsyncClient, device_id: &str, topic: &str, messages: Vec<Message>) {
+/// Never waits: waiting for room in the queue here would stop the event loop that empties it.
+fn publish(client: &AsyncClient, device_id: &str, topic: &str, messages: Vec<Message>) {
     for message in messages {
         let json = match message.to_json() {
             Ok(json) => json,
@@ -178,8 +191,63 @@ async fn publish(client: &AsyncClient, device_id: &str, topic: &str, messages: V
                 continue;
             }
         };
-        if let Err(error) = client.publish(topic, QoS::AtLeastOnce, false, json).await {
+        if let Err(error) = client.try_publish(topic, QoS::AtLeastOnce, false, json) {
             println!("{device_id} publish failed: {error}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use oxihome_protocol::Payload;
+
+    use super::*;
+
+    struct CountingNode {
+        reports: Arc<AtomicUsize>,
+    }
+
+    impl SoftwareNode for CountingNode {
+        fn device_id(&self) -> &str {
+            "counting"
+        }
+
+        fn handle(&mut self, _message: &Message) -> Vec<Message> {
+            Vec::new()
+        }
+
+        fn announcement(&mut self) -> Vec<Message> {
+            Vec::new()
+        }
+
+        fn report(&mut self) -> Vec<Message> {
+            self.reports.fetch_add(1, Ordering::Relaxed);
+            (0..5)
+                .map(|id| Message::new("counting", id, Payload::Ack { ok: true }))
+                .collect()
+        }
+    }
+
+    #[tokio::test]
+    async fn keeps_running_without_a_broker_after_filling_the_queue() {
+        let reports = Arc::new(AtomicUsize::new(0));
+        let handle = spawn(
+            CountingNode {
+                reports: reports.clone(),
+            },
+            Broker {
+                host: "127.0.0.1".into(),
+                port: 9,
+                password: None,
+                report_interval: Duration::from_millis(10),
+                queue_size: 1,
+            },
+        );
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert!(reports.load(Ordering::Relaxed) > 20);
+        assert!(handle.act(|_| Vec::new()).await);
     }
 }
