@@ -4,6 +4,7 @@ mod climate;
 mod config;
 mod ir;
 mod node;
+mod ota;
 mod potentiometer;
 mod settings;
 mod transport;
@@ -24,6 +25,7 @@ use climate::Climate;
 use config::{CONFIG, Wiring};
 use ir::IrReceiver;
 use node::{Board, Node};
+use ota::Ota;
 use potentiometer::Potentiometer;
 use settings::Settings;
 use transport::MqttTransport;
@@ -36,6 +38,7 @@ const POTENTIOMETER_READ_INTERVAL: Duration = Duration::from_millis(100);
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
+    let started = Instant::now();
 
     let peripherals = Peripherals::take()?;
     let pins = peripherals.pins;
@@ -81,15 +84,20 @@ fn main() -> anyhow::Result<()> {
         buzzer,
         potentiometer,
         ir,
+        pending_update: None,
         settings,
     };
-    let mut node = Node::new(device_id, transport, board);
+    let mut node = Node::new(device_id, transport, board, Ota::new()?);
 
     let mut last_wifi_check = Instant::now();
     let mut last_heartbeat = Instant::now();
     let mut last_climate_read: Option<Instant> = None;
     let mut last_potentiometer_read = Instant::now();
     loop {
+        if node.update_unverified() && started.elapsed() >= ota::VALIDATION_TIMEOUT {
+            log::error!("New image did not reach the broker; restarting to roll back");
+            esp_idf_svc::hal::reset::restart();
+        }
         if last_wifi_check.elapsed() >= node.settings().interval(WIFI_CHECK_INTERVAL) {
             wifi::ensure_connected(&mut wifi)?;
             last_wifi_check = Instant::now();

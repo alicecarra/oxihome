@@ -9,7 +9,7 @@ pub const ENTITY: u8 = 0;
 pub enum ManagementChannel {
     /// `Bool`: Wi-Fi on/off.
     Wifi = 0,
-    /// `Trigger`: starts an over-the-air update (URL or version in the value).
+    /// `Trigger` with `Text`: downloads the image at that URL over HTTP and reboots into it.
     Ota = 1,
     /// `Trigger`: reboots the node.
     Reboot = 2,
@@ -68,6 +68,8 @@ pub const WIFI_CHECK_INTERVAL: Parameter = Parameter {
     max: 60,
 };
 
+pub const OTA_URL_MAX_LENGTH: u16 = 512;
+
 pub const PARAMETERS: [Parameter; 2] = [HEARTBEAT_INTERVAL, WIFI_CHECK_INTERVAL];
 
 impl Parameter {
@@ -94,6 +96,19 @@ pub fn parameter(channel: u8) -> Option<Parameter> {
     PARAMETERS
         .into_iter()
         .find(|parameter| u8::from(parameter.channel) == channel)
+}
+
+/// For nodes that update over the air; added to `descriptor()` by the node.
+pub fn ota_descriptor() -> Channel {
+    Channel {
+        id: ManagementChannel::Ota.into(),
+        access: Access::Trigger,
+        value: Some(ValueType::Text {
+            max_length: OTA_URL_MAX_LENGTH,
+        }),
+        quantity: None,
+        unit: None,
+    }
 }
 
 /// The management entity as announced in `Hello`.

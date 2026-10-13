@@ -11,3 +11,7 @@ CONFIG_FREERTOS_IDLE_TASK_STACKSIZE=4096
 # that allocate large stack variables; or better yet - use 
 # `std::thread::Builder::new().stack_size(XXX)` for spawning
 CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=4096
+
+# Over-the-air updates: the bootloader rolls back a new image that does not mark itself valid.
+# The partition table with the two app slots is partitions.csv, written by espflash (flash.sh).
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

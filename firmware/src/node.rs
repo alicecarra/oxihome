@@ -1,6 +1,6 @@
 use esp_idf_svc::hal::gpio::{Output, PinDriver};
 use oxihome_node::{Device, NodeCore, Rejection};
-use oxihome_protocol::management::{self, PARAMETERS};
+use oxihome_protocol::management::{self, ManagementChannel, PARAMETERS};
 use oxihome_protocol::{
     Access, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, ErrorCode, EventKind,
     Message, Payload, Quantity, Unit, Value, ValueType,
@@ -9,6 +9,7 @@ use oxihome_protocol::{
 use crate::buzzer::{self, Buzzer};
 use crate::climate::Climate;
 use crate::ir::{self, IrReceiver};
+use crate::ota::Ota;
 use crate::potentiometer::Potentiometer;
 use crate::settings::Settings;
 use crate::transport::{Transport, TransportEvent};
@@ -33,6 +34,8 @@ pub struct Board {
     pub buzzer: Option<Buzzer>,
     pub potentiometer: Option<Potentiometer>,
     pub ir: Option<IrReceiver>,
+    /// Set by an `Ota` command, run by `Node::poll` once the `Ack` is out.
+    pub pending_update: Option<String>,
 }
 
 /// The protocol comes from `oxihome-node`; this ties it to the transport and the event sources.
@@ -40,24 +43,44 @@ pub struct Node<T: Transport> {
     core: NodeCore,
     board: Board,
     transport: T,
+    ota: Ota,
 }
 
 impl<T: Transport> Node<T> {
-    pub fn new(device_id: String, transport: T, board: Board) -> Self {
+    pub fn new(device_id: String, transport: T, board: Board, ota: Ota) -> Self {
         Self {
             core: NodeCore::new(device_id, env!("CARGO_PKG_VERSION")),
             board,
             transport,
+            ota,
         }
     }
 
     pub fn poll(&mut self) -> anyhow::Result<()> {
         while let Some(event) = self.transport.poll() {
+            let connected = matches!(event, TransportEvent::Connected);
             let messages = match event {
                 TransportEvent::Connected => self.core.announcement(&self.board),
                 TransportEvent::Received(bytes) => self.handle_bytes(&bytes),
             };
             self.send_all(messages)?;
+            if connected {
+                self.ota.mark_valid()?;
+            }
+        }
+        if let Some(url) = self.board.pending_update.take() {
+            match self.ota.update(&url) {
+                Ok(()) => esp_idf_svc::hal::reset::restart(),
+                Err(error) => {
+                    log::warn!("OTA: {error:#}");
+                    let payload = Payload::Error {
+                        code: ErrorCode::Internal.into(),
+                        detail: Some(format!("OTA: {error:#}")),
+                    };
+                    let message = self.core.message(payload, None);
+                    self.send(message)?;
+                }
+            }
         }
         if let Some(code) = self.board.ir.as_mut().and_then(IrReceiver::poll) {
             log::info!("IR: {code}");
@@ -110,6 +133,10 @@ impl<T: Transport> Node<T> {
         Ok(())
     }
 
+    pub fn update_unverified(&self) -> bool {
+        self.ota.unverified()
+    }
+
     pub fn settings(&self) -> &Settings {
         &self.board.settings
     }
@@ -160,8 +187,10 @@ impl Board {
 
 impl Device for Board {
     fn entities(&self) -> Vec<EntityDescriptor> {
+        let mut management = management::descriptor();
+        management.channels.push(management::ota_descriptor());
         let mut entities = vec![
-            management::descriptor(),
+            management,
             led_descriptor(LED_ENTITY),
             EntityDescriptor {
                 id: BUTTON_ENTITY,
@@ -308,6 +337,12 @@ impl Device for Board {
                     .set(parameter, *value)
                     .map_err(|error| internal("NVS", &error))?;
                 log::info!("{:?} = {value}", parameter.channel);
+                Ok(())
+            }
+            (management::ENTITY, CommandOp::Invoke(Some(Value::Text(url))))
+                if channel == u8::from(ManagementChannel::Ota) =>
+            {
+                self.pending_update = Some(url.clone());
                 Ok(())
             }
             (LED_ENTITY | EXTERNAL_LED_ENTITY, CommandOp::Set(Value::Bool(on))) => {
