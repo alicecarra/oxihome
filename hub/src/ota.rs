@@ -109,7 +109,10 @@ impl Ota {
 
     /// Updates without an answer in time, by device id; dropped from the list.
     pub fn timed_out(&self, now: Instant) -> Vec<(String, Update)> {
-        self.links.lock().unwrap().retain(|_, link| link.expires > now);
+        self.links
+            .lock()
+            .unwrap()
+            .retain(|_, link| link.expires > now);
         let mut updates = self.updates.lock().unwrap();
         let late: Vec<String> = updates
             .iter()
@@ -210,7 +213,11 @@ fn newest_image(directory: &Path) -> Option<(String, PathBuf)> {
         .ok()?
         .filter_map(|entry| {
             let path = entry.ok()?.path();
-            let name = path.file_name()?.to_str()?.strip_suffix(".bin")?.to_string();
+            let name = path
+                .file_name()?
+                .to_str()?
+                .strip_suffix(".bin")?
+                .to_string();
             let parsed = version(&name)?;
             Some((parsed, name, path))
         })
@@ -232,7 +239,10 @@ mod tests {
 
     #[test]
     fn token_comes_from_the_request_line() {
-        assert_eq!(request_token("GET /ota/abc HTTP/1.1\r\nHost: x\r\n\r\n"), Some("abc"));
+        assert_eq!(
+            request_token("GET /ota/abc HTTP/1.1\r\nHost: x\r\n\r\n"),
+            Some("abc")
+        );
         assert_eq!(request_token("POST /ota/abc HTTP/1.1\r\n\r\n"), None);
         assert_eq!(request_token("GET /ota/ HTTP/1.1\r\n\r\n"), None);
         assert_eq!(request_token("GET / HTTP/1.1\r\n\r\n"), None);
@@ -270,7 +280,10 @@ mod tests {
         ota.start("esp32-a", "0.1.0".into(), "0.2.0".into(), PathBuf::new())
             .unwrap();
         let update = ota.finish("esp32-a").unwrap();
-        assert_eq!((update.from_version.as_str(), update.version.as_str()), ("0.1.0", "0.2.0"));
+        assert_eq!(
+            (update.from_version.as_str(), update.version.as_str()),
+            ("0.1.0", "0.2.0")
+        );
         assert!(ota.finish("esp32-a").is_none());
         assert!(ota.updating("esp32-a").is_none());
     }

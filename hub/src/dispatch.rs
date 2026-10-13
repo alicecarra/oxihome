@@ -28,7 +28,7 @@ pub async fn on_connected(hub: &Hub) -> anyhow::Result<()> {
 pub async fn on_message(hub: &Arc<Hub>, message: &Message) -> anyhow::Result<()> {
     let (node_events, updates, event) = hub.handle(message, Instant::now());
     match &message.payload {
-        Payload::Hello { fw_version, .. } => hub.settle_update(&message.src, fw_version),
+        Payload::Hello { build, .. } => hub.settle_update(&message.src, &build.version),
         Payload::Error {
             detail: Some(detail),
             ..

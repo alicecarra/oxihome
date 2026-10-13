@@ -12,7 +12,7 @@ use topcoat::{
 use super::chart::{CHART_BUCKETS, Chart, ChartRange, chart, history_chart, series};
 use super::format::{ago_label, rule_anchor, value_label};
 use super::layout::layout;
-use super::nodes::{channel_controls, channel_value, presence_badge};
+use super::nodes::{channel_controls, channel_value, presence_badge, protocol_badge};
 use super::overview::{self, Activity, DashboardChannel, NodeOverview, Presence, RulesSummary};
 use super::panel::{PanelButton, panel_button_view, panel_buttons};
 use crate::components::button::{ButtonSize, ButtonVariant, button};
@@ -359,8 +359,9 @@ async fn node_status(nodes: Vec<NodeOverview>) -> Result<impl View> {
                                     (node.name.clone().unwrap_or_else(|| node.device_id.clone()))
                                 </a>
                                 if node.name.is_some() {
-                                    <span class="ml-2 text-xs text-muted-foreground">(node.device_id)</span>
+                                    <span class="ml-2 text-xs text-muted-foreground">(node.device_id.clone())</span>
                                 }
+                                <span class="ml-2">protocol_badge(version: node.protocol_version)</span>
                             </li>
                         }
                     </ul>

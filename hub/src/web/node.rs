@@ -17,7 +17,7 @@ use super::format::{
     ago_label, channel_label, duration_label, elapsed, entity_label, rule_anchor, value_label,
 };
 use super::layout::layout;
-use super::nodes::{channel_controls, channel_value, presence_badge};
+use super::nodes::{channel_controls, channel_value, presence_badge, protocol_badge};
 use super::overview::{self, ChannelOverview, NodeOverview, ParameterOverview};
 use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::card::{card, card_content, card_description, card_header, card_title};
@@ -257,6 +257,7 @@ async fn overview_section(
                                 card_title((title))
                             }
                             presence_badge(presence: node.presence)
+                            protocol_badge(version: node.protocol_version)
                         </div>
                         edit_buttons(device_id: device_id.clone(), path: "overview", target: "#node-overview", editing: editing, label: "Edit")
                     </div>
@@ -265,7 +266,7 @@ async fn overview_section(
                 card_content(
                     <dl class="grid grid-cols-2 gap-x-6 gap-y-4 text-sm sm:grid-cols-3 lg:grid-cols-6">
                         stat(label: "Device ID", value: device_id.clone())
-                        stat(label: "Firmware", value: node.firmware_version.clone().unwrap_or_default())
+                        stat(label: "Software", value: node.software.clone().unwrap_or_default())
                         stat(label: "Uptime", value: uptime)
                         stat(label: "Signal", value: signal)
                         for row in parameters {
@@ -374,10 +375,7 @@ fn update_outcome_label(update: &StoredUpdate) -> String {
             format!("Updated in {}", duration_label(took))
         }
         UpdateOutcome::RolledBack => "Rolled back: the new version did not reach the broker".into(),
-        UpdateOutcome::Failed => format!(
-            "Failed: {}",
-            update.detail.as_deref().unwrap_or("error")
-        ),
+        UpdateOutcome::Failed => format!("Failed: {}", update.detail.as_deref().unwrap_or("error")),
         UpdateOutcome::NoAnswer => "No answer after the update".into(),
     }
 }

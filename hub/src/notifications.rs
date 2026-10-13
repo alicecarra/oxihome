@@ -100,7 +100,7 @@ mod tests {
             for_node_event(
                 &NodeEvent::Registered {
                     device_id: "sim".into(),
-                    firmware_version: "0.4.0".into(),
+                    build: oxihome_protocol::Build::new("firmware", "0.4.0", "esp32"),
                     entity_count: 2,
                 },
                 "sim"

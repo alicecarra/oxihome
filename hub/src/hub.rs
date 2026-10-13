@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Instant, SystemTime};
@@ -8,7 +8,7 @@ use jiff::Timestamp;
 use jiff::civil::DateTime;
 use jiff::tz::TimeZone;
 use oxihome_protocol::management::{self, ManagementChannel, Parameter};
-use oxihome_protocol::{CommandOp, Message, Payload, Value};
+use oxihome_protocol::{CommandOp, Message, PROTOCOL_VERSION, Payload, Value};
 use tokio::sync::{broadcast, watch};
 
 use crate::commands::Commands;
@@ -91,6 +91,8 @@ pub struct Hub {
     storage: Storage,
     /// `None` without `[ota]` in `hub.toml`.
     ota: Option<Arc<Ota>>,
+    /// Nodes already notified for speaking another protocol version, with that version.
+    other_protocols: Mutex<HashSet<(String, u8)>>,
     /// Scheduled rules run in this zone's local time.
     time_zone: TimeZone,
     changes: broadcast::Sender<Change>,
@@ -154,6 +156,7 @@ impl Hub {
             commands: Commands::default(),
             storage,
             ota,
+            other_protocols: Mutex::default(),
             time_zone,
             changes: broadcast::channel(64).0,
             shutting_down: watch::channel(false).0,
@@ -608,7 +611,10 @@ impl Hub {
             .ota
             .as_ref()
             .context("over-the-air updates are off: no [ota] in hub.toml")?;
-        ensure!(ota.updating(device_id).is_none(), "{device_id} is already updating");
+        ensure!(
+            ota.updating(device_id).is_none(),
+            "{device_id} is already updating"
+        );
         let running = self
             .updatable_version(device_id)
             .with_context(|| format!("{device_id} is offline or does not update over the air"))?;
@@ -618,7 +624,10 @@ impl Hub {
         let url = ota.start(device_id, running.clone(), version.clone(), image)?;
         self.announce(Change::Nodes);
         let channel = u8::from(ManagementChannel::Ota);
-        if let Err(error) = self.invoke(device_id, management::ENTITY, channel, Some(url)).await {
+        if let Err(error) = self
+            .invoke(device_id, management::ENTITY, channel, Some(url))
+            .await
+        {
             if let Some(update) = ota.finish(device_id) {
                 let detail = format!("{error:#}");
                 self.record_update(device_id, update, UpdateOutcome::Failed, Some(detail));
@@ -650,7 +659,12 @@ impl Hub {
     /// The node reported an `Error` about the update (e.g. the download failed).
     pub fn fail_update(&self, device_id: &str, detail: &str) {
         if let Some(update) = self.ota.as_ref().and_then(|ota| ota.finish(device_id)) {
-            self.record_update(device_id, update, UpdateOutcome::Failed, Some(detail.into()));
+            self.record_update(
+                device_id,
+                update,
+                UpdateOutcome::Failed,
+                Some(detail.into()),
+            );
         }
     }
 
@@ -686,7 +700,11 @@ impl Hub {
             ),
             UpdateOutcome::Failed => (
                 format!("{name} update failed"),
-                format!("{}: {}", update.version, detail.as_deref().unwrap_or("error")),
+                format!(
+                    "{}: {}",
+                    update.version,
+                    detail.as_deref().unwrap_or("error")
+                ),
             ),
             UpdateOutcome::NoAnswer => (
                 format!("{name} update failed"),
@@ -736,7 +754,28 @@ impl Hub {
         let registry = self.registry.lock().unwrap();
         let node = registry.node(device_id)?;
         let declares = node.declares(management::ENTITY, ManagementChannel::Ota.into());
-        (node.online && declares).then(|| node.firmware_version.clone())
+        (node.online && declares).then(|| node.build.version.clone())
+    }
+
+    /// Once per node and version: its messages are dropped until it speaks the hub's version.
+    pub fn notify_other_protocol(&self, device_id: &str, version: u8) {
+        let first = self
+            .other_protocols
+            .lock()
+            .unwrap()
+            .insert((device_id.to_string(), version));
+        if !first {
+            return;
+        }
+        println!("{device_id} speaks protocol {version}, the hub {PROTOCOL_VERSION}: ignored");
+        let name = self.node_name(device_id);
+        self.notify(
+            format!("{name} speaks another protocol"),
+            format!(
+                "Protocol {version}, the hub speaks {PROTOCOL_VERSION}: its messages are ignored until it is updated"
+            ),
+            device_id.to_string(),
+        );
     }
 
     pub fn notify_node_event(&self, event: &NodeEvent) {

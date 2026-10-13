@@ -23,8 +23,10 @@ use crate::node::registry::{Node, Registry};
 pub struct NodeOverview {
     pub device_id: String,
     pub name: Option<String>,
-    /// `None` for a node that never sent a `Hello`.
-    pub firmware_version: Option<String>,
+    /// What runs on it, e.g. "firmware 0.12.1 (esp32)"; `None` for a node that never sent a `Hello`.
+    pub software: Option<String>,
+    /// Of its last `Hello`; `None` for a node never seen.
+    pub protocol_version: Option<u8>,
     pub presence: Presence,
     /// How long ago the hub last heard from it; `None` when not seen.
     pub last_seen: Option<Duration>,
@@ -156,7 +158,8 @@ pub fn nodes(hub: &Hub) -> Vec<NodeOverview> {
                     .nodes
                     .name(&NameTarget::Node(device_id.to_string()))
                     .map(String::from),
-                firmware_version: None,
+                software: None,
+                protocol_version: None,
                 presence: Presence::NotSeen,
                 last_seen: None,
                 uptime_seconds: None,
@@ -236,7 +239,8 @@ fn node_overview(
     NodeOverview {
         device_id: device_id.to_string(),
         name: name(NameTarget::Node(device_id.to_string())),
-        firmware_version: Some(node.firmware_version.clone()),
+        software: Some(node.build.to_string()),
+        protocol_version: Some(node.protocol_version),
         presence: if node.online {
             Presence::Online
         } else {
@@ -880,7 +884,7 @@ mod tests {
             "esp32-test",
             0,
             oxihome_protocol::Payload::Hello {
-                fw_version: "0.6.0".into(),
+                build: oxihome_protocol::Build::new("firmware", "0.6.0", "esp32"),
                 entities: vec![oxihome_protocol::EntityDescriptor {
                     id: 3,
                     channels: vec![oxihome_protocol::Channel {

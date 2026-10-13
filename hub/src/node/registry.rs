@@ -4,12 +4,16 @@ use std::time::{Duration, Instant};
 
 use jiff::Timestamp;
 use oxihome_protocol::management::{self, HEARTBEAT_INTERVAL};
-use oxihome_protocol::{Access, Channel, EntityDescriptor, Message, Payload, Value, ValueType};
+use oxihome_protocol::{
+    Access, Build, Channel, EntityDescriptor, Message, Payload, Value, ValueType,
+};
 
 pub const DEFAULT_MISSED_HEARTBEATS: u32 = 3;
 
 pub struct Node {
-    pub firmware_version: String,
+    pub build: Build,
+    /// Of its last `Hello`; older than `PROTOCOL_VERSION` means it needs an update.
+    pub protocol_version: u8,
     pub entities: Vec<EntityDescriptor>,
     pub online: bool,
     /// For presence.
@@ -94,7 +98,8 @@ impl Node {
 #[derive(Debug, Clone)]
 pub struct StoredNode {
     pub device_id: String,
-    pub firmware_version: String,
+    pub build: Build,
+    pub protocol_version: u8,
     pub entities: Vec<EntityDescriptor>,
     pub last_seen: Timestamp,
     pub uptime_seconds: Option<u32>,
@@ -106,7 +111,7 @@ pub struct StoredNode {
 pub enum NodeEvent {
     Registered {
         device_id: String,
-        firmware_version: String,
+        build: Build,
         entity_count: usize,
     },
     Online(String),
@@ -137,11 +142,11 @@ impl fmt::Display for NodeEvent {
         match self {
             NodeEvent::Registered {
                 device_id,
-                firmware_version,
+                build,
                 entity_count,
             } => write!(
                 formatter,
-                "{device_id} online (firmware {firmware_version}, {entity_count} entities)"
+                "{device_id} online ({build}, {entity_count} entities)"
             ),
             NodeEvent::Online(device_id) => write!(formatter, "{device_id} online"),
             NodeEvent::Rebooted {
@@ -196,7 +201,8 @@ impl Registry {
     pub fn stored(&self, device_id: &str) -> Option<StoredNode> {
         self.nodes.get(device_id).map(|node| StoredNode {
             device_id: device_id.to_string(),
-            firmware_version: node.firmware_version.clone(),
+            build: node.build.clone(),
+            protocol_version: node.protocol_version,
             entities: node.entities.clone(),
             last_seen: node.last_seen_at,
             uptime_seconds: node.uptime_seconds,
@@ -210,7 +216,8 @@ impl Registry {
         self.nodes.insert(
             stored.device_id,
             Node {
-                firmware_version: stored.firmware_version,
+                build: stored.build,
+                protocol_version: stored.protocol_version,
                 entities: stored.entities,
                 online: false,
                 last_seen: now,
@@ -223,11 +230,7 @@ impl Registry {
     }
 
     pub fn handle(&mut self, message: &Message, now: Instant) -> Vec<NodeEvent> {
-        if let Payload::Hello {
-            fw_version,
-            entities,
-        } = &message.payload
-        {
+        if let Payload::Hello { build, entities } = &message.payload {
             // A rebooted node sends `Hello` before its first heartbeat: keep the last
             // uptime so that heartbeat can still reveal the reboot.
             let (uptime_seconds, rssi, heartbeat_interval) = self
@@ -239,7 +242,8 @@ impl Registry {
             self.nodes.insert(
                 message.src.clone(),
                 Node {
-                    firmware_version: fw_version.clone(),
+                    build: build.clone(),
+                    protocol_version: message.version,
                     entities: entities.clone(),
                     online: true,
                     last_seen: now,
@@ -252,7 +256,7 @@ impl Registry {
             self.asked_for_hello.remove(&message.src);
             return vec![NodeEvent::Registered {
                 device_id: message.src.clone(),
-                firmware_version: fw_version.clone(),
+                build: build.clone(),
                 entity_count: entities.len(),
             }];
         }
@@ -342,7 +346,7 @@ mod tests {
 
     fn hello() -> Message {
         message(Payload::Hello {
-            fw_version: "0.3.1".into(),
+            build: Build::new("firmware", "0.3.1", "esp32"),
             entities: vec![],
         })
     }
@@ -370,7 +374,7 @@ mod tests {
         let mut registry = Registry::default();
         registry.handle(
             &message(Payload::Hello {
-                fw_version: "0.7.0".into(),
+                build: Build::new("firmware", "0.7.0", "esp32"),
                 entities: vec![EntityDescriptor {
                     id: 5,
                     channels: vec![
@@ -517,7 +521,7 @@ mod tests {
             event,
             vec![NodeEvent::Registered {
                 device_id: DEVICE.into(),
-                firmware_version: "0.3.1".into(),
+                build: Build::new("firmware", "0.3.1", "esp32"),
                 entity_count: 0,
             }]
         );

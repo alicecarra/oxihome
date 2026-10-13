@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use jiff::{SignedDuration, Timestamp};
-use oxihome_protocol::{Confidence, EntityDescriptor, EventKind, Value};
+use oxihome_protocol::{Build, Confidence, EntityDescriptor, EventKind, Value};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqliteSynchronous};
@@ -252,7 +252,11 @@ impl Storage {
     }
 
     /// Newest first.
-    pub async fn updates(&self, device_id: &str, limit: usize) -> anyhow::Result<Vec<StoredUpdate>> {
+    pub async fn updates(
+        &self,
+        device_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<StoredUpdate>> {
         let mut updates = Vec::new();
         for row in sqlx::query(
             "SELECT device_id, started_at, finished_at, from_version, to_version, outcome, detail
@@ -372,11 +376,14 @@ async fn write_node(
     node: &StoredNode,
 ) -> anyhow::Result<()> {
     sqlx::query(
-        "INSERT INTO nodes (device_id, firmware_version, entities, last_seen, uptime_seconds, rssi,
-                            heartbeat_interval_seconds)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        "INSERT INTO nodes (device_id, build_name, build_version, build_target, protocol_version,
+                            entities, last_seen, uptime_seconds, rssi, heartbeat_interval_seconds)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (device_id) DO UPDATE SET
-             firmware_version = excluded.firmware_version,
+             build_name = excluded.build_name,
+             protocol_version = excluded.protocol_version,
+             build_version = excluded.build_version,
+             build_target = excluded.build_target,
              entities = excluded.entities,
              last_seen = excluded.last_seen,
              uptime_seconds = excluded.uptime_seconds,
@@ -384,7 +391,10 @@ async fn write_node(
              heartbeat_interval_seconds = excluded.heartbeat_interval_seconds",
     )
     .bind(&node.device_id)
-    .bind(&node.firmware_version)
+    .bind(&node.build.name)
+    .bind(&node.build.version)
+    .bind(&node.build.target)
+    .bind(node.protocol_version)
     .bind(serde_json::to_string(&node.entities)?)
     .bind(node.last_seen.as_millisecond())
     .bind(node.uptime_seconds)
@@ -480,7 +490,7 @@ async fn restore(pool: &SqlitePool) -> anyhow::Result<Restored> {
     let mut restored = Restored::default();
 
     for row in sqlx::query(
-        "SELECT device_id, firmware_version, entities, last_seen, uptime_seconds, rssi,
+        "SELECT device_id, build_name, build_version, build_target, protocol_version, entities, last_seen, uptime_seconds, rssi,
                 heartbeat_interval_seconds
          FROM nodes",
     )
@@ -490,7 +500,12 @@ async fn restore(pool: &SqlitePool) -> anyhow::Result<Restored> {
         let entities: Vec<EntityDescriptor> = serde_json::from_str(row.get("entities"))?;
         restored.nodes.push(StoredNode {
             device_id: row.get("device_id"),
-            firmware_version: row.get("firmware_version"),
+            build: Build::new(
+                row.get::<String, _>("build_name"),
+                row.get::<String, _>("build_version"),
+                row.get::<String, _>("build_target"),
+            ),
+            protocol_version: row.get("protocol_version"),
             entities,
             last_seen: Timestamp::from_millisecond(row.get("last_seen"))?,
             uptime_seconds: row.get("uptime_seconds"),
@@ -624,7 +639,8 @@ mod tests {
         assert!(restored.nodes.is_empty());
         storage.write(Write::Node(StoredNode {
             device_id: "esp32-test".into(),
-            firmware_version: "0.9.0".into(),
+            build: Build::new("firmware", "0.9.0", "esp32"),
+            protocol_version: 2,
             entities: Vec::new(),
             last_seen: at,
             uptime_seconds: Some(120),

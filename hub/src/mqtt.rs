@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
+use oxihome_protocol::legacy::{self, ReadError};
 use oxihome_protocol::{Message, Payload};
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use tokio::sync::mpsc;
@@ -16,6 +17,11 @@ pub enum Incoming {
     /// (Re)connected to the broker.
     Connected,
     Message(Message),
+    /// A node speaking a protocol version the hub does not read.
+    OtherProtocol {
+        device_id: String,
+        version: u8,
+    },
 }
 
 pub struct Mqtt {
@@ -51,7 +57,7 @@ impl Mqtt {
                     }
                     Ok(Event::Incoming(Packet::Publish(publish))) => {
                         let text = String::from_utf8_lossy(&publish.payload);
-                        match Message::from_json(&text) {
+                        match legacy::read(&text) {
                             // The broker's ACL ties each topic to its node, but not the `src` field.
                             Ok(message)
                                 if publish.topic != format!("oxihome/{}/up", message.src) =>
@@ -63,6 +69,14 @@ impl Mqtt {
                                 continue;
                             }
                             Ok(message) => Incoming::Message(message),
+                            Err(ReadError::Unsupported { version, src })
+                                if publish.topic == format!("oxihome/{src}/up") =>
+                            {
+                                Incoming::OtherProtocol {
+                                    device_id: src,
+                                    version,
+                                }
+                            }
                             Err(error) => {
                                 println!("invalid message on {}: {error}", publish.topic);
                                 continue;

@@ -203,6 +203,9 @@ async fn main() -> anyhow::Result<()> {
                     dispatch::on_connected(&hub).await?;
                 }
                 Incoming::Message(message) => dispatch::on_message(&hub, &message).await?,
+                Incoming::OtherProtocol { device_id, version } => {
+                    hub.notify_other_protocol(&device_id, version);
+                }
             },
             _ = presence_check.tick() => dispatch::on_presence_check(&hub),
             _ = clock.tick() => dispatch::on_clock_tick(&hub, &mut schedule),

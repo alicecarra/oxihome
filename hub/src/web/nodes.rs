@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use oxihome_protocol::{Value, management};
+use oxihome_protocol::{PROTOCOL_VERSION, Value, management};
 use topcoat::{
     Result,
     context::{Cx, app_context},
@@ -75,7 +75,7 @@ pub async fn node_list(nodes: Vec<NodeOverview>) -> Result<impl View> {
                             sortable_header(column: "node", class: "", "Node")
                             sortable_header(column: "status", class: "", "Status")
                             sortable_header(column: "channels", class: "hidden sm:table-cell", "Channels")
-                            sortable_header(column: "firmware", class: "hidden sm:table-cell", "Firmware")
+                            sortable_header(column: "software", class: "hidden sm:table-cell", "Software")
                             sortable_header(column: "uptime", class: "", "Uptime")
                             sortable_header(column: "signal", class: "hidden sm:table-cell", "Signal")
                         </tr>
@@ -156,22 +156,38 @@ async fn node_row(node: NodeOverview) -> Result<impl View> {
             data-sort-node=(title.to_lowercase())
             data-sort-status=((node.presence as u8).to_string())
             data-sort-channels=(channels_count.to_string())
-            data-sort-firmware=(node.firmware_version.clone().unwrap_or_default())
+            data-sort-software=(node.software.clone().unwrap_or_default())
             data-sort-uptime=(uptime_order.map(|order| order.to_string()).unwrap_or_default())
             data-sort-signal=(node.rssi.map(|rssi| rssi.to_string()).unwrap_or_default())
         >
             <td class="px-4 py-3">
                 <a href=(format!("/nodes/{}", node.device_id)) class="font-medium hover:underline">(title)</a>
+                <span class="ml-2">protocol_badge(version: node.protocol_version)</span>
                 if node.name.is_some() {
                     <p class="text-xs text-muted-foreground">(node.device_id.clone())</p>
                 }
             </td>
             <td class="px-4 py-3">presence_badge(presence: node.presence)</td>
             <td class="hidden px-4 py-3 tabular-nums sm:table-cell" title=(channels_title)>(channels_label)</td>
-            <td class="hidden px-4 py-3 sm:table-cell">(node.firmware_version.unwrap_or_else(|| "—".into()))</td>
+            <td class="hidden px-4 py-3 sm:table-cell">(node.software.unwrap_or_else(|| "—".into()))</td>
             <td class="px-4 py-3 tabular-nums">(uptime.unwrap_or_else(|| "—".into()))</td>
             <td class="hidden px-4 py-3 tabular-nums sm:table-cell">(signal.unwrap_or_else(|| "—".into()))</td>
         </tr>
+    })
+}
+
+/// For a node on an older protocol than the hub's, which the hub still reads (see
+/// `oxihome_protocol::legacy`): it should be updated.
+#[component]
+pub(super) async fn protocol_badge(version: Option<u8>) -> Result<impl View> {
+    Ok(view! {
+        if let Some(version) = version.filter(|version| *version < PROTOCOL_VERSION) {
+            badge(
+                variant: BadgeVariant::Outline,
+                attrs: attributes! { title=(format!("Speaks protocol {version}, the hub {PROTOCOL_VERSION}: update it")) },
+                (format!("protocol {version}"))
+            )
+        }
     })
 }
 
