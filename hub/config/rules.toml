@@ -58,26 +58,31 @@ then = [
 
 [[rules]]
 name = "Any node offline: buzzer alarm"
+enabled = false
 when = { offline = "*" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
 
 [[rules]]
 name = "Pi-hole stopped: buzzer alarm"
+enabled = false
 when = { device = "docker-host", entity = 50, channel = 6, event = "Received", data = "stopped" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
 
 [[rules]]
 name = "Jellyfin stopped: buzzer alarm"
+enabled = false
 when = { device = "docker-host", entity = 51, channel = 6, event = "Received", data = "stopped" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
 
 [[rules]]
 name = "Trilium stopped: buzzer alarm"
+enabled = false
 when = { device = "docker-host", entity = 52, channel = 6, event = "Received", data = "stopped" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
 
 [[rules]]
 name = "Portainer stopped: buzzer alarm"
+enabled = false
 when = { device = "docker-host", entity = 53, channel = 6, event = "Received", data = "stopped" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
 
@@ -88,16 +93,19 @@ then = [{ toggle = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0 } }]
 
 [[rules]]
 name = "Remote key 1 beeps short"
+enabled = false
 when = { remote = "Kit Lafvin", key = "1" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Short" } }]
 
 [[rules]]
 name = "Remote key 2 beeps long"
+enabled = false
 when = { remote = "Kit Lafvin", key = "2" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Long" } }]
 
 [[rules]]
 name = "Remote key 3 sounds the alarm"
+enabled = false
 when = { remote = "Kit Lafvin", key = "3" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
 
@@ -108,6 +116,7 @@ then = [{ toggle = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0 } }]
 
 [[rules]]
 name = "Panel: turn on the LEDs with a beep"
+enabled = false
 when = { panel = "Test board", button = "Turn on" }
 then = [
     { set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = true } },
@@ -127,21 +136,25 @@ then = [
 
 [[rules]]
 name = "Panel: short beep"
+enabled = false
 when = { panel = "Alarm", button = "Short beep" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Short" } }]
 
 [[rules]]
 name = "Panel: long beep"
+enabled = false
 when = { panel = "Alarm", button = "Long beep" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Long" } }]
 
 [[rules]]
 name = "Panel: sound the alarm"
+enabled = false
 when = { panel = "Alarm", button = "Alarm" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
 
 [[rules]]
 name = "Test board hot: beep and warn, daytime only"
+enabled = false
 when = { device = "esp32-08d1f9ca41e4", entity = 3, channel = 0, above = 28 }
 if = [{ from = "08:00", to = "22:00" }]
 then = [
@@ -151,5 +164,6 @@ then = [
 
 [[rules]]
 name = "Outra placa button: beep on the test board"
+enabled = false
 when = { device = "esp32-14335c2e7270", entity = 2, channel = 0, event = "Press" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Short" } }, { notify = { title = "BEEP", message = "beep" } }]

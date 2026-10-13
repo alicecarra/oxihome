@@ -1545,6 +1545,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxihome-network-devices"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "jiff",
+ "oxihome-node",
+ "oxihome-protocol",
+ "serde",
+ "tokio",
+ "toml",
+]
+
+[[package]]
 name = "oxihome-node"
 version = "0.2.0"
 dependencies = [

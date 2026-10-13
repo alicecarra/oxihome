@@ -189,7 +189,7 @@ access:
 docker compose -f infra/compose.yaml up -d
 ```
 
-Each node logs in with its device id as the user name (`esp32-<mac>`, `weather`, `notebook`...);
+Each node logs in with its device id as the user name (`esp32-<mac>`, `weather`, `network-devices`, `notebook`...);
 the hub is `oxihome-hub` and `observer` only reads. The ACL in `infra/mosquitto/acl` (in git: it has
 no secrets) lets a node publish only on `oxihome/<its id>/up` and read only its own `down` and the
 broadcast; only the hub publishes on `down`. The client id is forced to the user name, so a login
@@ -411,8 +411,8 @@ previous configuration stays in use.
   (one on phones), refreshed live; the cards of a row share its height. Each block has a `type`, an optional `title` and a `width` of
   1 to 3 columns (default 1). Types: `nodes` (nodes by presence), `channels` (chosen channels with
   value and controls), `panel` (the buttons of a panel), `value` (one channel's value, large, dimmed
-  while its node is offline), `history` (the node page's chart for one channel, with 1 h, 6 h and 24 h
-  buttons; `range` of `1h`, `6h` or `24h` sets the default, `24h` when missing; the picked range stays
+  while its node is offline), `history` (the node page's chart for one channel, with 15 min, 1 h, 6 h and 24 h
+  buttons; `range` of `15m`, `1h`, `6h` or `24h` sets the default, `24h` when missing; the picked range stays
   in the address, `?range4=6h` for the fifth block, through live updates and reloads), `rules` (the next 5 scheduled runs and the rules whose last run failed,
   with the error) and `events` (the latest node events and notifications, newest first, `limit` 1 to
   50, default 10; IR codes show the key name from `remotes.toml`). Notifications are stored in the
@@ -443,9 +443,9 @@ parameters (the node's value in red when it differs from the desired one). **Nod
 of cards, one per entity, each channel with what it is (type, range and unit, options, access), its
 value or last event and its controls. A number the node measures (a read only `Int` or `Float`,
 such as temperature or humidity) also gets a chart from the database (see "Database"). Buttons next to **Edit names** pick the last
-1 h (default), 6 h or 24 h for every chart of the page; the choice stays in the address
-(`?range=6h`), so live updates, edits and reloads keep it. A chart has 144 steps (25 s, 2.5 min or
-10 min), the line at each step's average and a light band from its minimum
+15 min, 1 h (default), 6 h or 24 h for every chart of the page; the choice stays in the address
+(`?range=6h`), so live updates, edits and reloads keep it. A chart has 144 steps (about 6 s, 25 s, 2.5 min
+or 10 min), the line at each step's average and a light band from its minimum
 to its maximum, with the overall minimum and maximum below. Values are stored only when they change,
 so a step without readings keeps the previous value; the chart starts at the first value known.
 It is inline SVG drawn by the hub (`hub/src/web/chart.rs`), without JavaScript. Each section has its own edit button (**Edit** for the node
@@ -527,6 +527,24 @@ and connect again. The simulator is built this way. The firmware uses only the c
 implements `Device` (entities, LED and parameter state, LED, parameter and buzzer commands) and its
 own MQTT client carries the messages.
 
+`NodeCore::new` takes the node's `Build`, sent in its `Hello`: a short `name` that says what the
+program is (`firmware`, `weather`, `linux-monitor`, `network-devices`, `simulator`), its `version`
+(`major.minor.patch`, from its `Cargo.toml`: raise it when the node changes) and its `target`
+(`esp32` for the firmware, from `MCU`; `Build::native` gives `<os>-<architecture>`, e.g.
+`linux-x86_64`, for the software nodes). The hub shows it as **Software**, e.g.
+`firmware 0.13.0 (esp32)`.
+
+Every message carries `version`, the protocol version (`PROTOCOL_VERSION` in `oxihome-protocol`),
+raised with every change of the wire format that the other side cannot read; it is 2 since the
+`Build`. A node speaks only its own version; the hub reads the current one and the previous one
+(`oxihome_protocol::legacy::read`, which turns the older messages into the current types, e.g. a
+version 1 `Hello` with `fw_version` into a `Build` with target `unknown`). A node on the previous
+version keeps working, can be updated over the air, and shows a **protocol 1** badge on its page,
+in `/nodes` and in the dashboard's nodes block. Older or newer versions are ignored, logged and
+notified once per node ("speaks another protocol"). So a node may lag one version, never two: when
+`PROTOCOL_VERSION` goes up, `legacy` moves up with it, and the hub can be restarted first and the
+nodes updated afterwards.
+
 ```sh
 cargo test -p oxihome-node
 cargo clippy -p oxihome-node --features mqtt
@@ -604,6 +622,37 @@ reports zeros. CPU usage and rates start on the second report. GB are 10^9 bytes
 smaller numbers. The protocol gained the `DataSize`, `DataRate` and `Frequency` quantities and the
 `Gigabyte`, `Megabyte`, `KilobytePerSecond` and `Megahertz` units for it. Plans for more (GPU, sensors, session
 events, actions) are in the Trilium note "Monitor Linux".
+
+## Network devices node
+
+`network-devices/` (`oxihome-network-devices`) is a software node that tells whether devices are
+on the home network (phones, TV, console...), by MAC address. Every 30 s it sends one UDP datagram
+to each address of the subnet, waits 10 s for the kernel to resolve them, and reads
+`/proc/net/arp`: a device counts when its MAC has a complete entry. No root and no extra tools,
+but Linux only, and the machine must be on that network (a laptop that leaves home sees nothing).
+
+```sh
+cp network-devices/network-devices.toml.example network-devices/network-devices.toml   # then list the devices
+chmod 600 network-devices/network-devices.toml
+infra/mosquitto/set-password.sh network-devices   # the password goes in [mqtt] password
+cargo run -p oxihome-network-devices -- network-devices/network-devices.toml
+```
+
+`network-devices/network-devices.toml` stays out of git because it lists the household's devices
+and holds the broker password. Each device has its entity id fixed in the file (0 is reserved), so
+rules survive adding and removing devices. A device goes online as soon as it answers and offline
+only after `offline_after` seconds of silence (`[network]`, overridable per device, at least 60):
+phones turn Wi-Fi off while asleep, so 600 s suits them. Until a device answers, or stays silent
+for that long after the start, its entity has no state. Phones need a fixed MAC on the home
+network (turn off the rotating private address of iOS and Android).
+
+Entities, one per device, all read only: channel 0 online (`Bool`), channel 1 an event with
+`online` or `offline` when that changes (not on the first value), channel 2 the last IPv4 address,
+channel 3 since when (local time, `2026-10-13 09:15`): the moment it came online, or the last time
+it answered once offline. A rule with `event = "Received"` and `data = "offline"` on a phone's
+entity catches it leaving. Entity 100 is the whole network: channel 0 how many devices answered the
+last scan, channel 1 how many of them are not in `[[devices]]`. Those counts have no waiting time,
+so sleeping phones make them go up and down; no MAC of an unknown device leaves the node.
 
 ## Simulator
 

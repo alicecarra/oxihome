@@ -37,6 +37,12 @@ entities.1 = { name = "Now", channels.3 = "Wind", channels.4 = "Raining" }
 entities.2 = { name = "Today", channels.0 = "Maximum", channels.1 = "Minimum", channels.2 = "Chance of rain" }
 entities.3 = { name = "Updated", channels.0 = "At" }
 
+[nodes.network-devices]
+name = "Network devices"
+entities.1 = { name = "Alice S23", channels.0 = "Online", channels.1 = "Change", channels.2 = "Address", channels.3 = "Since" }
+entities.2 = { name = "tablet", channels.0 = "Online", channels.1 = "Change", channels.2 = "Address", channels.3 = "Since" }
+entities.100 = { name = "Network", channels.0 = "Answering", channels.1 = "Unknown" }
+
 [nodes.notebook]
 name = "Notebook"
 entities.1 = { name = "CPU", channels.0 = "Usage", channels.1 = "Load 1 min", channels.2 = "Load 5 min", channels.3 = "Load 15 min" }

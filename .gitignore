@@ -4,6 +4,7 @@
 /tmp
 /weather/weather.toml
 /linux-monitor/linux-monitor.toml
+/network-devices/network-devices.toml
 /hub/secrets.toml
 /simulator/secrets.toml
 /infra/mosquitto/passwd

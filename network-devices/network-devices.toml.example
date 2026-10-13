@@ -1,0 +1,31 @@
+# Copy to network-devices.toml (kept out of git: it lists the household's devices and holds the
+# broker password).
+
+[mqtt]
+host = "localhost"
+port = 1883
+password = "the node's broker password"
+
+[node]
+id = "network-devices"
+
+# The machine running the node must be on this network (Wi-Fi or cable), from /22 to /30.
+# offline_after: seconds without answering before a device counts as offline; phones sleep with
+# Wi-Fi off for minutes.
+[network]
+subnet = "192.168.15.0/24"
+offline_after = 600
+
+# Entities are fixed here so rules keep working when devices are added or removed; 0 and 100
+# (the whole network) are reserved.
+# Phones need a fixed MAC on this network: turn off the rotating private address.
+[[devices]]
+entity = 1
+name = "Alice's phone"
+mac = "aa:bb:cc:dd:ee:01"
+
+[[devices]]
+entity = 2
+name = "Living room TV"
+mac = "aa:bb:cc:dd:ee:02"
+offline_after = 120
