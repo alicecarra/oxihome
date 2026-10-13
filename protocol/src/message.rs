@@ -2,6 +2,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::Payload;
 
+/// Raised with every change of the wire format that older nodes or hubs cannot read.
+pub const PROTOCOL_VERSION: u8 = 2;
+
+/// The part of a message every protocol version keeps, to tell who speaks another version.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Envelope {
+    pub version: u8,
+    pub src: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     pub version: u8,
@@ -24,10 +34,10 @@ pub struct Message {
 }
 
 impl Message {
-    /// Version 1, direct delivery (`ttl` 1), broadcast, no reply, timestamp or auth.
+    /// `PROTOCOL_VERSION`, direct delivery (`ttl` 1), broadcast, no reply, timestamp or auth.
     pub fn new(src: impl Into<String>, msg_id: u32, payload: Payload) -> Self {
         Self {
-            version: 1,
+            version: PROTOCOL_VERSION,
             msg_id,
             src: src.into(),
             dst: None,
@@ -58,6 +68,11 @@ impl Message {
     pub fn from_json(s: &str) -> serde_json::Result<Self> {
         serde_json::from_str(s)
     }
+
+    /// Reads only `version` and `src`, which any version can.
+    pub fn envelope(s: &str) -> serde_json::Result<Envelope> {
+        serde_json::from_str(s)
+    }
 }
 
 #[cfg(test)]
@@ -75,7 +90,7 @@ mod tests {
     #[test]
     fn constructor_defaults_and_builders() {
         let msg = Message::new("hub", 7, Payload::Ack { ok: true });
-        assert_eq!(msg.version, 1);
+        assert_eq!(msg.version, PROTOCOL_VERSION);
         assert_eq!(msg.ttl, 1);
         assert_eq!((msg.dst.clone(), msg.reply_to), (None, None));
         assert_eq!((msg.timestamp, msg.auth.clone()), (None, None));
@@ -86,9 +101,17 @@ mod tests {
     }
 
     #[test]
+    fn envelope_reads_an_older_message() {
+        let json = r#"{"version":1,"msg_id":7,"src":"esp32-a","dst":null,"ttl":1,"reply_to":null,"kind":"Hello","payload":{"fw_version":"0.1.0","entities":[]}}"#;
+        assert!(Message::from_json(json).is_err());
+        let envelope = Message::envelope(json).unwrap();
+        assert_eq!((envelope.version, envelope.src.as_str()), (1, "esp32-a"));
+    }
+
+    #[test]
     fn hello_with_descriptors() {
         roundtrip(Payload::Hello {
-            fw_version: "0.1.0".into(),
+            build: Build::new("firmware", "0.1.0", "esp32"),
             entities: vec![
                 EntityDescriptor {
                     id: 1,
@@ -195,7 +218,7 @@ mod tests {
 
     #[test]
     fn optional_fields_can_be_omitted() {
-        let json = r#"{"version":1,"msg_id":42,"src":"esp32-a1b2c3","dst":null,"ttl":1,"reply_to":null,"kind":"Ack","payload":{"ok":true}}"#;
+        let json = r#"{"version":2,"msg_id":42,"src":"esp32-a1b2c3","dst":null,"ttl":1,"reply_to":null,"kind":"Ack","payload":{"ok":true}}"#;
         let msg = Message::from_json(json).unwrap();
         assert_eq!(msg.timestamp, None);
         assert_eq!(msg.auth, None);
