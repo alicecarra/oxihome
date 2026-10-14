@@ -1,0 +1,59 @@
+# Production stack on docker-host, copied to ~/oxihome/compose.yaml there (see docs/setup.md, Production).
+name: oxihome
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: oxihome-mosquitto
+    restart: unless-stopped
+    <<: *logging
+    ports:
+      - "1883:1883"
+    volumes:
+      # The whole directory: set-password.sh replaces passwd, which a file mount would not see.
+      - ./mosquitto:/mosquitto/config:ro
+
+  hub:
+    image: oxihome-hub:current
+    container_name: oxihome-hub
+    restart: unless-stopped
+    <<: *logging
+    user: "1000:1000"
+    command: ["hub.toml"]
+    depends_on: [mosquitto]
+    ports:
+      - "8090:8090"
+      - "8081:8081"
+    volumes:
+      - ./hub:/data
+
+  weather:
+    image: oxihome-weather:current
+    container_name: oxihome-weather
+    restart: unless-stopped
+    <<: *logging
+    user: "1000:1000"
+    command: ["weather.toml"]
+    depends_on: [mosquitto]
+    volumes:
+      - ./weather:/data:ro
+
+  network-devices:
+    image: oxihome-network-devices:current
+    container_name: oxihome-network-devices
+    restart: unless-stopped
+    <<: *logging
+    user: "1000:1000"
+    command: ["network-devices.toml"]
+    depends_on: [mosquitto]
+    # It reads the host's ARP table, so it needs the host's network; the broker is on localhost.
+    network_mode: host
+    volumes:
+      - ./network-devices:/data:ro

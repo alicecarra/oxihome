@@ -125,6 +125,12 @@ sudo firewall-cmd --zone=public --add-rich-rule='rule family="ipv4" source addre
 Add `--permanent` and run `sudo firewall-cmd --reload` to keep it. Without the rule, the board
 reports `OTA: ESP_ERR_HTTP_CONNECT` after about 18 s and stays on its version.
 
+The production hub on docker-host serves the images itself (`public_url` on 192.168.15.100) and
+needs none of this: Docker publishes 8081 there. Without sudo on the notebook, a relay in Docker
+gets past firewalld the same way (`docker run --rm -d --name ota-relay --add-host
+host.docker.internal:host-gateway -p 8082:8082 alpine/socat TCP-LISTEN:8082,fork,reuseaddr
+TCP:host.docker.internal:8081`, with `public_url` on port 8082).
+
 That server is separate from the web interface, which stays on `127.0.0.1`, and answers only
 `GET /ota/<token>`: a random link that works once and for 5 minutes. When an online node that
 declares the `Ota` channel has an image newer than its firmware, its page shows **Update to x.y.z**.
@@ -717,3 +723,99 @@ RUSTFLAGS="-C link-arg=-fuse-ld=bfd" cargo build -p oxihome-hub
 ```
 
 Changing `RUSTFLAGS` rebuilds every dependency once.
+
+## Production
+
+The production stack runs in Docker on `docker-host` (192.168.15.100, reserved in the router's
+DHCP; `ssh docker-host` over Tailscale), from `~/oxihome` there. `infra/production/compose.yaml` is
+its compose file; secrets and the home's configuration live only on the server. The plan and its
+decisions are in the Trilium note "Produção".
+
+### Broker
+
+The broker's configuration is the same as the development one (`infra/mosquitto`). First install,
+from the repository root on the notebook:
+
+```sh
+ssh docker-host 'mkdir -p ~/oxihome/mosquitto && chmod 700 ~/oxihome'
+scp infra/production/compose.yaml docker-host:oxihome/compose.yaml
+scp -p infra/mosquitto/{mosquitto.conf,acl,set-password.sh,watch.sh,observer-password} docker-host:oxihome/mosquitto/
+# passwd belongs to the container's mosquitto user (uid 1883): read and write it through the image.
+docker run --rm -v "$PWD/infra/mosquitto:/w:ro" eclipse-mosquitto:2 cat /w/passwd \
+  | ssh docker-host 'docker run --rm -i -v ~/oxihome/mosquitto:/w eclipse-mosquitto:2 sh -c "cat > /w/passwd && chown mosquitto:mosquitto /w/passwd && chmod 600 /w/passwd"'
+ssh docker-host 'cd ~/oxihome && docker compose up -d'
+```
+
+The container keeps the name `oxihome-mosquitto`, so the scripts work on the server as they do
+locally: `ssh docker-host oxihome/mosquitto/set-password.sh <device id>` and
+`ssh -t docker-host oxihome/mosquitto/watch.sh`. Users created there exist only on the server's broker.
+
+The broker of `infra/compose.yaml` on the notebook is no longer used day to day (every board and
+node points to docker-host); it stays for working offline.
+
+### Images
+
+`infra/production/Dockerfile` builds one image per workspace binary (`--build-arg BINARY=hub`
+builds `oxihome-hub`), on Debian trixie with `tzdata` for the hub's `[time] zone`. Images are built
+on the notebook (the server is slower) and sent over ssh; there is no registry:
+
+```sh
+infra/production/build-image.sh hub    # prints the tag: oxihome-hub:<version>-<commit>[-dirty]
+```
+
+On the server, `oxihome-<binary>:current` is the image the compose file runs; the versioned tags
+stay there, so going back is `docker tag oxihome-hub:<old tag> oxihome-hub:current` and
+`docker compose up -d hub`.
+
+### Deploy
+
+```sh
+infra/production/deploy.sh weather           # build, send, restart
+infra/production/deploy.sh hub
+infra/production/deploy.sh hub --no-build    # restart with the image already there
+```
+
+For the hub it also backs up the database into `~/oxihome/hub/backups` (the last 10) and replaces
+`~/oxihome/hub/firmware` with `hub/firmware` (the over-the-air images). It refuses to run while a
+hub runs on the notebook. The scripts copy with rsync, needed on both machines (on the server:
+`sudo apt install rsync`).
+
+Files on the server, each made once by hand: `~/oxihome/hub/hub.toml` (a copy of
+`infra/production/hub.toml`: broker `mosquitto`, web interface on port 8090 since the Trilium has
+8080, images on 8081), `~/oxihome/hub/secrets.toml` (a copy of `hub/secrets.toml`) and
+`~/oxihome/weather/weather.toml` (the local one with `host = "mosquitto"`) and
+`~/oxihome/network-devices/network-devices.toml` (the local one with `host = "localhost"`: it runs
+on the host's network to read its ARP table). The web interface is
+at <http://docker-host:8090>. The containers run as uid 1000, the owner of `~/oxihome`.
+
+```sh
+ssh docker-host 'mkdir -p ~/oxihome/hub/config ~/oxihome/hub/firmware ~/oxihome/weather && chmod 700 ~/oxihome/hub ~/oxihome/weather'
+scp infra/production/hub.toml docker-host:oxihome/hub/hub.toml
+scp -p hub/secrets.toml docker-host:oxihome/hub/secrets.toml
+sed 's/^host = "192.168.15.100"/host = "mosquitto"/' weather/weather.toml | ssh docker-host 'umask 077; cat > ~/oxihome/weather/weather.toml'
+ssh docker-host 'mkdir -p ~/oxihome/network-devices && chmod 700 ~/oxihome/network-devices'
+sed 's/^host = "192.168.15.100"/host = "localhost"/' network-devices/network-devices.toml | ssh docker-host 'umask 077; cat > ~/oxihome/network-devices/network-devices.toml'
+```
+
+The first hub deploy took the notebook's configuration and database by faking a dev session
+(`ssh docker-host touch oxihome/hub/dev-session` before `deploy.sh hub`).
+
+### Working on the hub
+
+Only one hub may run per broker, so the notebook's hub takes the production one's place:
+
+```sh
+infra/production/dev-hub.sh
+```
+
+It stops the hub on the server, brings its configuration into `hub/config` (so `git diff` shows what
+changed in production; it refuses to run with uncommitted changes there) and its database into
+`hub/oxihome.sqlite`, and runs `cargo run -p oxihome-hub -- hub/hub.toml`, whose broker is
+docker-host's. Stop it with Ctrl+C and run it again as often as needed: only the first run fetches.
+`deploy.sh hub` ends the session: it sends the configuration and the database back and starts the
+production hub with the new image. `deploy.sh hub --no-build` returns without a new image, and
+`--discard` drops the session's configuration and database instead of sending them. While the
+session is open the house depends on the notebook's hub.
+
+The database goes back already migrated by the session's hub, so end a session that ran a newer
+version with a deploy of that version, not `--no-build`.

@@ -1,0 +1,29 @@
+# The production hub's configuration, copied to ~/oxihome/hub/hub.toml on docker-host. Paths are
+# relative to that directory, mounted at /data in the container.
+[mqtt]
+host = "mosquitto"
+port = 1883
+secrets = "secrets.toml"
+
+[config]
+dir = "config"
+
+[http]
+host = "0.0.0.0"
+port = 8090
+allowed_hosts = ["docker-host", "192.168.15.100", "100.94.117.37"]
+
+[presence]
+missed_heartbeats = 3
+
+[time]
+zone = "America/Sao_Paulo"
+
+[storage]
+path = "oxihome.sqlite"
+retention_days = 7
+
+[ota]
+listen = "0.0.0.0:8081"
+public_url = "http://192.168.15.100:8081"
+images = "firmware"
