@@ -11,13 +11,14 @@ pub struct HostLayer {
 }
 
 impl HostLayer {
-    /// `localhost` and the loopback addresses, plus the address the hub listens on.
-    pub fn new(listen_host: &str) -> Self {
-        let mut allowed: Vec<String> = ["localhost", "127.0.0.1", "[::1]"]
+    /// `localhost` and the loopback addresses, plus the address the hub listens on and the
+    /// configured extra names.
+    pub fn new(listen_host: &str, allowed_hosts: &[String]) -> Self {
+        let allowed = ["localhost", "127.0.0.1", "[::1]", listen_host]
             .into_iter()
-            .map(String::from)
+            .chain(allowed_hosts.iter().map(String::as_str))
+            .map(str::to_ascii_lowercase)
             .collect();
-        allowed.push(listen_host.to_ascii_lowercase());
         Self { allowed }
     }
 
@@ -55,13 +56,14 @@ mod tests {
 
     #[test]
     fn allows_only_the_hub_names() {
-        let layer = HostLayer::new("192.168.15.10");
+        let layer = HostLayer::new("192.168.15.10", &["docker-host".to_string()]);
         for host in [
             "localhost:8080",
             "127.0.0.1:8080",
             "[::1]:8080",
             "LOCALHOST",
             "192.168.15.10:8080",
+            "Docker-Host:8090",
         ] {
             assert!(layer.allows(host), "{host}");
         }

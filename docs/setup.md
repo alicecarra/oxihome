@@ -236,9 +236,11 @@ node's heartbeat interval without messages; changing it needs a hub restart) and
 cargo run -p oxihome-hub -- hub/hub.toml
 ```
 
-Requests must name the hub in `Host` (`localhost`, `127.0.0.1`, `[::1]` or the `[http] host`),
-otherwise 403: a site pointing its own domain at 127.0.0.1 (DNS rebinding) would otherwise pass as
-same-origin. Topcoat already rejects POSTs from other sites (`Sec-Fetch-Site`/`Origin`).
+Requests must name the hub in `Host` (`localhost`, `127.0.0.1`, `[::1]`, the `[http] host` or one
+of `[http] allowed_hosts`), otherwise 403. A hub listening on `0.0.0.0` lists the names it is
+reached by, e.g. `allowed_hosts = ["docker-host", "192.168.15.100"]`. Without the check, a site
+pointing its own domain at 127.0.0.1 (DNS rebinding) would pass as same-origin. Topcoat already
+rejects POSTs from other sites (`Sec-Fetch-Site`/`Origin`).
 
 Only one hub can run per broker: both use the MQTT client id `oxihome-hub` and keep disconnecting
 each other.
