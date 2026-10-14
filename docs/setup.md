@@ -85,7 +85,7 @@ cp firmware/cfg.toml.example firmware/cfg.toml
 chmod 600 firmware/cfg.toml
 ```
 
-`mqtt_url` must use the LAN address of the machine running the broker, e.g. `mqtt://192.168.15.10:1883`.
+`mqtt_url` must use the LAN address of the machine running the broker: `mqtt://192.168.15.100:1883` (docker-host).
 `mqtt_password` is the board's own password; its user name is its device id (`esp32-<mac>`, printed
 by `espflash` as the MAC address), so each board needs its own build. Empty connects anonymously.
 `peripherals` lists what is wired to the board besides the onboard LED and BOOT button (`climate`,
