@@ -94,11 +94,14 @@ impl IrReceiver {
         }
         if let Some((code, toggle)) = rc6(&merged) {
             let now = Instant::now();
-            let held = self.last_rc6.as_ref().is_some_and(|(last, last_toggle, at)| {
-                *last == code
-                    && *last_toggle == toggle
-                    && now.duration_since(*at) <= RC6_REPEAT_WINDOW
-            });
+            let held = self
+                .last_rc6
+                .as_ref()
+                .is_some_and(|(last, last_toggle, at)| {
+                    *last == code
+                        && *last_toggle == toggle
+                        && now.duration_since(*at) <= RC6_REPEAT_WINDOW
+                });
             self.last_rc6 = Some((code.clone(), toggle, now));
             return Some(if held { format!("{code} repeat") } else { code });
         }
@@ -268,7 +271,8 @@ fn manchester(halves: &[bool], one: [bool; 2]) -> Option<Vec<bool>> {
 }
 
 fn byte(bits: &[bool]) -> u8 {
-    bits.iter().fold(0, |value, bit| value << 1 | u8::from(*bit))
+    bits.iter()
+        .fold(0, |value, bit| value << 1 | u8::from(*bit))
 }
 
 /// Philips RC6 mode 0 (TVs): a 2.66 ms header mark and 0.89 ms space, then Manchester bits of

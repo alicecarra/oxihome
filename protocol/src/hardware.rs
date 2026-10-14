@@ -40,6 +40,8 @@ pub enum Driver {
     },
     Buzzer,
     IrReceiver,
+    /// IR LED behind a transistor.
+    IrTransmitter,
     Potentiometer {
         /// Smaller changes, in percent, are ADC noise and not reported.
         #[serde(default = "default_minimum_change")]
@@ -70,6 +72,7 @@ impl Driver {
             Driver::Dht11 { .. } => "dht11",
             Driver::Buzzer => "buzzer",
             Driver::IrReceiver => "ir_receiver",
+            Driver::IrTransmitter => "ir_transmitter",
             Driver::Potentiometer { .. } => "potentiometer",
         }
     }
@@ -77,7 +80,7 @@ impl Driver {
     fn drives_pin(&self) -> bool {
         matches!(
             self,
-            Driver::Output { .. } | Driver::Dht11 { .. } | Driver::Buzzer
+            Driver::Output { .. } | Driver::Dht11 { .. } | Driver::Buzzer | Driver::IrTransmitter
         )
     }
 }
@@ -447,6 +450,10 @@ mod tests {
             vec![]
         );
         assert_eq!(check(36, Driver::IrReceiver), vec![]);
+        assert_eq!(
+            check(36, Driver::IrTransmitter),
+            vec![HardwareProblem::InputOnlyPin { entity: 1, pin: 36 }]
+        );
         assert_eq!(
             check(25, Driver::Potentiometer { minimum_change: 2 }),
             vec![HardwareProblem::NotAnalog { entity: 1, pin: 25 }]

@@ -9,6 +9,7 @@ use crate::button::Button;
 use crate::buzzer::Buzzer;
 use crate::climate::Climate;
 use crate::ir::IrReceiver;
+use crate::ir_transmitter::IrTransmitter;
 use crate::potentiometer::Potentiometer;
 
 pub const POTENTIOMETER_READ_INTERVAL: Duration = Duration::from_millis(100);
@@ -34,6 +35,7 @@ pub enum Peripheral {
     },
     Buzzer(Buzzer),
     IrReceiver(IrReceiver),
+    IrTransmitter(IrTransmitter),
     Potentiometer {
         potentiometer: Potentiometer,
         last_read: Instant,
@@ -102,6 +104,7 @@ fn mount_one(
         },
         Driver::Buzzer => Peripheral::Buzzer(Buzzer::new(PinDriver::output(pin())?)?),
         Driver::IrReceiver => Peripheral::IrReceiver(IrReceiver::new(pin())?),
+        Driver::IrTransmitter => Peripheral::IrTransmitter(IrTransmitter::new(pin())?),
         Driver::Potentiometer { minimum_change } => {
             let adc = match (*shared_adc, adc.take()) {
                 (Some(driver), _) => driver,

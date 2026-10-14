@@ -121,6 +121,7 @@ impl<T: Transport> Node<T> {
                     }
                 }
                 Peripheral::Buzzer(buzzer) => buzzer.poll()?,
+                Peripheral::IrTransmitter(_) => {}
                 Peripheral::IrReceiver(receiver) => {
                     if let Some(code) = receiver.poll() {
                         log::info!("IR: {code}");
@@ -326,9 +327,10 @@ impl Device for Board {
                 Peripheral::Potentiometer { potentiometer, .. } => potentiometer
                     .percent()
                     .map(|percent| vec![confirmed(MAIN_CHANNEL, Value::Int(percent.into()))]),
-                Peripheral::Button { .. } | Peripheral::Buzzer(_) | Peripheral::IrReceiver(_) => {
-                    None
-                }
+                Peripheral::Button { .. }
+                | Peripheral::Buzzer(_)
+                | Peripheral::IrReceiver(_)
+                | Peripheral::IrTransmitter(_) => None,
             },
         }
     }
@@ -378,6 +380,15 @@ impl Device for Board {
                     Ok(_) => Ok(()),
                     Err(error) => Err(internal("buzzer", &error)),
                 },
+                (
+                    Some(Peripheral::IrTransmitter(transmitter)),
+                    CommandOp::Invoke(Some(Value::Text(code))),
+                ) => {
+                    log::info!("IR out: {code}");
+                    transmitter
+                        .send(code)
+                        .map_err(|reason| Rejection::new(ErrorCode::InvalidValue, reason))
+                }
                 _ => Err(unsupported(entity, channel, op)),
             },
         }
@@ -440,6 +451,13 @@ fn descriptor(id: u8, peripheral: &Peripheral) -> EntityDescriptor {
         Peripheral::IrReceiver(_) => vec![channel(
             MAIN_CHANNEL,
             Access::Event,
+            Some(ValueType::Text {
+                max_length: ir::MAX_CODE_LENGTH,
+            }),
+        )],
+        Peripheral::IrTransmitter(_) => vec![channel(
+            MAIN_CHANNEL,
+            Access::Trigger,
             Some(ValueType::Text {
                 max_length: ir::MAX_CODE_LENGTH,
             }),

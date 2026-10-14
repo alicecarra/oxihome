@@ -3,6 +3,7 @@ mod buzzer;
 mod climate;
 mod config;
 mod ir;
+mod ir_transmitter;
 mod node;
 mod ota;
 mod peripheral;
