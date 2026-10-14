@@ -322,9 +322,9 @@ previous configuration stays in use.
   - an event of a channel: `when = { device = "...", entity = 2, channel = 0, event = "Press" }`;
     `data = "NEC 00 52"` also requires the event's text to be exactly that (a held key's
     `NEC 00 52 repeat` does not match);
-  - a button of a panel in `panels.toml`, pressed on the `/panel` page:
-    `when = { panel = "Test board", button = "Turn on" }` (a button can run several rules; an unknown
-    panel or button is an error when the configuration loads);
+  - a button, pressed on a `buttons` block of the dashboard or with "Press" on `/rules`:
+    `when = { button = "Turn on" }` (the text is the button's label; two rules with the same button
+    are an error when the configuration loads);
   - a key of a remote named in `remotes.toml`, from any IR receiver:
     `when = { remote = "Kit Lafvin", key = "0" }` (repeats do not match; an unknown key is an
     error when the configuration loads);
@@ -385,16 +385,6 @@ previous configuration stays in use.
   then = [{ set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = true } }]
   ```
 
-- `panels.toml`: panels of buttons for the `/panel` page, in file order. Each button shows the
-  rules it runs ("no rule yet" and disabled when none is enabled). Panel names, and button names
-  within a panel, are unique.
-
-  ```toml
-  [[panels]]
-  name = "Test board"
-  buttons = ["Turn on", "Turn off"]
-  ```
-
 - `remotes.toml`: infrared remotes and the codes of their keys. The `/remotes` page lists them and
   has a "Learn" card with the last codes received (not repeats nor `raw` signals): name a remote and
   a key and the hub adds it to the file, keeping its comments. The remote field starts with the remote
@@ -410,7 +400,7 @@ previous configuration stays in use.
 - `dashboard.toml`: the home page `/`, a list of blocks in file order on a grid of three columns
   (one on phones), refreshed live; the cards of a row share its height. Each block has a `type`, an optional `title` and a `width` of
   1 to 3 columns (default 1). Types: `nodes` (nodes by presence), `channels` (chosen channels with
-  value and controls), `panel` (the buttons of a panel), `value` (one channel's value, large, dimmed
+  value and controls), `buttons` (buttons of rules by name, `buttons = ["Turn on", "Turn off"]`; a button of a disabled rule is greyed out), `value` (one channel's value, large, dimmed
   while its node is offline), `history` (the node page's chart for one channel, with 15 min, 1 h, 6 h and 24 h
   buttons; `range` of `15m`, `1h`, `6h` or `24h` sets the default, `24h` when missing; the picked range stays
   in the address, `?range4=6h` for the fifth block, through live updates and reloads), `rules` (the next 5 scheduled runs and the rules whose last run failed,
@@ -458,7 +448,7 @@ a `Hello` (none in the database either) shows as unknown. At the bottom, **Rules
 that run on something from the node (an event or value of one of its channels, the node going
 offline, `offline = "*"` included), the channels or presence their conditions check and the channels they act on; each name links to the rule's card
 on `/rules`, which is highlighted. A channel used by rules shows a "N rules" mark (their names on
-hover) that jumps there. Remote keys, panel buttons and schedules are not tied to a node, so those
+hover) that jumps there. Remote keys, buttons and schedules are not tied to a node, so those
 rules only show through their actions. The pages set the mobile viewport, so they fit a
 phone screen.
 

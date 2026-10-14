@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use anyhow::bail;
 use serde::Deserialize;
 
-use super::panels::Panels;
+use super::rules::Rules;
 
 /// The home page, from `dashboard.toml`: blocks in file order on a grid of three columns. Only
 /// the first dashboard is shown for now.
@@ -22,8 +22,8 @@ use super::panels::Panels;
 /// channels = [{ device = "weather", entity = 1, channel = 0 }]
 ///
 /// [[dashboards.blocks]]
-/// type = "panel"
-/// panel = "Test board"
+/// type = "buttons"
+/// buttons = ["Good night"]
 ///
 /// [[dashboards.blocks]]
 /// type = "history"
@@ -57,8 +57,9 @@ pub struct Block {
     /// `channels` blocks only.
     #[serde(default)]
     pub channels: Vec<ChannelReference>,
-    /// `panel` blocks only: a panel from `panels.toml`.
-    pub panel: Option<String>,
+    /// `buttons` blocks only: buttons of rules, `when = { button = "..." }`.
+    #[serde(default)]
+    pub buttons: Vec<String>,
     /// `value` and `history` blocks only.
     pub channel: Option<ChannelReference>,
     /// `history` blocks only: `15m`, `1h`, `6h` or `24h` (default).
@@ -78,8 +79,8 @@ pub enum BlockKind {
     Nodes,
     /// Chosen channels, with value and controls.
     Channels,
-    /// The buttons of a panel.
-    Panel,
+    /// Buttons that run their rules.
+    Buttons,
     /// One channel's value, large.
     Value,
     /// A chart of one channel.
@@ -107,7 +108,7 @@ impl BlockKind {
         match self {
             BlockKind::Nodes => "nodes",
             BlockKind::Channels => "channels",
-            BlockKind::Panel => "panel",
+            BlockKind::Buttons => "buttons",
             BlockKind::Value => "value",
             BlockKind::History => "history",
             BlockKind::Rules => "rules",
@@ -121,7 +122,7 @@ impl Dashboards {
         self.dashboards.first()
     }
 
-    pub fn validate(&self, panels: &Panels) -> anyhow::Result<()> {
+    pub fn validate(&self, rules: &Rules) -> anyhow::Result<()> {
         let mut names = HashSet::new();
         for dashboard in &self.dashboards {
             if !names.insert(&dashboard.name) {
@@ -142,19 +143,24 @@ impl Dashboards {
                         bail!("{place}: a channels block needs channels")
                     }
                     BlockKind::Channels => {}
-                    BlockKind::Panel => match &block.panel {
-                        None => bail!("{place}: a panel block needs panel"),
-                        Some(panel) if !panels.all().iter().any(|known| &known.name == panel) => {
-                            bail!("{place}: no panel \"{panel}\" in panels.toml")
+                    BlockKind::Buttons if block.buttons.is_empty() => {
+                        bail!("{place}: a buttons block needs buttons")
+                    }
+                    BlockKind::Buttons => {
+                        if let Some(button) = block
+                            .buttons
+                            .iter()
+                            .find(|button| rules.button(button).is_none())
+                        {
+                            bail!("{place}: no rule has the button \"{button}\"")
                         }
-                        Some(_) => {}
-                    },
+                    }
                 }
                 if block.kind != BlockKind::Channels && !block.channels.is_empty() {
                     bail!("{place}: only a channels block has channels");
                 }
-                if block.kind != BlockKind::Panel && block.panel.is_some() {
-                    bail!("{place}: only a panel block has panel");
+                if block.kind != BlockKind::Buttons && !block.buttons.is_empty() {
+                    bail!("{place}: only a buttons block has buttons");
                 }
                 if !matches!(block.kind, BlockKind::Value | BlockKind::History)
                     && block.channel.is_some()
@@ -203,8 +209,8 @@ mod tests {
         channels = [{ device = "weather", entity = 1, channel = 0 }]
 
         [[dashboards.blocks]]
-        type = "panel"
-        panel = "Test board"
+        type = "buttons"
+        buttons = ["Good night"]
 
         [[dashboards.blocks]]
         type = "value"
@@ -223,19 +229,20 @@ mod tests {
         limit = 5
     "#;
 
-    fn panels() -> Panels {
-        toml::from_str("[[panels]]\nname = \"Test board\"").unwrap()
+    fn rules() -> Rules {
+        toml::from_str("[[rules]]\nname = \"Lights off\"\nwhen = { button = \"Good night\" }\nthen = []")
+            .unwrap()
     }
 
     fn error(text: &str) -> String {
         let dashboards: Dashboards = toml::from_str(text).unwrap();
-        dashboards.validate(&panels()).unwrap_err().to_string()
+        dashboards.validate(&rules()).unwrap_err().to_string()
     }
 
     #[test]
     fn blocks_keep_the_file_order() {
         let dashboards: Dashboards = toml::from_str(EXAMPLE).unwrap();
-        assert!(dashboards.validate(&panels()).is_ok());
+        assert!(dashboards.validate(&rules()).is_ok());
         let blocks = &dashboards.first().unwrap().blocks;
         let kinds: Vec<BlockKind> = blocks.iter().map(|block| block.kind).collect();
         assert_eq!(
@@ -243,7 +250,7 @@ mod tests {
             [
                 BlockKind::Nodes,
                 BlockKind::Channels,
-                BlockKind::Panel,
+                BlockKind::Buttons,
                 BlockKind::Value,
                 BlockKind::History,
                 BlockKind::Rules,
@@ -269,9 +276,9 @@ mod tests {
         let block = |fields: &str| format!("[[dashboards]]\nname = \"Home\"\n[[dashboards.blocks]]\n{fields}");
         assert!(error(&block("type = \"nodes\"\nwidth = 4")).contains("width"));
         assert!(error(&block("type = \"channels\"")).contains("needs channels"));
-        assert!(error(&block("type = \"panel\"")).contains("needs panel"));
-        assert!(error(&block("type = \"panel\"\npanel = \"Kitchen\"")).contains("no panel"));
-        assert!(error(&block("type = \"nodes\"\npanel = \"Test board\"")).contains("only a panel"));
+        assert!(error(&block("type = \"buttons\"")).contains("needs buttons"));
+        assert!(error(&block("type = \"buttons\"\nbuttons = [\"Alarm\"]")).contains("no rule has"));
+        assert!(error(&block("type = \"nodes\"\nbuttons = [\"Good night\"]")).contains("only a buttons"));
         let channel = "channel = { device = \"weather\", entity = 1, channel = 0 }";
         assert!(error(&block("type = \"value\"")).contains("value block needs channel"));
         assert!(error(&block("type = \"history\"")).contains("history block needs channel"));

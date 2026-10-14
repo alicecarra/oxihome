@@ -29,34 +29,6 @@ then = [
 ]
 
 [[rules]]
-name = "Test board LED blinks: on at even minutes"
-when = { cron = "*/2 * * * *" }
-then = [
-    { set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = true } },
-]
-
-[[rules]]
-name = "Test board LED blinks: off at odd minutes"
-when = { cron = "1-59/2 * * * *" }
-then = [
-    { set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = false } },
-]
-
-[[rules]]
-name = "Living room hot: external LED on"
-when = { device = "sim-living-room", entity = 3, channel = 0, above = 28 }
-then = [
-    { set = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0, value = true } },
-]
-
-[[rules]]
-name = "Living room cooled down: external LED off"
-when = { device = "sim-living-room", entity = 3, channel = 0, below = 27 }
-then = [
-    { set = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0, value = false } },
-]
-
-[[rules]]
 name = "Any node offline: buzzer alarm"
 when = { offline = "*" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
@@ -91,19 +63,16 @@ then = [{ toggle = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0 } }]
 
 [[rules]]
 name = "Remote key 1 beeps short"
-enabled = false
 when = { remote = "Kit Lafvin", key = "1" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Short" } }]
 
 [[rules]]
 name = "Remote key 2 beeps long"
-enabled = false
 when = { remote = "Kit Lafvin", key = "2" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Long" } }]
 
 [[rules]]
 name = "Remote key 3 sounds the alarm"
-enabled = false
 when = { remote = "Kit Lafvin", key = "3" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
 
@@ -113,9 +82,8 @@ when = { remote = "Receiver", key = "power" }
 then = [{ toggle = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0 } }]
 
 [[rules]]
-name = "Panel: turn on the LEDs with a beep"
-enabled = false
-when = { panel = "Test board", button = "Turn on" }
+name = "Turn on the LEDs with a beep"
+when = { button = "Turn on" }
 then = [
     { set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = true } },
     { set = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0, value = true } },
@@ -123,32 +91,12 @@ then = [
 ]
 
 [[rules]]
-name = "Panel: turn off every light"
-when = { panel = "Test board", button = "Turn off" }
+name = "Turn off every light"
+when = { button = "Turn off" }
 then = [
     { set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = false } },
     { set = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0, value = false } },
-    { set = { device = "sim-living-room", entity = 1, channel = 0, value = false } },
-    { set = { device = "sim-bedroom", entity = 1, channel = 0, value = false } },
 ]
-
-[[rules]]
-name = "Panel: short beep"
-enabled = false
-when = { panel = "Alarm", button = "Short beep" }
-then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Short" } }]
-
-[[rules]]
-name = "Panel: long beep"
-enabled = false
-when = { panel = "Alarm", button = "Long beep" }
-then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Long" } }]
-
-[[rules]]
-name = "Panel: sound the alarm"
-enabled = false
-when = { panel = "Alarm", button = "Alarm" }
-then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
 
 [[rules]]
 name = "Test board hot: beep and warn, daytime only"

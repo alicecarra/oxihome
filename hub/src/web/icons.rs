@@ -18,7 +18,6 @@ pub const FAVICON: &str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/20
 
 pub const DASHBOARD: IconData = iconify_icon!("tabler:layout-dashboard");
 pub const NODES: IconData = iconify_icon!("tabler:cpu-2");
-pub const PANELS: IconData = iconify_icon!("tabler:square-plus");
 pub const RULES: IconData = iconify_icon!("tabler:sitemap");
 pub const TIMELINE: IconData = iconify_icon!("tabler:timeline-event");
 pub const REMOTES: IconData = iconify_icon!("tabler:device-remote");

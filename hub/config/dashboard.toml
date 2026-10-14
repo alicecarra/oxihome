@@ -1,6 +1,6 @@
 # The home page: blocks in this order on a grid of three columns (one on phones).
 # Block types: "nodes" (nodes by presence), "channels" (chosen channels with value and controls,
-# like rules: { device, entity, channel }), "panel" (the buttons of a panel from panels.toml),
+# like rules: { device, entity, channel }), "buttons" (buttons of rules, when = { button = "..." }),
 # "value" (one channel, large), "history" (a chart of one channel with 15m/1h/6h/24h buttons;
 # range "15m", "1h", "6h" or "24h" sets the default, "24h" when missing), "rules" (next scheduled runs and failed rules), "events" (latest node events and
 # notifications; limit 1-50, default 10).
@@ -10,13 +10,9 @@
 name = "Home"
 
 [[dashboards.blocks]]
-type = "panel"
-panel = "Test board"
-
-[[dashboards.blocks]]
-type = "panel"
-panel = "Alarm"
-width = 2
+type = "buttons"
+title = "Test board"
+buttons = ["Turn on", "Turn off"]
 
 [[dashboards.blocks]]
 type = "nodes"

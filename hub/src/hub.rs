@@ -15,7 +15,6 @@ use tokio::sync::{broadcast, watch};
 use crate::commands::Commands;
 use crate::config::dashboard::{Dashboard, Dashboards};
 use crate::config::nodes::{NameTarget, NodeEdits, Nodes};
-use crate::config::panels::{Panel, Panels};
 use crate::config::remotes::Remotes;
 use crate::config::rules::{Rule, RuleRun, RuleUse, Rules};
 use crate::config::{ConfigFile, FILES, HomeConfig, read_file, write_file};
@@ -96,7 +95,6 @@ pub struct Hub {
     /// Last run of each rule, by name.
     rule_runs: Mutex<HashMap<String, RuleRun>>,
     remotes: Mutex<Remotes>,
-    panels: Mutex<Panels>,
     dashboards: Mutex<Dashboards>,
     /// Newest first, without repeats of held keys.
     recent_codes: Mutex<VecDeque<ReceivedCode>>,
@@ -164,7 +162,6 @@ impl Hub {
             rules: Mutex::new(config.rules),
             rule_runs: Mutex::new(restored.rule_runs.into_iter().collect()),
             remotes: Mutex::new(config.remotes),
-            panels: Mutex::new(config.panels),
             dashboards: Mutex::new(config.dashboards),
             recent_codes: Mutex::new(recent_codes),
             notifications: Mutex::default(),
@@ -459,7 +456,6 @@ impl Hub {
         self.hardware.lock().unwrap().refused.clear();
         *self.rules.lock().unwrap() = config.rules;
         *self.remotes.lock().unwrap() = config.remotes;
-        *self.panels.lock().unwrap() = config.panels;
         *self.dashboards.lock().unwrap() = config.dashboards;
         self.announce(Change::Nodes);
         rule_count
@@ -601,10 +597,6 @@ impl Hub {
             .collect()
     }
 
-    pub fn panels(&self) -> Vec<Panel> {
-        self.panels.lock().unwrap().all().to_vec()
-    }
-
     /// The one the home page shows.
     pub fn dashboard(&self) -> Option<Dashboard> {
         self.dashboards.lock().unwrap().first().cloned()
@@ -614,18 +606,8 @@ impl Hub {
         self.rules.lock().unwrap().involving(device_id)
     }
 
-    pub fn rules_for_button(&self, panel: &str, button: &str) -> Vec<(String, bool)> {
-        self.rules.lock().unwrap().for_button(panel, button)
-    }
-
-    pub fn pressed_rules(&self, panel: &str, button: &str) -> Vec<Rule> {
-        self.rules
-            .lock()
-            .unwrap()
-            .pressed(panel, button)
-            .into_iter()
-            .cloned()
-            .collect()
+    pub fn button_rule(&self, button: &str) -> Option<Rule> {
+        self.rules.lock().unwrap().button(button).cloned()
     }
 
     pub fn recent_codes(&self) -> Vec<ReceivedCode> {

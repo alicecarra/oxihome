@@ -52,7 +52,7 @@ pub async fn settings(cx: &Cx) -> Result<impl View> {
                             </form>
                         </div>
                         card_description(
-                            (format!("Nodes (names, parameters and hardware), rules, remotes, panels and the dashboard live in TOML files in {directory}. Edit them here, or in an editor and then reload. Each node's page also edits its names and parameters."))
+                            (format!("Nodes (names, parameters and hardware), rules, remotes and the dashboard live in TOML files in {directory}. Edit them here, or in an editor and then reload. Each node's page also edits its names and parameters."))
                         )
                     )
                     card_content(
@@ -118,9 +118,8 @@ pub async fn settings_file(cx: &Cx) -> Result<impl View> {
 fn file_description(file: &str) -> &'static str {
     match file {
         "nodes.toml" => "Names of nodes, entities and channels, and the operation parameters and hardware the hub sets.",
-        "rules.toml" => "What happens on events, values, schedules, remote keys and panel buttons.",
+        "rules.toml" => "What happens on events, values, schedules, remote keys and buttons.",
         "remotes.toml" => "Infrared remotes and the names of their keys.",
-        "panels.toml" => "Panels of buttons that run rules.",
         "dashboard.toml" => "The blocks of the home page.",
         _ => "",
     }

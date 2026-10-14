@@ -1,3 +1,4 @@
+mod buttons;
 mod chart;
 mod dashboard;
 mod events;
@@ -10,7 +11,6 @@ mod layout;
 mod node;
 mod nodes;
 mod overview;
-mod panel;
 mod remotes;
 mod rules;
 mod settings;
@@ -52,7 +52,6 @@ pub fn router(hub: Arc<Hub>, listen_host: &str) -> Router {
         .page(node::fields_edit_fragment)
         .page(node::history_fragment)
         .page(node::hardware_fragment)
-        .page(panel::panel)
         .page(rules::rules)
         .page(timeline::timeline)
         .page(timeline::timeline_fragment)
@@ -68,7 +67,7 @@ pub fn router(hub: Arc<Hub>, listen_host: &str) -> Router {
         .route(node::start_update)
         .route(home::invoke)
         .route(remotes::learn_key)
-        .route(panel::press)
+        .route(buttons::press)
         .route(settings::reload)
         .route(settings::save)
         .route(toasts::toasts)

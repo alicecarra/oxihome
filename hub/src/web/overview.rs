@@ -108,6 +108,8 @@ pub struct RuleOverview {
     pub conditions: Vec<String>,
     pub actions: Vec<ActionOverview>,
     pub enabled: bool,
+    /// Button rules only.
+    pub button: Option<String>,
     /// Scheduled rules only.
     pub next_run: Option<String>,
     /// How long ago it ran and the errors of the actions that failed.
@@ -488,6 +490,10 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
         .into_iter()
         .map(|rule| RuleOverview {
             trigger: trigger_description(&snapshot.nodes, &snapshot.registry, &rule.when),
+            button: match &rule.when {
+                Trigger::Button(trigger) => Some(trigger.button.clone()),
+                _ => None,
+            },
             next_run: rule
                 .when
                 .next_run(&local_now)
@@ -525,7 +531,7 @@ fn trigger_description(nodes: &Nodes, registry: &Registry, trigger: &Trigger) ->
         Trigger::Cron(trigger) => cron_description(trigger),
         Trigger::Offline(trigger) => offline_description(nodes, trigger),
         Trigger::RemoteKey(trigger) => format!("{}: key {}", trigger.remote, trigger.key),
-        Trigger::Button(trigger) => format!("Panel {} › {}", trigger.panel, trigger.button),
+        Trigger::Button(trigger) => format!("Button \"{}\"", trigger.button),
     }
 }
 

@@ -12,6 +12,7 @@ use super::format::{ago_label, rule_anchor};
 use super::layout::layout;
 use super::overview::{self, RuleOverview};
 use crate::components::badge::{BadgeVariant, badge};
+use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::card::{card, card_content, card_header, card_title};
 use crate::components::switch::switch;
 use crate::hub::Hub;
@@ -94,7 +95,20 @@ async fn rule_card(rule: RuleOverview) -> Result<impl View> {
             card_content(
                 <dl class="grid grid-cols-[3rem_1fr] gap-x-3 gap-y-2 text-sm">
                     <dt class="text-muted-foreground">"When"</dt>
-                    <dd>(rule.trigger)</dd>
+                    <dd class="flex items-center justify-between gap-2">
+                        (rule.trigger)
+                        if let Some(name) = rule.button.filter(|_| rule.enabled) {
+                            <form hx-post="/buttons/press" hx-target="#status">
+                                <input type="hidden" name="button" value=(name)>
+                                button(
+                                    variant: ButtonVariant::Secondary,
+                                    size: ButtonSize::Sm,
+                                    attrs: attributes! { type="submit" },
+                                    "Press"
+                                )
+                            </form>
+                        }
+                    </dd>
                     if !rule.conditions.is_empty() {
                         <dt class="text-muted-foreground">"If"</dt>
                         <dd>

@@ -1,6 +1,5 @@
 pub mod dashboard;
 pub mod nodes;
-pub mod panels;
 pub mod remotes;
 pub mod rules;
 
@@ -12,7 +11,6 @@ use serde::de::DeserializeOwned;
 
 use dashboard::Dashboards;
 use nodes::Nodes;
-use panels::Panels;
 use remotes::Remotes;
 use rules::Rules;
 
@@ -21,18 +19,11 @@ pub struct HomeConfig {
     pub nodes: Nodes,
     pub rules: Rules,
     pub remotes: Remotes,
-    pub panels: Panels,
     pub dashboards: Dashboards,
 }
 
 /// The files the web interface can edit.
-pub const FILES: [&str; 5] = [
-    "nodes.toml",
-    "rules.toml",
-    "remotes.toml",
-    "panels.toml",
-    "dashboard.toml",
-];
+pub const FILES: [&str; 4] = ["nodes.toml", "rules.toml", "remotes.toml", "dashboard.toml"];
 
 /// A config file's text and when it was last modified (`None` if it does not exist).
 pub struct ConfigFile {
@@ -66,25 +57,19 @@ impl HomeConfig {
             .with_context(|| format!("{}", path.display()))?;
         let path = directory.join("rules.toml");
         let rules: Rules = parse(&path, &text("rules.toml")?)?;
-        let panels_path = directory.join("panels.toml");
-        let panels: Panels = parse(&panels_path, &text("panels.toml")?)?;
-        panels
-            .validate()
-            .with_context(|| format!("{}", panels_path.display()))?;
         rules
             .check_remote_keys(&remotes)
-            .and_then(|()| rules.check_panel_buttons(&panels))
+            .and_then(|()| rules.check_buttons())
             .with_context(|| format!("{}", path.display()))?;
         let path = directory.join("dashboard.toml");
         let dashboards: Dashboards = parse(&path, &text("dashboard.toml")?)?;
         dashboards
-            .validate(&panels)
+            .validate(&rules)
             .with_context(|| format!("{}", path.display()))?;
         Ok(Self {
             nodes,
             rules,
             remotes,
-            panels,
             dashboards,
         })
     }

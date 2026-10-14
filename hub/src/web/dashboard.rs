@@ -9,16 +9,15 @@ use topcoat::{
     view::{View, attributes, component, view},
 };
 
+use super::buttons::{RuleButton, rule_button_view, rule_buttons};
 use super::chart::{CHART_BUCKETS, Chart, ChartRange, chart, history_chart, series};
 use super::format::{ago_label, rule_anchor, value_label};
 use super::layout::layout;
 use super::nodes::{channel_controls, channel_value, presence_badge, protocol_badge};
 use super::overview::{self, Activity, DashboardChannel, NodeOverview, Presence, RulesSummary};
-use super::panel::{PanelButton, panel_button_view, panel_buttons};
 use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::card::{card, card_content, card_header, card_title};
 use crate::config::dashboard::{Block, BlockKind, ChannelReference, DEFAULT_EVENTS};
-use crate::config::panels::Panel;
 use crate::hub::Hub;
 
 /// A block with what it shows, read before rendering.
@@ -35,7 +34,7 @@ enum BlockContent {
         /// Whether rows name their node: only when the block mixes nodes.
         several_nodes: bool,
     },
-    Panel(Vec<PanelButton>),
+    Buttons(Vec<RuleButton>),
     Value {
         channel: DashboardChannel,
         online: bool,
@@ -101,7 +100,6 @@ async fn block_views(hub: &Hub, picked: &HashMap<usize, String>) -> (Vec<BlockVi
     let Some(dashboard) = hub.dashboard() else {
         return (Vec::new(), String::new());
     };
-    let panels = hub.panels();
     let ranges: Vec<(usize, ChartRange)> = dashboard
         .blocks
         .iter()
@@ -127,7 +125,7 @@ async fn block_views(hub: &Hub, picked: &HashMap<usize, String>) -> (Vec<BlockVi
             .into_iter()
             .map(|choice| (choice, ranges_query(&ranges, Some((index, choice)))))
             .collect();
-        views.push(block_view(hub, block, &panels, range, choices).await);
+        views.push(block_view(hub, block, range, choices).await);
     }
     (views, ranges_query(&ranges, None))
 }
@@ -142,7 +140,6 @@ fn single_channel(hub: &Hub, reference: Option<&ChannelReference>) -> Option<Das
 async fn block_view(
     hub: &Hub,
     block: &Block,
-    panels: &[Panel],
     range: ChartRange,
     choices: Vec<(ChartRange, String)>,
 ) -> BlockView {
@@ -166,16 +163,10 @@ async fn block_view(
                 },
             )
         }
-        BlockKind::Panel => {
-            // Validation makes sure the panel exists.
-            let name = block.panel.clone().unwrap_or_default();
-            let buttons = panels
-                .iter()
-                .find(|panel| panel.name == name)
-                .map(|panel| panel_buttons(hub, panel))
-                .unwrap_or_default();
-            (name, BlockContent::Panel(buttons))
-        }
+        BlockKind::Buttons => (
+            "Buttons".to_string(),
+            BlockContent::Buttons(rule_buttons(hub, &block.buttons)),
+        ),
         BlockKind::Value | BlockKind::History => {
             let Some(channel) = single_channel(hub, block.channel.as_ref()) else {
                 return BlockView {
@@ -237,6 +228,8 @@ async fn dashboard_root(blocks: Vec<BlockView>, query: String) -> Result<impl Vi
             hx-get=(format!("/dashboard/fragment?{query}"))
             hx-trigger="sse:nodes, sse:notifications, every 30s, refresh"
             hx-swap="outerHTML"
+            // Buttons and controls inside would swap `#status` out with outerHTML.
+            hx-disinherit="*"
         >
             dashboard_blocks(blocks: blocks)
         </div>
@@ -276,12 +269,12 @@ async fn dashboard_blocks(blocks: Vec<BlockView>) -> Result<impl View> {
                                 BlockContent::History { channel, chart, range, choices } => history_block(channel: channel, chart: chart, range: range, choices: choices),
                                 BlockContent::Rules(summary) => rules_block(summary: summary),
                                 BlockContent::Events(items) => events_block(items: items),
-                                BlockContent::Panel(buttons) => {
+                                BlockContent::Buttons(buttons) => {
                                     // In one row while they fit, sharing the width.
                                     <div class="flex flex-wrap gap-3">
-                                        for panel_button in buttons {
+                                        for rule_button in buttons {
                                             <div class="min-w-32 flex-1">
-                                                panel_button_view(panel_button: panel_button)
+                                                rule_button_view(rule_button: rule_button)
                                             </div>
                                         }
                                     </div>

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
 
@@ -10,7 +11,6 @@ use oxihome_protocol::{Confidence, EventKind, Value};
 use serde::Deserialize;
 use toml_edit::{DocumentMut, value};
 
-use super::panels::Panels;
 use super::remotes::Remotes;
 use crate::hub::{CommandOrigin, Hub};
 use crate::node::events::EventRecord;
@@ -85,7 +85,6 @@ struct TriggerFields {
     offline: Option<String>,
     remote: Option<String>,
     key: Option<String>,
-    panel: Option<String>,
     button: Option<String>,
 }
 
@@ -93,7 +92,7 @@ impl TryFrom<TriggerFields> for Trigger {
     type Error = String;
 
     fn try_from(fields: TriggerFields) -> Result<Self, String> {
-        if fields.panel.is_some() || fields.button.is_some() {
+        if let Some(button) = fields.button {
             let alone = fields.device.is_none()
                 && fields.entity.is_none()
                 && fields.channel.is_none()
@@ -107,10 +106,10 @@ impl TryFrom<TriggerFields> for Trigger {
                 && fields.offline.is_none()
                 && fields.remote.is_none()
                 && fields.key.is_none();
-            let (Some(panel), Some(button), true) = (fields.panel, fields.button, alone) else {
-                return Err("a panel button trigger is `panel` and `button` alone".into());
-            };
-            return Ok(Trigger::Button(ButtonTrigger { panel, button }));
+            if !alone {
+                return Err("a button trigger is `button` alone".into());
+            }
+            return Ok(Trigger::Button(ButtonTrigger { button }));
         }
         if fields.remote.is_some() || fields.key.is_some() {
             let alone = fields.device.is_none()
@@ -497,10 +496,9 @@ pub enum RuleRole {
     Checks,
 }
 
-/// A button of a panel in `panels.toml`, pressed on the `/panel` page.
+/// A button on the dashboard or the `/rules` page; its name is unique among rules.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ButtonTrigger {
-    pub panel: String,
     pub button: String,
 }
 
@@ -723,7 +721,7 @@ impl Rules {
     }
 
     /// Rules that run on something from the node or act on it, in file order. Remote keys,
-    /// panel buttons and schedules are not tied to a node, so only their actions count.
+    /// buttons and schedules are not tied to a node, so only their actions count.
     pub fn involving(&self, device_id: &str) -> Vec<RuleUse> {
         let mut uses: Vec<RuleUse> = Vec::new();
         for rule in &self.rules {
@@ -797,39 +795,23 @@ impl Rules {
         uses
     }
 
-    /// The rules a panel button runs, with whether each is enabled.
-    pub fn for_button(&self, panel: &str, button: &str) -> Vec<(String, bool)> {
-        self.rules
-            .iter()
-            .filter(|rule| {
-                matches!(&rule.when, Trigger::Button(trigger)
-                    if trigger.panel == panel && trigger.button == button)
-            })
-            .map(|rule| (rule.name.clone(), rule.enabled))
-            .collect()
+    /// The rule a button runs.
+    pub fn button(&self, button: &str) -> Option<&Rule> {
+        self.rules.iter().find(|rule| {
+            matches!(&rule.when, Trigger::Button(trigger) if trigger.button == button)
+        })
     }
 
-    pub fn pressed(&self, panel: &str, button: &str) -> Vec<&Rule> {
-        self.rules
-            .iter()
-            .filter(|rule| {
-                rule.enabled
-                    && matches!(&rule.when, Trigger::Button(trigger)
-                        if trigger.panel == panel && trigger.button == button)
-            })
-            .collect()
-    }
-
-    /// Every panel button a rule names exists in `panels.toml`.
-    pub fn check_panel_buttons(&self, panels: &Panels) -> anyhow::Result<()> {
+    /// Button names are unique.
+    pub fn check_buttons(&self) -> anyhow::Result<()> {
+        let mut buttons = HashSet::new();
         for rule in &self.rules {
             if let Trigger::Button(trigger) = &rule.when
-                && !panels.has(&trigger.panel, &trigger.button)
+                && !buttons.insert(&trigger.button)
             {
                 bail!(
-                    "rule \"{}\": panel \"{}\" has no button \"{}\" in panels.toml",
+                    "rule \"{}\": another rule has the button \"{}\"",
                     rule.name,
-                    trigger.panel,
                     trigger.button
                 );
             }
@@ -1023,66 +1005,47 @@ mod tests {
         }
     }
 
-    const BUTTONS: &str = r#"
-        [[rules]]
-        name = "LED"
-        when = { panel = "Test board", button = "LED" }
-        then = []
-
-        [[rules]]
-        name = "LED also beeps"
-        when = { panel = "Test board", button = "LED" }
-        then = []
-
-        [[rules]]
-        name = "LED, disabled"
-        enabled = false
-        when = { panel = "Test board", button = "LED" }
-        then = []
-    "#;
-
     #[test]
-    fn panel_buttons_run_their_enabled_rules() {
-        let rules: Rules = toml::from_str(BUTTONS).unwrap();
-        assert_eq!(
-            rules.for_button("Test board", "LED"),
-            [
-                ("LED".to_string(), true),
-                ("LED also beeps".to_string(), true),
-                ("LED, disabled".to_string(), false),
-            ]
-        );
-        assert_eq!(
-            names(rules.pressed("Test board", "LED")),
-            ["LED", "LED also beeps"]
-        );
-        assert!(rules.pressed("Test board", "Alarm").is_empty());
-        assert!(rules.for_button("Other", "LED").is_empty());
-        let panels: Panels =
-            toml::from_str("[[panels]]\nname = \"Test board\"\nbuttons = [\"LED\"]").unwrap();
-        assert!(rules.check_panel_buttons(&panels).is_ok());
-        let error = rules
-            .check_panel_buttons(&Panels::default())
-            .unwrap_err()
-            .to_string();
-        assert!(
-            error.contains("panel \"Test board\" has no button \"LED\""),
-            "{error}"
-        );
+    fn buttons_are_unique() {
+        let rules: Rules = toml::from_str(
+            r#"
+            [[rules]]
+            name = "Lights off"
+            when = { button = "Good night" }
+            then = []
+        "#,
+        )
+        .unwrap();
+        assert_eq!(rules.button("Good night").unwrap().name, "Lights off");
+        assert!(rules.button("Alarm").is_none());
+        assert!(rules.check_buttons().is_ok());
+        let twice: Rules = toml::from_str(
+            r#"
+            [[rules]]
+            name = "A"
+            when = { button = "Good night" }
+            then = []
+
+            [[rules]]
+            name = "B"
+            when = { button = "Good night" }
+            then = []
+        "#,
+        )
+        .unwrap();
+        let error = twice.check_buttons().unwrap_err().to_string();
+        assert!(error.contains("another rule has the button"), "{error}");
     }
 
     #[test]
-    fn button_triggers_need_panel_and_button_alone() {
+    fn button_triggers_are_button_alone() {
+        assert!(matches!(when(r#"{ button = "A" }"#), Ok(Trigger::Button(_))));
         assert!(
-            when(r#"{ button = "A" }"#)
-                .unwrap_err()
-                .contains("`panel` and `button`")
-        );
-        assert!(
-            when(r#"{ panel = "P", button = "A", at = "07:00" }"#)
+            when(r#"{ button = "A", at = "07:00" }"#)
                 .unwrap_err()
                 .contains("alone")
         );
+        assert!(when(r#"{ panel = "P", button = "A" }"#).is_err());
     }
 
     #[test]
