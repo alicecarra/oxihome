@@ -94,18 +94,26 @@ struct ConfigDirectory {
 struct MqttConfig {
     host: String,
     port: u16,
-    /// A TOML file out of git with the broker password; anonymous when missing.
+    /// A TOML file out of git with the broker password and the web interface's password hash;
+    /// anonymous and without login when missing.
     secrets: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
 struct Secrets {
     mqtt: MqttSecrets,
+    http: Option<HttpSecrets>,
 }
 
 #[derive(Deserialize)]
 struct MqttSecrets {
     password: String,
+}
+
+#[derive(Deserialize)]
+struct HttpSecrets {
+    /// From `oxihome-hub hash-password`; required unless the hub listens on localhost only.
+    password_hash: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -121,7 +129,10 @@ struct HttpConfig {
 async fn main() -> anyhow::Result<()> {
     let path = std::env::args()
         .nth(1)
-        .context("usage: oxihome-hub <config.toml>")?;
+        .context("usage: oxihome-hub <config.toml> | oxihome-hub hash-password")?;
+    if path == "hash-password" {
+        return print_password_hash();
+    }
     let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
     let config: Config = toml::from_str(&text).with_context(|| format!("parsing {path}"))?;
     ensure!(
@@ -144,16 +155,29 @@ async fn main() -> anyhow::Result<()> {
         home_config.rules.len(),
         config.config.dir.display()
     );
-    let password = match &config.mqtt.secrets {
+    let secrets = match &config.mqtt.secrets {
         Some(secrets_path) => {
             let text = std::fs::read_to_string(secrets_path)
                 .with_context(|| format!("reading {}", secrets_path.display()))?;
             let secrets: Secrets = toml::from_str(&text)
                 .with_context(|| format!("parsing {}", secrets_path.display()))?;
-            Some(secrets.mqtt.password)
+            Some(secrets)
         }
         None => None,
     };
+    let (password, password_hash) = match secrets {
+        Some(secrets) => (
+            Some(secrets.mqtt.password),
+            secrets.http.and_then(|http| http.password_hash),
+        ),
+        None => (None, None),
+    };
+    ensure!(
+        password_hash.is_some() || is_loopback(&config.http.host),
+        "{path}: the web interface listens on {} without a password; set [http] password_hash \
+         in the secrets file (see `oxihome-hub hash-password`)",
+        config.http.host
+    );
     let retention = Duration::from_secs(u64::from(config.storage.retention_days) * 86400);
     let (storage, restored) = Storage::open(&config.storage.path, retention).await?;
     println!(
@@ -173,6 +197,8 @@ async fn main() -> anyhow::Result<()> {
         }
         None => None,
     };
+    let auth = web::Auth::new(password_hash, storage.sessions())
+        .context("[http] password_hash in the secrets file")?;
     let (mqtt, mut incoming) = Mqtt::connect(&config.mqtt.host, config.mqtt.port, password);
     let hub = Arc::new(Hub::new(
         mqtt,
@@ -190,7 +216,7 @@ async fn main() -> anyhow::Result<()> {
         "web interface on http://{}:{}",
         config.http.host, config.http.port
     );
-    let service = RouterService::new(web::router(hub.clone(), &config.http.host, &config.http.allowed_hosts))
+    let service = RouterService::new(web::router(hub.clone(), auth, &config.http.host, &config.http.allowed_hosts))
         .shutdown_timeout(SHUTDOWN_TIMEOUT);
     let mut web_server = tokio::spawn(topcoat::serve_until(listener, service, hub.shutdown()));
     let mut signal = std::pin::pin!(shutdown_signal());
@@ -225,6 +251,24 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     }
+}
+
+fn is_loopback(host: &str) -> bool {
+    host == "localhost"
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
+/// Reads the password from the first line of standard input.
+fn print_password_hash() -> anyhow::Result<()> {
+    eprintln!("Password for the web interface:");
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    let password = line.trim_end_matches(['\r', '\n']);
+    ensure!(!password.is_empty(), "empty password");
+    println!("{}", web::hash_password(password)?);
+    Ok(())
 }
 
 /// Ctrl+C, or `SIGTERM` (systemd, `kill`).

@@ -22,6 +22,7 @@ pub const RULES: IconData = iconify_icon!("tabler:sitemap");
 pub const TIMELINE: IconData = iconify_icon!("tabler:timeline-event");
 pub const REMOTES: IconData = iconify_icon!("tabler:device-remote");
 pub const SETTINGS: IconData = iconify_icon!("tabler:adjustments-cog");
+pub const SIGN_OUT: IconData = iconify_icon!("tabler:logout");
 pub const EVENT: IconData = iconify_icon!("tabler:bolt");
 pub const COMMAND: IconData = iconify_icon!("tabler:send");
 pub const NOTIFICATION: IconData = iconify_icon!("tabler:bell");

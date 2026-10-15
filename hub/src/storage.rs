@@ -529,6 +529,49 @@ impl Storage {
         self.write(Write::Flush(sender));
         let _ = receiver.await;
     }
+
+    pub fn sessions(&self) -> Sessions {
+        Sessions {
+            pool: self.pool.clone(),
+        }
+    }
+}
+
+/// Web interface logins, written right away instead of through the writer task: the browser
+/// gets its cookie only after the record is stored.
+#[derive(Clone)]
+pub struct Sessions {
+    pool: SqlitePool,
+}
+
+impl Sessions {
+    pub async fn save(&self, token_hash: &[u8; 32], expires_at: Timestamp) -> anyhow::Result<()> {
+        sqlx::query("INSERT OR REPLACE INTO sessions (token_hash, expires_at) VALUES (?, ?)")
+            .bind(&token_hash[..])
+            .bind(expires_at.as_millisecond())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// When the session ends; `None` when it is unknown or already over.
+    pub async fn expiry(&self, token_hash: &[u8; 32]) -> anyhow::Result<Option<Timestamp>> {
+        let expires_at: Option<i64> =
+            sqlx::query_scalar("SELECT expires_at FROM sessions WHERE token_hash = ? AND expires_at > ?")
+                .bind(&token_hash[..])
+                .bind(Timestamp::now().as_millisecond())
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(expires_at.map(Timestamp::from_millisecond).transpose()?)
+    }
+
+    pub async fn delete(&self, token_hash: &[u8; 32]) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM sessions WHERE token_hash = ?")
+            .bind(&token_hash[..])
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }
 
 async fn write_loop(
@@ -759,6 +802,10 @@ async fn prune_older(pool: &SqlitePool, retention: Duration) -> anyhow::Result<(
         .execute(pool)
         .await?
         .rows_affected();
+    sqlx::query("DELETE FROM sessions WHERE expires_at < ?")
+        .bind(Timestamp::now().as_millisecond())
+        .execute(pool)
+        .await?;
     if readings + events + notifications + rule_runs + commands > 0 {
         println!(
             "storage: pruned {readings} readings, {events} events, {notifications} notifications, \

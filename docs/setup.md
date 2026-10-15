@@ -149,9 +149,9 @@ rest of the history after `retention_days`.
 
 ## Test board wiring
 
-ESP32 DevKit V1 (30 pins), `esp32-08d1f9ca41e4`, with every peripheral. The second board,
-`esp32-14335c2e7270` (a third-party module, FCC ID 2BB77-ES32-32X, same ESP32 chip), has nothing
-wired: `peripherals = ""`. Entities the firmware declares:
+ESP32 DevKit V1 (30 pins), `esp32-08d1f9ca41e4`, with every peripheral but the IR transmitter,
+which is on the second board (see [Second board wiring](#second-board-wiring)). Entities the
+firmware declares:
 
 | Entity | What | Pin |
 |---|---|---|
@@ -185,6 +185,33 @@ Anything else arrives as
 held at an angle: pulses under 250 µs are merged with their neighbours, the 4.5 ms header space may
 come after noise, and each bit's space counts as 0 below 1.1 ms and 1 up to 2.4 ms (the inverted
 command byte still rules out wrong readings).
+
+## Second board wiring
+
+`esp32-14335c2e7270` ("Outra placa"), a third-party module (FCC ID 2BB77-ES32-32X, same ESP32 chip,
+CH340 USB serial: `/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0`). Its `cfg.toml` has
+`peripherals = ""`; the hardware comes from the hub's `nodes.toml`:
+
+| Entity | What | Pin |
+|---|---|---|
+| 1 | Onboard LED, `Bool`; the BOOT button toggles it locally | GPIO2 |
+| 2 | BOOT button, events `Press`, `LongPress` | GPIO0 |
+| 3 | IR transmitter (bare IR LED), `Trigger` with the code as `Text` | GPIO18 (D18) |
+
+The IR LED takes more current than a pin gives, so a 2N2222 NPN switches it from 5 V: D18 → 1 kΩ →
+base; emitter to GND; VIN → 47 Ω (or two 100 Ω in parallel) → LED long leg (anode); short leg
+(cathode, flat side) → collector. About 75 mA in short pulses, a few metres of range. Generic
+"2N2222 TO-92" parts come with either pinout, E-B-C or C-B-E (the base is always in the middle):
+ours needed turning 180° from E-B-C. To check, move the 1 kΩ end from D18 to 3V3: the LED must
+light up steadily (a phone camera shows infrared as purple); if it barely does, turn the transistor
+around. When idle the LED must be off, or the receivers it points at are blinded.
+
+The transmitter sends the codes the receiver reports, through the RMT peripheral:
+`NEC 00 45` / `NEC 1234 45` (38 kHz), `SONY12|15|20 <address> <command>` (40 kHz, sent three
+times 45 ms apart, as Sony remotes do), `RC5 00 0C` and `RC6 00 0C` (36 kHz; the toggle bit flips on
+each send, so the device sees a new press), and `raw 9000 4500 560 …` (38 kHz, marks and spaces in
+µs, up to 512). A trailing `repeat` is ignored. A code it does not know is refused with
+`InvalidValue`. Sending blocks the board's main loop for the frame (under 200 ms).
 
 ## MQTT broker
 
@@ -244,9 +271,36 @@ cargo run -p oxihome-hub -- hub/hub.toml
 
 Requests must name the hub in `Host` (`localhost`, `127.0.0.1`, `[::1]`, the `[http] host` or one
 of `[http] allowed_hosts`), otherwise 403. A hub listening on `0.0.0.0` lists the names it is
-reached by, e.g. `allowed_hosts = ["docker-host", "192.168.15.100"]`. Without the check, a site
+reached by, e.g. `allowed_hosts = ["docker-host", "192.168.15.100"]`; the notebook's
+`hub/hub.toml` lists its Wi-Fi and Tailscale addresses, so a tablet reaches a dev hub at
+<http://192.168.15.10:8080>. firewalld blocks 8080 from the network; open it until the next reboot
+or firewalld reload with:
+
+```sh
+sudo firewall-cmd --add-port=8080/tcp
+```
+
+Without the check, a site
 pointing its own domain at 127.0.0.1 (DNS rebinding) would pass as same-origin. Topcoat already
 rejects POSTs from other sites (`Sec-Fetch-Site`/`Origin`).
+
+### Login
+
+Since hub 0.5.0 the web interface asks for a password, whose argon2 hash goes in the secrets file
+as `[http] password_hash`. The hub refuses to start without it unless `[http] host` is localhost.
+Make the hash (the password is read from the first line of standard input):
+
+```sh
+cargo run -q -p oxihome-hub -- hash-password
+```
+
+Sessions last 30 days, extended while in use, and are kept in the database (table `sessions`), so
+a restart or deploy keeps everyone signed in. "Sign out" in the menu ends the current one. After 10
+wrong passwords in a minute the login refuses every attempt for the rest of that minute.
+
+The session cookie is `Secure`, so the browser keeps it only over HTTPS or on localhost: a dev hub
+at <http://localhost:8080> works, but at <http://192.168.15.10:8080> the login seems to do nothing
+(the login page says so).
 
 Only one hub can run per broker: both use the MQTT client id `oxihome-hub` and keep disconnecting
 each other.
@@ -322,7 +376,8 @@ previous configuration stays in use.
 - `rules.toml`: a rule runs its actions when its trigger (`when`) fires. Actions set or toggle
   boolean channels, or show a notification as a toast on the web interface
   (`notify = { title = "...", message = "..." }`), or fire a `Trigger` channel such as the test
-  board buzzer (`invoke = { device = "...", entity = 5, channel = 0, value = "Alarm" }`). The node's
+  board buzzer (`invoke = { device = "...", entity = 5, channel = 0, value = "Alarm" }`) or an IR
+  transmitter (`value = "SONY15 30 15"`, the code to send). The node's
   `Hello` decides what `value` is: one of the options of an `Enum` channel, or any text up to the
   `max_length` of a `Text` channel. While the node is online the hub refuses other values without
   sending them, and `/rules` shows the problem under the action.
@@ -397,7 +452,11 @@ previous configuration stays in use.
   has a "Learn" card with the last codes received (not repeats nor `raw` signals): name a remote and
   a key and the hub adds it to the file, keeping its comments. The remote field starts with the remote
   of the last learned key. A code on two keys is an error. Node
-  cards show a named code as `Kit Lafvin · 0`.
+  cards show a named code as `Kit Lafvin · 0`. Every key, and every code in "Learn", has a "Send"
+  button that sends it through the IR transmitter picked at the top of the page (the transmitters
+  are the `ir_transmitter` entries of `nodes.toml`; with none, the buttons are disabled). A
+  "Codes" switch there shows or hides the code column of the remotes (hidden by default; the choice
+  stays in the browser).
 
   ```toml
   [remotes."Kit Lafvin".keys]
@@ -782,11 +841,13 @@ hub runs on the notebook. The scripts copy with rsync, needed on both machines (
 
 Files on the server, each made once by hand: `~/oxihome/hub/hub.toml` (a copy of
 `infra/production/hub.toml`: broker `mosquitto`, web interface on port 8090 since the Trilium has
-8080, images on 8081), `~/oxihome/hub/secrets.toml` (a copy of `hub/secrets.toml`) and
+8080, images on 8081), `~/oxihome/hub/secrets.toml` (a copy of `hub/secrets.toml`, with the
+production `[http] password_hash`, see "Login") and
 `~/oxihome/weather/weather.toml` (the local one with `host = "mosquitto"`) and
 `~/oxihome/network-devices/network-devices.toml` (the local one with `host = "localhost"`: it runs
 on the host's network to read its ARP table). The web interface is
-at <http://docker-host:8090>. The containers run as uid 1000, the owner of `~/oxihome`.
+at <https://oxihome.alicecarra.com>, through Caddy (see "HTTPS"); the hub publishes 8090 only on
+the server's localhost. The containers run as uid 1000, the owner of `~/oxihome`.
 
 ```sh
 ssh docker-host 'mkdir -p ~/oxihome/hub/config ~/oxihome/hub/firmware ~/oxihome/weather && chmod 700 ~/oxihome/hub ~/oxihome/weather'
@@ -799,6 +860,37 @@ sed 's/^host = "192.168.15.100"/host = "localhost"/' network-devices/network-dev
 
 The first hub deploy took the notebook's configuration and database by faking a dev session
 (`ssh docker-host touch oxihome/hub/dev-session` before `deploy.sh hub`).
+
+### HTTPS
+
+Caddy, a stack of its own in `~/caddy` on docker-host (not part of this repository), serves the web
+interface at <https://oxihome.alicecarra.com> and passes it to the hub at `localhost:8090`. It
+runs on the host's network, so it can reach any service published on localhost without joining
+its network. Files: `docker-compose.yml`, a `Dockerfile` that builds the official image with the
+Cloudflare DNS plugin (`xcaddy build --with github.com/caddy-dns/cloudflare`), `conf/Caddyfile`
+(one block per site) and `.env` (mode 600) with `CLOUDFLARE_API_TOKEN`. The certificates come from
+Let's Encrypt through the DNS challenge, so nothing is open to the internet.
+
+At Cloudflare: an API token from the "Edit zone DNS" template plus Zone / Zone / Read, limited to
+the `alicecarra.com` zone, and an A record `oxihome` → `192.168.15.100`, DNS only (grey cloud). Caddy
+took ports 80 and 443 from the pihole, which is stopped for now (`~/pihole`).
+
+```sh
+ssh docker-host 'cd ~/pihole && docker compose stop'
+ssh docker-host 'cd ~/caddy && docker compose up -d --build'
+ssh docker-host 'cd ~/caddy && docker compose logs -f'       # wait for the certificate
+ssh docker-host 'cd ~/caddy && docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile'   # after editing the Caddyfile
+```
+
+Away from home the same address works over Tailscale: docker-host advertises a route to its own LAN
+address, approved in the admin console (Machines → docker-host → Edit route settings). Phones, macOS
+and Windows accept routes by default (Android: "Use Tailscale subnets"); Linux needs
+`--accept-routes`.
+
+```sh
+ssh -t docker-host 'sudo tailscale set --advertise-routes=192.168.15.100/32'
+sudo tailscale set --accept-routes    # on a Linux client used away from home
+```
 
 ### Working on the hub
 

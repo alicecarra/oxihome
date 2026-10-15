@@ -11,7 +11,7 @@ dir = "config"
 [http]
 host = "0.0.0.0"
 port = 8090
-allowed_hosts = ["docker-host", "192.168.15.100", "100.94.117.37"]
+allowed_hosts = ["oxihome.alicecarra.com"]
 
 [presence]
 missed_heartbeats = 3

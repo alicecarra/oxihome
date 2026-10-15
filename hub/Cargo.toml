@@ -1,6 +1,6 @@
 [package]
 name = "oxihome-hub"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 
 [dependencies]
@@ -17,6 +17,8 @@ jiff = { version = "0.2.38", features = ["serde"] }
 croner = { version = "4", default-features = false, features = ["jiff"] }
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite-bundled", "migrate", "macros"] }
 serde_json = "1"
+argon2 = "0.5"
+password-hash = { version = "0.5", features = ["getrandom"] }
 
 [build-dependencies]
 topcoat = { version = "=0.10.0", default-features = false, features = ["icon-iconify", "tailwind", "ui"] }

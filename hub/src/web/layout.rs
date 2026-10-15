@@ -8,6 +8,7 @@ use topcoat::{
     view::{Child, View, component, view},
 };
 
+use super::auth::Auth;
 use super::icons;
 use super::toasts::toast_poller;
 use crate::hub::Hub;
@@ -25,6 +26,7 @@ pub(super) const MENU: [(&str, &str, IconData); 6] = [
 #[component]
 pub async fn layout(cx: &Cx, title: &str, #[default] child: Child<'_>) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
+    let login_enabled = app_context::<Auth>(cx).enabled();
     let since = hub.last_notification_id();
     let path = uri(cx).path().to_string();
     // A section's own pages, like `/nodes/<id>`, light up its item too.
@@ -66,6 +68,17 @@ pub async fn layout(cx: &Cx, title: &str, #[default] child: Child<'_>) -> Result
                                     icon(data: data, size: 18)
                                     (label)
                                 </a>
+                            }
+                            if login_enabled {
+                                <form method="post" action="/logout" class="flex shrink-0">
+                                    <button
+                                        type="submit"
+                                        class="flex flex-col items-center gap-1 border-b-2 border-transparent px-2 py-1 text-muted-foreground hover:border-border hover:text-foreground"
+                                    >
+                                        icon(data: icons::SIGN_OUT, size: 18)
+                                        "Sign out"
+                                    </button>
+                                </form>
                             }
                         </nav>
                     </div>

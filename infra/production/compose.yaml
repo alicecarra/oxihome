@@ -29,7 +29,8 @@ services:
     command: ["hub.toml"]
     depends_on: [mosquitto]
     ports:
-      - "8090:8090"
+      # The web interface only through Caddy (~/caddy, https://oxihome.alicecarra.com).
+      - "127.0.0.1:8090:8090"
       - "8081:8081"
     volumes:
       - ./hub:/data

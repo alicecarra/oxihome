@@ -1,3 +1,4 @@
+mod auth;
 mod buttons;
 mod chart;
 mod dashboard;
@@ -21,14 +22,18 @@ use std::sync::Arc;
 
 use topcoat::{
     Result,
+    cookie::RouterBuilderCookieExt,
     router::{
         Router,
         content::{Css, Js},
         route,
     },
+    session::{RouterBuilderSessionExt, SessionConfig},
 };
 
 use crate::hub::Hub;
+
+pub use auth::{Auth, hash_password};
 
 const HTMX: &str = include_str!("../../static/htmx.min.js");
 const HTMX_SSE: &str = include_str!("../../static/htmx-ext-sse.min.js");
@@ -40,9 +45,14 @@ const STYLESHEET: &str = include_str!(concat!(env!("OUT_DIR"), "/tailwind.css"))
 
 /// `listen_host` is the `[http] host` the hub binds to: requests must name it, one of
 /// `allowed_hosts`, or localhost.
-pub fn router(hub: Arc<Hub>, listen_host: &str, allowed_hosts: &[String]) -> Router {
+pub fn router(hub: Arc<Hub>, auth: Auth, listen_host: &str, allowed_hosts: &[String]) -> Router {
     Router::builder()
         .layer(host::HostLayer::new(listen_host, allowed_hosts))
+        // Registered before the session and cookie layers so it runs inside them.
+        .layer(auth::AuthLayer)
+        .sessions(SessionConfig::builder().lifetime(auth::LIFETIME).build())
+        .cookies()
+        .page(auth::login_page)
         .page(dashboard::dashboard_page)
         .page(dashboard::dashboard_fragment)
         .page(nodes::nodes_page)
@@ -63,6 +73,8 @@ pub fn router(hub: Arc<Hub>, listen_host: &str, allowed_hosts: &[String]) -> Rou
         .page(settings::settings)
         .page(settings::settings_file)
         .page(lab::lab)
+        .route(auth::login)
+        .route(auth::logout)
         .route(home::set)
         .route(rules::set_enabled)
         .route(node::edit)
@@ -82,6 +94,7 @@ pub fn router(hub: Arc<Hub>, listen_host: &str, allowed_hosts: &[String]) -> Rou
         .route(remote_codes_script)
         .route(stylesheet)
         .app_context(hub)
+        .app_context(auth)
         .build()
 }
 
