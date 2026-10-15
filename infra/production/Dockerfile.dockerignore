@@ -7,6 +7,7 @@
 !node
 !protocol
 !simulator
+!telegram
 !weather
 **/target
 **/*.sqlite
@@ -17,3 +18,4 @@ hub/config
 weather/weather.toml
 linux-monitor/linux-monitor.toml
 network-devices/network-devices.toml
+telegram/telegram.toml

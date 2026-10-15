@@ -46,6 +46,17 @@ services:
     volumes:
       - ./weather:/data:ro
 
+  telegram:
+    image: oxihome-telegram:current
+    container_name: oxihome-telegram
+    restart: unless-stopped
+    <<: *logging
+    user: "1000:1000"
+    command: ["telegram.toml"]
+    depends_on: [mosquitto]
+    volumes:
+      - ./telegram:/data:ro
+
   network-devices:
     image: oxihome-network-devices:current
     container_name: oxihome-network-devices

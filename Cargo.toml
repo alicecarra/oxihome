@@ -1,5 +1,5 @@
 [workspace]
 resolver = "2"
-members = ["hub", "linux-monitor", "network-devices", "node", "protocol", "simulator", "weather"]
+members = ["hub", "linux-monitor", "network-devices", "node", "protocol", "simulator", "telegram", "weather"]
 # Built with the Xtensa toolchain and its own target; see firmware/.cargo/config.toml.
 exclude = ["firmware"]

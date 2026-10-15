@@ -2,7 +2,9 @@
 *.sqlite
 *.sqlite-*
 /tmp
+/logos
 /weather/weather.toml
+/telegram/telegram.toml
 /linux-monitor/linux-monitor.toml
 /network-devices/network-devices.toml
 /hub/secrets.toml

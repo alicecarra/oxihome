@@ -1,0 +1,31 @@
+# Copy to telegram.toml (kept out of git: it holds the bot token and the broker password).
+
+[mqtt]
+host = "localhost"
+port = 1883
+password = "the node's broker password"
+# Outgoing messages waiting to be sent; new ones are dropped while it is full.
+# queue_size = 4096
+
+[node]
+id = "telegram"
+
+[telegram]
+# From @BotFather; /revoke there if it leaks.
+token = "123456789:the bot token"
+# Numeric Telegram ids allowed to send commands; anyone else is ignored without an answer.
+users = [123456789]
+# Where the rules' messages go: a user's private chat (same as the user id) or a group (negative).
+chat = 123456789
+# Commands older than this many seconds are ignored, e.g. the ones Telegram kept during an outage.
+# max_age = 60
+
+# Each one becomes an entry of the bot's menu and an option of the command event (entity 2).
+# Names: 1 to 32 lowercase letters, digits or _.
+[[commands]]
+name = "receiver"
+description = "Turn the receiver on or off"
+
+[[commands]]
+name = "achar"
+description = "Beep the test board"
