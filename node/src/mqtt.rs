@@ -1,5 +1,7 @@
 //! Runs a software node over MQTT: one connection per node, like a real board.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use oxihome_protocol::Message;
@@ -40,12 +42,14 @@ pub struct Broker {
 /// Changes a node from outside the MQTT loop, e.g. a console or a chat bot.
 pub struct Handle<N> {
     sender: mpsc::Sender<Control<N>>,
+    connected: Arc<AtomicBool>,
 }
 
 impl<N> Clone for Handle<N> {
     fn clone(&self) -> Self {
         Self {
             sender: self.sender.clone(),
+            connected: self.connected.clone(),
         }
     }
 }
@@ -77,20 +81,27 @@ impl<N> Handle<N> {
     pub async fn connect(&self) -> bool {
         self.sender.send(Control::Connect).await.is_ok()
     }
+
+    /// Whether the broker is connected now, so what `act` returns gets published.
+    pub fn is_connected(&self) -> bool {
+        self.connected.load(Ordering::Relaxed)
+    }
 }
 
 /// Spawns the node's MQTT loop on the current Tokio runtime and returns its handle. The loop
 /// reconnects by itself and ends when every handle is dropped.
 pub fn spawn<N: SoftwareNode>(node: N, broker: Broker) -> Handle<N> {
     let (sender, receiver) = mpsc::channel(16);
-    tokio::spawn(run(node, broker, receiver));
-    Handle { sender }
+    let connected = Arc::new(AtomicBool::new(false));
+    tokio::spawn(run(node, broker, receiver, connected.clone()));
+    Handle { sender, connected }
 }
 
 async fn run<N: SoftwareNode>(
     mut node: N,
     broker: Broker,
     mut controls: mpsc::Receiver<Control<N>>,
+    shared_connected: Arc<AtomicBool>,
 ) {
     let device_id = node.device_id().to_string();
     let up_topic = format!("oxihome/{device_id}/up");
@@ -141,6 +152,7 @@ async fn run<N: SoftwareNode>(
                     Some(Control::Act(action)) => action(&mut node),
                     Some(Control::Disconnect) => {
                         println!("{device_id} going offline");
+                        shared_connected.store(false, Ordering::Relaxed);
                         let _ = client.disconnect().await;
                         break true;
                     }
@@ -148,6 +160,7 @@ async fn run<N: SoftwareNode>(
                     None => break false,
                 },
             };
+            shared_connected.store(connected, Ordering::Relaxed);
             // Offline, the event loop takes no messages: they would fill the queue, and the
             // announcement after reconnecting sends the current state anyway.
             if connected {
@@ -248,6 +261,7 @@ mod tests {
         );
         tokio::time::sleep(Duration::from_millis(1500)).await;
         assert!(reports.load(Ordering::Relaxed) > 20);
+        assert!(!handle.is_connected());
         assert!(handle.act(|_| Vec::new()).await);
     }
 }
