@@ -11,6 +11,12 @@ name = "Home"
 
 [[dashboards.blocks]]
 type = "buttons"
+title = "Receiver"
+width = 3
+buttons = ["Power"]
+
+[[dashboards.blocks]]
+type = "buttons"
 title = "Test board"
 buttons = ["Turn on", "Turn off"]
 

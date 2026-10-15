@@ -486,6 +486,7 @@ fn driver_label(driver: &Driver) -> String {
         } => format!("DHT11, read every {read_interval_seconds} s"),
         Driver::Buzzer => "buzzer".into(),
         Driver::IrReceiver => "IR receiver".into(),
+        Driver::IrTransmitter => "IR transmitter".into(),
         Driver::Potentiometer { minimum_change } => {
             format!("potentiometer, changes of {minimum_change}% or more")
         }

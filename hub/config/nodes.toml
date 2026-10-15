@@ -6,7 +6,7 @@
 # hardware: what is wired to each pin of a board, sent when the board mounts something else (it
 # restarts to apply it); without it the hub leaves the board's hardware alone. Drivers and options:
 # output (inverted = false), button (pull_up = true, toggles = <output entity>),
-# dht11 (read_interval_seconds = 30, 2-3600), buzzer, ir_receiver,
+# dht11 (read_interval_seconds = 30, 2-3600), buzzer, ir_receiver, ir_transmitter,
 # potentiometer (minimum_change = 2 percent, 1-50).
 
 [nodes."esp32-08d1f9ca41e4"]
@@ -33,10 +33,12 @@ hardware = [
 name = "Outra placa"
 entities.1 = { name = "LED", channels.0 = "Power" }
 entities.2 = { name = "BOOT button", channels.0 = "Press" }
+entities.3 = { name = "IR transmitter", channels.0 = "Code" }
 parameters = { heartbeat_interval = 30, wifi_check_interval = 5 }
 hardware = [
     { id = 1, pin = 2, driver = "output" },
     { id = 2, pin = 0, driver = "button", toggles = 1 },
+    { id = 3, pin = 18, driver = "ir_transmitter" },
 ]
 
 [nodes."sim-living-room"]
