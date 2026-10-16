@@ -6,6 +6,7 @@
 !network-devices
 !node
 !protocol
+!rss
 !simulator
 !telegram
 !weather
@@ -19,3 +20,5 @@ weather/weather.toml
 linux-monitor/linux-monitor.toml
 network-devices/network-devices.toml
 telegram/telegram.toml
+rss/rss.toml
+rss/rss-state.json

@@ -222,7 +222,7 @@ access:
 docker compose -f infra/compose.yaml up -d
 ```
 
-Each node logs in with its device id as the user name (`esp32-<mac>`, `weather`, `network-devices`, `notebook`...);
+Each node logs in with its device id as the user name (`esp32-<mac>`, `weather`, `network-devices`, `telegram`, `rss`, `notebook`...);
 the hub is `oxihome-hub` and `observer` only reads. The ACL in `infra/mosquitto/acl` (in git: it has
 no secrets) lets a node publish only on `oxihome/<its id>/up` and read only its own `down` and the
 broadcast; only the hub publishes on `down`. The client id is forced to the user name, so a login
@@ -601,7 +601,7 @@ current state. (Until 2026-10-13 a full queue of 32 blocked the loop for good: a
 the broker for a few minutes stopped reconnecting, though its service still showed as running.)
 
 `NodeCore::new` takes the node's `Build`, sent in its `Hello`: a short `name` that says what the
-program is (`firmware`, `weather`, `linux-monitor`, `network-devices`, `simulator`), its `version`
+program is (`firmware`, `weather`, `linux-monitor`, `network-devices`, `telegram`, `rss`, `simulator`), its `version`
 (`major.minor.patch`, from its `Cargo.toml`: raise it when the node changes) and its `target`
 (`esp32` for the firmware, from `MCU`; `Build::native` gives `<os>-<architecture>`, e.g.
 `linux-x86_64`, for the software nodes). The hub shows it as **Software**, e.g.
@@ -726,6 +726,100 @@ it answered once offline. A rule with `event = "Received"` and `data = "offline"
 entity catches it leaving. Entity 100 is the whole network: channel 0 how many devices answered the
 last scan, channel 1 how many of them are not in `[[devices]]`. Those counts have no waiting time,
 so sleeping phones make them go up and down; no MAC of an unknown device leaves the node.
+
+## Telegram bot
+
+`telegram/` (`oxihome-telegram`) is a software node that links the house to a Telegram chat: rules
+send messages to it, and the commands typed there become events. It uses `teloxide-core` (the Bot
+API client only, with `rustls`) and long polling, so nothing is open to the internet. The plan and
+its decisions are in the Trilium note "Bot do Telegram".
+
+First, in Telegram, with [@BotFather](https://t.me/BotFather): `/newbot` (a name and a user name
+ending in `bot`) gives the token; `/setjoingroups`, pick the bot, `Disable`, so nobody can add it
+to a group. Your numeric user id comes from [@userinfobot](https://t.me/userinfobot) (send it any
+message). Send the new bot a message too: a bot cannot start a private chat. Only one program may
+poll a bot (a second `getUpdates` gets error 409), so working on the notebook while production
+runs needs a second bot with its own token.
+
+```sh
+cp telegram/telegram.toml.example telegram/telegram.toml   # then the token, users, chat and commands
+chmod 600 telegram/telegram.toml
+infra/mosquitto/set-password.sh telegram   # the password goes in [mqtt] password
+cargo run -p oxihome-telegram -- telegram/telegram.toml
+```
+
+`telegram/telegram.toml` stays out of git because it holds the bot token and the broker password.
+`users` are the Telegram ids allowed to command; messages from anyone else are ignored without an
+answer and logged. `chat` is where the rules' messages go (your user id for the private chat). Each
+`[[commands]]` becomes an entry of the bot's menu (sent with `setMyCommands` at start) and an option
+of the command event; names are 1 to 32 lowercase letters, digits or `_`.
+
+Entities: 1 message, two `Trigger` channels of `Text` (up to 4096 bytes): 0 sends to `chat` with
+sound, 1 silently. 2 command, an `Event` channel of `Enum` with the declared commands: `/receiver`
+becomes `Received` with `receiver`. 3 connection: 0 whether Telegram answers `getUpdates` (`Bool`),
+1 the last API error (`Text`). Example rules:
+
+```toml
+[[rules]]
+name = "Receiver from Telegram"
+when = { device = "telegram", entity = 2, channel = 0, event = "Received", data = "receiver" }
+then = [{ invoke = { device = "esp32-14335c2e7270", entity = 3, channel = 0, value = "SONY15 30 15" } }]
+
+[[rules]]
+name = "Warn on Telegram when a node goes offline"
+when = { offline = "*" }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "A node went offline" } }]
+```
+
+A command is accepted only when it is declared, at most 10 per minute, and younger than `max_age`
+(60 s by default: after an outage Telegram delivers what it kept, up to 24 h). An accepted command
+gets a 👍 reaction, which means it reached the broker, not that a rule ran; with the broker down the
+bot answers that the command was not delivered. Anything else from an allowed user gets the list of
+commands. Messages go as plain text, one at a time; one that cannot go out (no internet) is tried
+again for 5 minutes and then dropped, and Telegram's flood limit (429) is respected.
+
+## RSS node
+
+`rss/` (`oxihome-rss`) is a software node that follows RSS, Atom and JSON feeds (read with
+`feed-rs`): an event for each new item and an unread count per feed, kept across restarts. The plan
+and its decisions are in the Trilium note "Nó de RSS".
+
+```sh
+cp rss/rss.toml.example rss/rss.toml   # then the broker password and the feeds
+chmod 600 rss/rss.toml
+infra/mosquitto/set-password.sh rss    # the password goes in [mqtt] password
+cargo run -p oxihome-rss -- rss/rss.toml
+```
+
+`rss/rss.toml` stays out of git because it holds the broker password. Each `[[feeds]]` has a fixed
+`entity` from 2 up (the hub keeps history, rules and its own names by number, so removing a feed
+must not renumber the others), a `name` (the entity's name on the hub, and in the log), the `url`, an `interval` in minutes (30 when missing, at least 15)
+and an optional `filter`, a regular expression on the title that ignores case. GitHub releases are
+at `<repository>/releases.atom`, crates.io versions at
+`https://static.crates.io/rss/crates/<crate>.xml`, a YouTube channel at
+`https://www.youtube.com/feeds/videos.xml?channel_id=<id>`, a subreddit at
+`https://www.reddit.com/r/<name>/.rss`.
+
+Entities: 1 all feeds, 0 "mark all as read" (`Trigger` without value), 1 the total unread
+(`Int`). Each feed: 0 the newest item's title (`Text`), 1 its link (`Text`), 2 unread (`Int`), 3
+"mark as read" (`Trigger`), 4 whether the feed answers (`Bool`, false after 3 failures in a row), 5
+new item (`Event` of `Text`, `title — link`, `Received`). An example rule:
+
+```toml
+[[rules]]
+name = "Beep on a new Mosquitto release"
+when = { device = "rss", entity = 4, channel = 5, event = "Received" }
+then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Short" } }]
+```
+
+The first fetch of a feed (and of a feed whose URL changed) only marks its items as seen, so
+nothing floods in. Afterwards, new items that pass the filter count as unread and become events,
+oldest first, at most 10 per fetch (the rest only count). Opening a link does not mark anything as
+read; only the two `Trigger`s do. `rss/rss-state.json`, next to the configuration, keeps the seen
+ids (the last fetch's plus up to 500 older ones), the unread counts and the newest title and link;
+it is written through a temporary file, so the directory must be writable. Fetches use `ETag` and
+`If-Modified-Since` (kept in memory only), a 30 s timeout and a 5 MB limit; the feeds start 10 s
+apart.
 
 ## Simulator
 
@@ -854,7 +948,9 @@ Files on the server, each made once by hand: `~/oxihome/hub/hub.toml` (a copy of
 production `[http] password_hash`, see "Login") and
 `~/oxihome/weather/weather.toml` (the local one with `host = "mosquitto"`) and
 `~/oxihome/network-devices/network-devices.toml` (the local one with `host = "localhost"`: it runs
-on the host's network to read its ARP table). The web interface is
+on the host's network to read its ARP table) and `~/oxihome/telegram/telegram.toml` (the production
+bot's token, `host = "mosquitto"`) and `~/oxihome/rss/rss.toml` (`host = "mosquitto"`; the node
+writes `rss-state.json` there, so that volume is not read only). The web interface is
 at <https://oxihome.alicecarra.com>, through Caddy (see "HTTPS"); the hub publishes 8090 only on
 the server's localhost. The containers run as uid 1000, the owner of `~/oxihome`.
 
@@ -865,6 +961,14 @@ scp -p hub/secrets.toml docker-host:oxihome/hub/secrets.toml
 sed 's/^host = "192.168.15.100"/host = "mosquitto"/' weather/weather.toml | ssh docker-host 'umask 077; cat > ~/oxihome/weather/weather.toml'
 ssh docker-host 'mkdir -p ~/oxihome/network-devices && chmod 700 ~/oxihome/network-devices'
 sed 's/^host = "192.168.15.100"/host = "localhost"/' network-devices/network-devices.toml | ssh docker-host 'umask 077; cat > ~/oxihome/network-devices/network-devices.toml'
+ssh docker-host 'mkdir -p ~/oxihome/telegram && chmod 700 ~/oxihome/telegram'
+ssh docker-host oxihome/mosquitto/set-password.sh telegram   # the password for [mqtt] password
+sed 's/^host = .*/host = "mosquitto"/' telegram/telegram.toml | ssh docker-host 'umask 077; cat > ~/oxihome/telegram/telegram.toml'
+infra/production/deploy.sh telegram
+ssh docker-host 'mkdir -p ~/oxihome/rss && chmod 700 ~/oxihome/rss'
+ssh docker-host oxihome/mosquitto/set-password.sh rss   # the password for [mqtt] password
+sed 's/^host = .*/host = "mosquitto"/' rss/rss.toml | ssh docker-host 'umask 077; cat > ~/oxihome/rss/rss.toml'
+infra/production/deploy.sh rss
 ```
 
 The first hub deploy took the notebook's configuration and database by faking a dev session

@@ -1,0 +1,42 @@
+# Copy to rss.toml (kept out of git: it holds the broker password).
+# What the node remembers (seen items, unread counts) goes to rss-state.json next to this file.
+
+[mqtt]
+host = "localhost"
+port = 1883
+password = "the node's broker password"
+# Outgoing messages waiting to be sent; new ones are dropped while it is full.
+# queue_size = 4096
+
+[node]
+id = "rss"
+
+# Entity 1 is "all feeds". Each feed has a fixed entity from 2 up: the hub keeps history, rules
+# and its own names by number, so removing a feed must not renumber the others.
+# name: the entity's name on the hub.
+# interval: minutes between fetches, 30 when missing, at least 15.
+# filter: a regular expression on the title, ignoring case; other items are skipped.
+
+[[feeds]]
+entity = 2
+# The esp-idf repository: esp-idf-hal, esp-idf-svc and esp-idf-sys releases.
+name = "esp-idf releases"
+url = "https://github.com/esp-rs/esp-idf/releases.atom"
+
+[[feeds]]
+entity = 3
+name = "jiff releases"
+url = "https://github.com/BurntSushi/jiff/releases.atom"
+# Only jiff itself ("0.2.38"), not jiff-static, jiff-tzdb...
+filter = "^[0-9]"
+
+[[feeds]]
+entity = 4
+name = "Mosquitto releases"
+url = "https://github.com/eclipse-mosquitto/mosquitto/releases.atom"
+interval = 120
+
+[[feeds]]
+entity = 5
+name = "Topcoat versions"
+url = "https://static.crates.io/rss/crates/topcoat.xml"
