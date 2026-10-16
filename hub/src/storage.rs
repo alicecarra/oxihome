@@ -173,6 +173,8 @@ pub struct TimelineQuery {
     pub kind: Option<TimelineKind>,
     /// Rule runs are about no node, so they are left out.
     pub device_id: Option<String>,
+    /// Its runs, the commands it sent and its notifications; events and updates are left out.
+    pub rule: Option<String>,
     pub before: Option<Timestamp>,
     pub limit: usize,
 }
@@ -411,17 +413,17 @@ impl Storage {
         let wanted = |kind: TimelineKind| query.kind.is_none_or(|chosen| chosen == kind);
         let before = query.before.map_or(i64::MAX, Timestamp::as_millisecond);
         let device_id = query.device_id.as_deref();
+        let rule = query.rule.as_deref();
         let limit = i64::try_from(query.limit)?;
         let mut entries = Vec::new();
-        if wanted(TimelineKind::Events) {
+        if wanted(TimelineKind::Events) && rule.is_none() {
             for row in self
                 .timeline_rows(
                     "SELECT device_id, entity, channel, at, kind, data FROM events
-                     WHERE at < ? {device} AND NOT (kind = 'Received' AND COALESCE(data, '') LIKE '% repeat\"}')
+                     WHERE at < ? {filter} AND NOT (kind = 'Received' AND COALESCE(data, '') LIKE '% repeat\"}')
                      ORDER BY at DESC LIMIT ?",
-                    "device_id",
+                    &[("device_id", device_id)],
                     before,
-                    device_id,
                     limit,
                 )
                 .await?
@@ -433,11 +435,10 @@ impl Storage {
         if wanted(TimelineKind::Rules) && device_id.is_none() {
             for row in self
                 .timeline_rows(
-                    "SELECT name, at, errors FROM rule_executions WHERE at < ? {device}
+                    "SELECT name, at, errors FROM rule_executions WHERE at < ? {filter}
                      ORDER BY at DESC LIMIT ?",
-                    "name",
+                    &[("name", rule)],
                     before,
-                    None,
                     limit,
                 )
                 .await?
@@ -455,10 +456,9 @@ impl Storage {
             for row in self
                 .timeline_rows(
                     "SELECT device_id, entity, channel, at, operation, value, rule, error
-                     FROM commands WHERE at < ? {device} ORDER BY at DESC LIMIT ?",
-                    "device_id",
+                     FROM commands WHERE at < ? {filter} ORDER BY at DESC LIMIT ?",
+                    &[("device_id", device_id), ("rule", rule)],
                     before,
-                    device_id,
                     limit,
                 )
                 .await?
@@ -479,11 +479,10 @@ impl Storage {
         if wanted(TimelineKind::Notifications) {
             for row in self
                 .timeline_rows(
-                    "SELECT at, title, message, source FROM notifications WHERE at < ? {device}
+                    "SELECT at, title, message, source FROM notifications WHERE at < ? {filter}
                      ORDER BY at DESC LIMIT ?",
-                    "source",
+                    &[("source", device_id), ("source", rule)],
                     before,
-                    device_id,
                     limit,
                 )
                 .await?
@@ -496,15 +495,14 @@ impl Storage {
                 }));
             }
         }
-        if wanted(TimelineKind::Updates) {
+        if wanted(TimelineKind::Updates) && rule.is_none() {
             for row in self
                 .timeline_rows(
                     "SELECT device_id, started_at, finished_at, from_version, to_version, outcome,
                             detail
-                     FROM updates WHERE finished_at < ? {device} ORDER BY finished_at DESC LIMIT ?",
-                    "device_id",
+                     FROM updates WHERE finished_at < ? {filter} ORDER BY finished_at DESC LIMIT ?",
+                    &[("device_id", device_id)],
                     before,
-                    device_id,
                     limit,
                 )
                 .await?
@@ -525,24 +523,27 @@ impl Storage {
         Ok(entries)
     }
 
-    /// Runs `sql` with `{device}` replaced by a filter on `device_column` when `device_id` is set.
+    /// Runs `sql` with `{filter}` replaced by `AND column = ?` for each column whose value is set.
     async fn timeline_rows(
         &self,
         sql: &str,
-        device_column: &str,
+        filters: &[(&str, Option<&str>)],
         before: i64,
-        device_id: Option<&str>,
         limit: i64,
     ) -> anyhow::Result<Vec<sqlx::sqlite::SqliteRow>> {
-        let filter = match device_id {
-            Some(_) => format!("AND {device_column} = ?"),
-            None => String::new(),
-        };
-        let sql = sql.replace("{device}", &filter);
-        // The filter only names a column given by the code.
+        let filters: Vec<(&str, &str)> = filters
+            .iter()
+            .filter_map(|(column, value)| Some((*column, (*value)?)))
+            .collect();
+        let filter: String = filters
+            .iter()
+            .map(|(column, _)| format!("AND {column} = ? "))
+            .collect();
+        let sql = sql.replace("{filter}", &filter);
+        // The filter only names columns given by the code.
         let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(before);
-        if let Some(device_id) = device_id {
-            query = query.bind(device_id);
+        for (_, value) in filters {
+            query = query.bind(value);
         }
         Ok(query.bind(limit).fetch_all(&self.pool).await?)
     }
@@ -1147,6 +1148,27 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(about_b.len(), 1);
+
+        let about_night = storage
+            .timeline(&TimelineQuery {
+                rule: Some("Night".into()),
+                limit: 10,
+                ..TimelineQuery::default()
+            })
+            .await
+            .unwrap();
+        let times: Vec<Timestamp> = about_night.iter().map(TimelineEntry::at).collect();
+        assert_eq!(times, vec![at(3), at(2)]);
+
+        let about_other = storage
+            .timeline(&TimelineQuery {
+                rule: Some("Morning".into()),
+                limit: 10,
+                ..TimelineQuery::default()
+            })
+            .await
+            .unwrap();
+        assert!(about_other.is_empty());
 
         let older = storage
             .timeline(&TimelineQuery {

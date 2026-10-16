@@ -24,11 +24,12 @@ use crate::storage::{
 
 const PAGE_SIZE: usize = 100;
 
-/// The kind and node picked on the page.
+/// The kind, node and rule picked on the page.
 #[derive(Clone, Default)]
 struct Filter {
     kind: Option<TimelineKind>,
     device_id: Option<String>,
+    rule: Option<String>,
 }
 
 impl Filter {
@@ -41,6 +42,10 @@ impl Filter {
                 .get("node")
                 .filter(|device_id| !device_id.is_empty())
                 .cloned(),
+            rule: parameters
+                .get("rule")
+                .filter(|rule| !rule.is_empty())
+                .cloned(),
         }
     }
 
@@ -51,6 +56,9 @@ impl Filter {
         }
         if let Some(device_id) = &self.device_id {
             parts.push(format!("node={}", query_value(device_id)));
+        }
+        if let Some(rule) = &self.rule {
+            parts.push(format!("rule={}", query_value(rule)));
         }
         parts.join("&")
     }
@@ -105,6 +113,7 @@ async fn timeline_page(
         .timeline(&TimelineQuery {
             kind: filter.kind,
             device_id: filter.device_id.clone(),
+            rule: filter.rule.clone(),
             before,
             limit: PAGE_SIZE,
         })
@@ -321,6 +330,12 @@ pub async fn timeline(cx: &Cx) -> Result<impl View> {
         .collect();
     let chosen_kind = filter.kind.map(TimelineKind::key).unwrap_or_default();
     let chosen_node = filter.device_id.clone().unwrap_or_default();
+    let chosen_rule = filter.rule.clone().unwrap_or_default();
+    let mut rule_names: Vec<String> = hub.rules().into_iter().map(|rule| rule.name).collect();
+    // A rule taken out of rules.toml keeps its history.
+    if !chosen_rule.is_empty() && !rule_names.contains(&chosen_rule) {
+        rule_names.push(chosen_rule.clone());
+    }
     Ok(view! {
         layout(
             title: "Oxihome timeline",
@@ -338,8 +353,17 @@ pub async fn timeline(cx: &Cx) -> Result<impl View> {
                             <option value=(device_id.clone()) if device_id == chosen_node { selected="" }>(name)</option>
                         }
                     </select>
+                    <select name="rule" class=(SELECT) onchange="this.form.submit()" aria-label="Rule">
+                        <option value="" if chosen_rule.is_empty() { selected="" }>"All rules"</option>
+                        for name in rule_names {
+                            <option value=(name.clone()) if name == chosen_rule { selected="" }>(name)</option>
+                        }
+                    </select>
                     if filter.device_id.is_some() && filter.kind.is_none_or(|kind| kind == TimelineKind::Rules) {
                         <p class="text-sm text-muted-foreground">"Rule runs are not about one node, so they are hidden."</p>
+                    }
+                    if filter.rule.is_some() && filter.kind.is_none_or(|kind| matches!(kind, TimelineKind::Events | TimelineKind::Updates)) {
+                        <p class="text-sm text-muted-foreground">"Events and updates are not about a rule, so they are hidden."</p>
                     }
                 </form>
                 live_updates(query: filter.query())

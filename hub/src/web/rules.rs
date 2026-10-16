@@ -8,7 +8,7 @@ use topcoat::{
     view::{View, ViewExt, ViewHandle, attributes, component, view},
 };
 
-use super::format::{ago_label, rule_anchor};
+use super::format::{ago_label, query_value, rule_anchor};
 use super::layout::layout;
 use super::overview::{self, RuleOverview};
 use crate::components::badge::{BadgeVariant, badge};
@@ -176,6 +176,14 @@ async fn rule_card(rule: RuleOverview) -> Result<impl View> {
                 for error in errors {
                     <p class="mt-3 text-sm text-destructive">(error)</p>
                 }
+                <div class="mt-3 flex justify-end">
+                    <a
+                        href=(format!("/timeline?rule={}", query_value(&rule.name)))
+                        class="text-sm font-medium text-muted-foreground hover:text-foreground hover:underline"
+                    >
+                        "History"
+                    </a>
+                </div>
             )
         )
     })
