@@ -10,8 +10,8 @@ use topcoat::{
     view::{Child, View, attributes, component, view},
 };
 
-use super::icons;
 use super::format::{ago_label, duration_label, entity_label, value_label};
+use super::icons;
 use super::layout::layout;
 use super::overview::{self, ChannelOverview, Invocation, NodeOverview, Presence};
 use crate::components::badge::{BadgeVariant, badge};
@@ -28,7 +28,13 @@ pub async fn nodes_page(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         layout(
             title: "Oxihome nodes",
-            <div id="node-filter" class="mb-4 flex flex-wrap gap-2">
+            <div
+                id="node-filter"
+                data-filter-items="#nodes"
+                data-filter-attribute="presence"
+                data-filter-empty="nodes-filtered-out"
+                class="mb-4 flex flex-wrap gap-2"
+            >
                 for (presence, label) in [("online", "Online"), ("offline", "Offline"), ("not-seen", "Not seen")] {
                     button(
                         variant: ButtonVariant::Outline,
@@ -48,7 +54,7 @@ pub async fn nodes_page(cx: &Cx) -> Result<impl View> {
                 node_list(nodes: overview::nodes(hub))
             </div>
             <p id="nodes-filtered-out" class="text-muted-foreground" hidden="">"No nodes match the filter."</p>
-            <script src="/static/node-filter.js"></script>
+            <script src="/static/filter.js"></script>
             <script src="/static/node-sort.js"></script>
         )
     })
@@ -124,7 +130,11 @@ async fn node_row(node: NodeOverview) -> Result<impl View> {
             .iter()
             .map(configured_entity_label)
             .collect();
-        (configured, format!("{configured} configured"), names.join("; "))
+        (
+            configured,
+            format!("{configured} configured"),
+            names.join("; "),
+        )
     } else {
         // The management entity holds node parameters, not things in the home.
         let declared = node

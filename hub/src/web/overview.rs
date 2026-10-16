@@ -16,8 +16,8 @@ use crate::config::rules::{
 };
 use crate::hub::{Hub, Snapshot};
 use crate::node::events::{EventRecord, data_label};
-use crate::storage::StoredNotification;
 use crate::node::registry::{Node, Registry};
+use crate::storage::StoredNotification;
 
 #[derive(Clone)]
 pub struct NodeOverview {
@@ -111,8 +111,6 @@ pub struct RuleOverview {
     pub conditions: Vec<String>,
     pub actions: Vec<ActionOverview>,
     pub enabled: bool,
-    /// Button rules only.
-    pub button: Option<String>,
     /// Scheduled rules only.
     pub next_run: Option<String>,
     /// How long ago it ran and the errors of the actions that failed.
@@ -425,9 +423,7 @@ pub fn rules_summary(hub: &Hub, upcoming_count: usize) -> RulesSummary {
     let mut failed: Vec<(String, Duration, Vec<String>)> = hub
         .rule_runs()
         .into_iter()
-        .filter(|(name, run)| {
-            !run.errors.is_empty() && rules.iter().any(|rule| &rule.name == name)
-        })
+        .filter(|(name, run)| !run.errors.is_empty() && rules.iter().any(|rule| &rule.name == name))
         .map(|(name, run)| (name, elapsed(run.at, now), run.errors))
         .collect();
     failed.sort_by_key(|(_, ago, _)| *ago);
@@ -505,10 +501,6 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
         .into_iter()
         .map(|rule| RuleOverview {
             trigger: trigger_description(&snapshot.nodes, &snapshot.registry, &rule.when),
-            button: match &rule.when {
-                Trigger::Button(trigger) => Some(trigger.button.clone()),
-                _ => None,
-            },
             next_run: rule
                 .when
                 .next_run(&local_now)
@@ -624,6 +616,12 @@ fn threshold_description(nodes: &Nodes, registry: &Registry, trigger: &Threshold
         "{target}: {word} {}",
         value_label(&Value::Float(limit), unit)
     )
+}
+
+/// A condition with friendly names, as the rules page lists it.
+pub fn condition(hub: &Hub, condition: &Condition) -> String {
+    let snapshot = hub.snapshot();
+    condition_description(&snapshot.nodes, &snapshot.registry, condition)
 }
 
 fn condition_description(nodes: &Nodes, registry: &Registry, condition: &Condition) -> String {

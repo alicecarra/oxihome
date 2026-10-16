@@ -276,7 +276,10 @@ impl Hub {
     }
 
     /// Newest first.
-    pub async fn recent_events(&self, limit: usize) -> anyhow::Result<Vec<(EventRecord, Timestamp)>> {
+    pub async fn recent_events(
+        &self,
+        limit: usize,
+    ) -> anyhow::Result<Vec<(EventRecord, Timestamp)>> {
         self.storage.recent_events(limit).await
     }
 

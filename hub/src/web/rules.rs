@@ -15,6 +15,7 @@ use crate::components::badge::{BadgeVariant, badge};
 use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::card::{card, card_content, card_header, card_title};
 use crate::components::switch::switch;
+use crate::config::rules::run;
 use crate::hub::Hub;
 
 #[page("/rules")]
@@ -31,12 +32,37 @@ pub async fn rules(cx: &Cx) -> Result<impl View> {
                 </div>
                 if rules.is_empty() {
                     <p class="text-muted-foreground">"No rules yet."</p>
+                } else {
+                    <div
+                        id="rule-filter"
+                        data-filter-items="#rules"
+                        data-filter-attribute="status"
+                        data-filter-empty="rules-filtered-out"
+                        class="flex flex-wrap gap-2"
+                    >
+                        for (status, label) in [("ok", "OK"), ("failed", "Failed"), ("never-ran", "Never ran"), ("disabled", "Disabled")] {
+                            button(
+                                variant: ButtonVariant::Outline,
+                                size: ButtonSize::Sm,
+                                attrs: attributes! {
+                                    type="button"
+                                    data-filter=(status)
+                                    aria-pressed="true"
+                                    class="aria-pressed:border-transparent aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:hover:bg-primary/90"
+                                },
+                                (label)
+                                <span data-count="" class="tabular-nums opacity-70"></span>
+                            )
+                        }
+                    </div>
+                    <div id="rules" class="grid items-start gap-4 md:grid-cols-2">
+                        for rule in rules {
+                            rule_card(rule: rule)
+                        }
+                    </div>
+                    <p id="rules-filtered-out" class="text-muted-foreground" hidden="">"No rules match the filter."</p>
+                    <script src="/static/filter.js"></script>
                 }
-                <div class="grid items-start gap-4 md:grid-cols-2">
-                    for rule in rules {
-                        rule_card(rule: rule)
-                    }
-                </div>
             </div>
         )
     })
@@ -44,17 +70,21 @@ pub async fn rules(cx: &Cx) -> Result<impl View> {
 
 #[component]
 async fn rule_card(rule: RuleOverview) -> Result<impl View> {
-    let (variant, status) = if !rule.enabled {
-        (BadgeVariant::Muted, "disabled".to_string())
+    // The key is what the filter matches, in `data-status`.
+    let (variant, status, key) = if !rule.enabled {
+        (BadgeVariant::Muted, "disabled".to_string(), "disabled")
     } else {
         match &rule.last_run {
-            None => (BadgeVariant::Muted, "never ran".to_string()),
-            Some((ago, errors)) if errors.is_empty() => {
-                (BadgeVariant::Success, format!("ok · {}", ago_label(*ago)))
-            }
+            None => (BadgeVariant::Muted, "never ran".to_string(), "never-ran"),
+            Some((ago, errors)) if errors.is_empty() => (
+                BadgeVariant::Success,
+                format!("ok · {}", ago_label(*ago)),
+                "ok",
+            ),
             Some((ago, _)) => (
                 BadgeVariant::Destructive,
                 format!("failed · {}", ago_label(*ago)),
+                "failed",
             ),
         }
     };
@@ -63,6 +93,7 @@ async fn rule_card(rule: RuleOverview) -> Result<impl View> {
         card(
             attrs: attributes! {
                 id=(rule_anchor(&rule.name))
+                data-status=(key)
                 // Highlighted when a link from a node's page points at it.
                 class=(if rule.enabled { "scroll-mt-4 target:ring-2 target:ring-ring h-full" } else { "scroll-mt-4 opacity-60 target:ring-2 target:ring-ring h-full" })
             },
@@ -97,14 +128,19 @@ async fn rule_card(rule: RuleOverview) -> Result<impl View> {
                     <dt class="text-muted-foreground">"When"</dt>
                     <dd class="flex items-center justify-between gap-2">
                         (rule.trigger)
-                        if let Some(name) = rule.button.filter(|_| rule.enabled) {
-                            <form hx-post="/buttons/press" hx-target="#status">
-                                <input type="hidden" name="button" value=(name)>
+                        if rule.enabled {
+                            <form
+                                hx-post="/rules/run"
+                                hx-target=(format!("#{}", rule_anchor(&rule.name)))
+                                hx-swap="outerHTML"
+                                hx-disabled-elt="find button"
+                            >
+                                <input type="hidden" name="name" value=(rule.name.clone())>
                                 button(
                                     variant: ButtonVariant::Secondary,
                                     size: ButtonSize::Sm,
-                                    attrs: attributes! { type="submit" },
-                                    "Press"
+                                    attrs: attributes! { type="submit" class="whitespace-nowrap" },
+                                    "Run now"
                                 )
                             </form>
                         }
@@ -169,6 +205,54 @@ pub async fn set_enabled(cx: &Cx, Form(form): Form<EnabledForm>) -> Result<ViewH
         <div id="status" class="mb-4" hx-swap-oob="true">
             if let Err(error) = result {
                 <pre class="text-sm whitespace-pre-wrap text-destructive">(format!("{error:#}"))</pre>
+            }
+        </div>
+    }
+    .single()
+    .await
+}
+
+#[derive(Deserialize)]
+struct RunForm {
+    name: String,
+}
+
+/// Runs the rule as its trigger would, conditions included, and answers with its card once the
+/// actions are done; a skip shows in `#status` out of band.
+#[route(POST "/rules/run")]
+pub async fn run_now(cx: &Cx, Form(form): Form<RunForm>) -> Result<ViewHandle> {
+    let hub: &Arc<Hub> = app_context(cx);
+    let rule = hub
+        .rules()
+        .into_iter()
+        .find(|rule| rule.name == form.name && rule.enabled);
+    let (class, message) = match rule {
+        None => (
+            "text-destructive",
+            Some(format!("No enabled rule is named \"{}\"", form.name)),
+        ),
+        Some(rule) => (
+            "text-muted-foreground",
+            run(hub.clone(), rule).await.map(|condition| {
+                format!(
+                    "{}: skipped, \"{}\" does not hold",
+                    form.name,
+                    overview::condition(hub, &condition)
+                )
+            }),
+        ),
+    };
+    let rule = overview::rules(hub)
+        .into_iter()
+        .find(|rule| rule.name == form.name);
+
+    view! { cx =>
+        if let Some(rule) = rule {
+            rule_card(rule: rule)
+        }
+        <div id="status" class="mb-4" hx-swap-oob="true">
+            if let Some(message) = message {
+                <p class=(format!("text-sm {class}"))>(message)</p>
             }
         </div>
     }

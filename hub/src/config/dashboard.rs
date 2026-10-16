@@ -188,7 +188,10 @@ impl Dashboards {
                         bail!("{place}: only a history block has range")
                     }
                     Some(range) if !HISTORY_RANGES.contains(&range.as_str()) => {
-                        bail!("{place}: range must be one of {}", HISTORY_RANGES.join(", "))
+                        bail!(
+                            "{place}: range must be one of {}",
+                            HISTORY_RANGES.join(", ")
+                        )
                     }
                     _ => {}
                 }
@@ -251,8 +254,10 @@ mod tests {
     "#;
 
     fn rules() -> Rules {
-        toml::from_str("[[rules]]\nname = \"Lights off\"\nwhen = { button = \"Good night\" }\nthen = []")
-            .unwrap()
+        toml::from_str(
+            "[[rules]]\nname = \"Lights off\"\nwhen = { button = \"Good night\" }\nthen = []",
+        )
+        .unwrap()
     }
 
     fn error(text: &str) -> String {
@@ -297,18 +302,36 @@ mod tests {
 
     #[test]
     fn invalid_blocks_are_refused() {
-        let block = |fields: &str| format!("[[dashboards]]\nname = \"Home\"\n[[dashboards.blocks]]\n{fields}");
+        let block = |fields: &str| {
+            format!("[[dashboards]]\nname = \"Home\"\n[[dashboards.blocks]]\n{fields}")
+        };
         assert!(error(&block("type = \"nodes\"\nwidth = 4")).contains("width"));
         assert!(error(&block("type = \"channels\"")).contains("needs channels"));
         assert!(error(&block("type = \"buttons\"")).contains("needs buttons"));
         assert!(error(&block("type = \"buttons\"\nbuttons = [\"Alarm\"]")).contains("no rule has"));
-        assert!(error(&block("type = \"nodes\"\nbuttons = [\"Good night\"]")).contains("only a buttons"));
+        assert!(
+            error(&block("type = \"nodes\"\nbuttons = [\"Good night\"]"))
+                .contains("only a buttons")
+        );
         let channel = "channel = { device = \"weather\", entity = 1, channel = 0 }";
         assert!(error(&block("type = \"value\"")).contains("value block needs channel"));
         assert!(error(&block("type = \"history\"")).contains("history block needs channel"));
-        assert!(error(&block(&format!("type = \"rules\"\n{channel}"))).contains("only value and history"));
-        assert!(error(&block(&format!("type = \"history\"\n{channel}\nrange = \"2d\""))).contains("range must be"));
-        assert!(error(&block(&format!("type = \"value\"\n{channel}\nrange = \"1h\""))).contains("only a history"));
+        assert!(
+            error(&block(&format!("type = \"rules\"\n{channel}")))
+                .contains("only value and history")
+        );
+        assert!(
+            error(&block(&format!(
+                "type = \"history\"\n{channel}\nrange = \"2d\""
+            )))
+            .contains("range must be")
+        );
+        assert!(
+            error(&block(&format!(
+                "type = \"value\"\n{channel}\nrange = \"1h\""
+            )))
+            .contains("only a history")
+        );
         assert!(error(&block("type = \"events\"\nlimit = 0")).contains("limit must be"));
         assert!(error(&block("type = \"rules\"\nlimit = 5")).contains("only events and feeds"));
         assert!(error(&block("type = \"feeds\"")).contains("feeds block needs device"));

@@ -797,9 +797,9 @@ impl Rules {
 
     /// The rule a button runs.
     pub fn button(&self, button: &str) -> Option<&Rule> {
-        self.rules.iter().find(|rule| {
-            matches!(&rule.when, Trigger::Button(trigger) if trigger.button == button)
-        })
+        self.rules
+            .iter()
+            .find(|rule| matches!(&rule.when, Trigger::Button(trigger) if trigger.button == button))
     }
 
     /// Button names are unique.
@@ -884,8 +884,8 @@ impl HomeState for Hub {
 }
 
 /// Runs the actions in order when every condition holds; a failed action does not stop the
-/// next ones.
-pub async fn run(hub: Arc<Hub>, rule: Rule) {
+/// next ones. Returns the condition that did not hold when it skips the rule.
+pub async fn run(hub: Arc<Hub>, rule: Rule) -> Option<Condition> {
     let at = Timestamp::now();
     let now = at.to_zoned(hub.time_zone().clone()).datetime();
     if let Some(condition) = rule
@@ -894,7 +894,7 @@ pub async fn run(hub: Arc<Hub>, rule: Rule) {
         .find(|condition| !condition.holds(now, hub.as_ref()))
     {
         println!("rule \"{}\": skipped, {condition} does not hold", rule.name);
-        return;
+        return Some(condition.clone());
     }
     let mut errors = Vec::new();
     for action in &rule.then {
@@ -912,6 +912,7 @@ pub async fn run(hub: Arc<Hub>, rule: Rule) {
         }
     }
     hub.record_rule_run(&rule.name, RuleRun { at, errors });
+    None
 }
 
 /// Returns what happened, for the log.
@@ -1039,7 +1040,10 @@ mod tests {
 
     #[test]
     fn button_triggers_are_button_alone() {
-        assert!(matches!(when(r#"{ button = "A" }"#), Ok(Trigger::Button(_))));
+        assert!(matches!(
+            when(r#"{ button = "A" }"#),
+            Ok(Trigger::Button(_))
+        ));
         assert!(
             when(r#"{ button = "A", at = "07:00" }"#)
                 .unwrap_err()

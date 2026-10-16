@@ -39,7 +39,7 @@ pub use auth::{Auth, hash_password};
 
 const HTMX: &str = include_str!("../../static/htmx.min.js");
 const HTMX_SSE: &str = include_str!("../../static/htmx-ext-sse.min.js");
-const NODE_FILTER: &str = include_str!("../../static/node-filter.js");
+const FILTER: &str = include_str!("../../static/filter.js");
 const NODE_SORT: &str = include_str!("../../static/node-sort.js");
 const REMOTE_CODES: &str = include_str!("../../static/remote-codes.js");
 const TRAFFIC: &str = include_str!("../../static/traffic.js");
@@ -82,6 +82,7 @@ pub fn router(hub: Arc<Hub>, auth: Auth, listen_host: &str, allowed_hosts: &[Str
         .route(auth::logout)
         .route(home::set)
         .route(rules::set_enabled)
+        .route(rules::run_now)
         .route(node::edit)
         .route(node::start_update)
         .route(home::invoke)
@@ -95,7 +96,7 @@ pub fn router(hub: Arc<Hub>, auth: Auth, listen_host: &str, allowed_hosts: &[Str
         .route(traffic::traffic_events)
         .route(htmx_script)
         .route(htmx_sse_script)
-        .route(node_filter_script)
+        .route(filter_script)
         .route(node_sort_script)
         .route(remote_codes_script)
         .route(traffic_script)
@@ -115,9 +116,9 @@ async fn htmx_sse_script() -> Result<Js<&'static str>> {
     Ok(Js(HTMX_SSE))
 }
 
-#[route(GET "/static/node-filter.js")]
-async fn node_filter_script() -> Result<Js<&'static str>> {
-    Ok(Js(NODE_FILTER))
+#[route(GET "/static/filter.js")]
+async fn filter_script() -> Result<Js<&'static str>> {
+    Ok(Js(FILTER))
 }
 
 #[route(GET "/static/node-sort.js")]

@@ -217,8 +217,13 @@ async fn main() -> anyhow::Result<()> {
         "web interface on http://{}:{}",
         config.http.host, config.http.port
     );
-    let service = RouterService::new(web::router(hub.clone(), auth, &config.http.host, &config.http.allowed_hosts))
-        .shutdown_timeout(SHUTDOWN_TIMEOUT);
+    let service = RouterService::new(web::router(
+        hub.clone(),
+        auth,
+        &config.http.host,
+        &config.http.allowed_hosts,
+    ))
+    .shutdown_timeout(SHUTDOWN_TIMEOUT);
     let mut web_server = tokio::spawn(topcoat::serve_until(listener, service, hub.shutdown()));
     let mut signal = std::pin::pin!(shutdown_signal());
 

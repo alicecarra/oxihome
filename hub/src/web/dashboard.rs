@@ -207,7 +207,10 @@ async fn block_view(
     read: ReadToggle,
 ) -> BlockView {
     let (default_title, content) = match block.kind {
-        BlockKind::Nodes => ("Nodes".to_string(), BlockContent::Nodes(overview::nodes(hub))),
+        BlockKind::Nodes => (
+            "Nodes".to_string(),
+            BlockContent::Nodes(overview::nodes(hub)),
+        ),
         BlockKind::Channels => {
             let channels = overview::dashboard_channels(hub, &block.channels);
             let several_nodes = channels
@@ -265,10 +268,13 @@ async fn block_view(
                 println!("dashboard: recent events: {error:#}");
                 Vec::new()
             });
-            let notifications = hub.recent_notifications(limit).await.unwrap_or_else(|error| {
-                println!("dashboard: recent notifications: {error:#}");
-                Vec::new()
-            });
+            let notifications = hub
+                .recent_notifications(limit)
+                .await
+                .unwrap_or_else(|error| {
+                    println!("dashboard: recent notifications: {error:#}");
+                    Vec::new()
+                });
             (
                 "Recent events".to_string(),
                 BlockContent::Events(overview::activity(hub, events, notifications, limit)),
@@ -452,7 +458,10 @@ async fn node_status(nodes: Vec<NodeOverview>) -> Result<impl View> {
 }
 
 #[component]
-async fn dashboard_channel_row(channel: DashboardChannel, several_nodes: bool) -> Result<impl View> {
+async fn dashboard_channel_row(
+    channel: DashboardChannel,
+    several_nodes: bool,
+) -> Result<impl View> {
     let label = if several_nodes {
         format!("{} · {}", channel.node_label, channel.label)
     } else {
@@ -477,10 +486,10 @@ async fn dashboard_channel_row(channel: DashboardChannel, several_nodes: bool) -
 /// The channel's current value as text, or why there is none.
 fn current_value(channel: &DashboardChannel) -> String {
     match &channel.channel {
-        Ok(overview) => overview
-            .value
-            .as_ref()
-            .map_or_else(|| "—".to_string(), |value| value_label(value, overview.unit)),
+        Ok(overview) => overview.value.as_ref().map_or_else(
+            || "—".to_string(),
+            |value| value_label(value, overview.unit),
+        ),
         Err(reason) => (*reason).to_string(),
     }
 }
@@ -509,7 +518,11 @@ async fn history_block(
     choices: Vec<(ChartRange, String)>,
 ) -> Result<impl View> {
     let value = current_value(&channel);
-    let unit = channel.channel.as_ref().ok().and_then(|overview| overview.unit);
+    let unit = channel
+        .channel
+        .as_ref()
+        .ok()
+        .and_then(|overview| overview.unit);
     Ok(view! {
         <div class="space-y-3">
             <div class="flex items-baseline justify-between gap-3">

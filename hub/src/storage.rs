@@ -290,7 +290,10 @@ impl Storage {
     }
 
     /// Newest first.
-    pub async fn recent_events(&self, limit: usize) -> anyhow::Result<Vec<(EventRecord, Timestamp)>> {
+    pub async fn recent_events(
+        &self,
+        limit: usize,
+    ) -> anyhow::Result<Vec<(EventRecord, Timestamp)>> {
         let mut events = Vec::new();
         for row in sqlx::query(
             "SELECT device_id, entity, channel, at, kind, data FROM events ORDER BY at DESC LIMIT ?",
@@ -577,12 +580,13 @@ impl Sessions {
 
     /// When the session ends; `None` when it is unknown or already over.
     pub async fn expiry(&self, token_hash: &[u8; 32]) -> anyhow::Result<Option<Timestamp>> {
-        let expires_at: Option<i64> =
-            sqlx::query_scalar("SELECT expires_at FROM sessions WHERE token_hash = ? AND expires_at > ?")
-                .bind(&token_hash[..])
-                .bind(Timestamp::now().as_millisecond())
-                .fetch_optional(&self.pool)
-                .await?;
+        let expires_at: Option<i64> = sqlx::query_scalar(
+            "SELECT expires_at FROM sessions WHERE token_hash = ? AND expires_at > ?",
+        )
+        .bind(&token_hash[..])
+        .bind(Timestamp::now().as_millisecond())
+        .fetch_optional(&self.pool)
+        .await?;
         Ok(expires_at.map(Timestamp::from_millisecond).transpose()?)
     }
 

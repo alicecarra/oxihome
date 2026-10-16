@@ -107,20 +107,22 @@ const TOOLS: [(&str, &str, &str); 2] = [
 pub async fn settings_file(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
     let file = path_param::<File>(cx).to_string();
-    let editor = FILES.contains(&file.as_str()).then(|| match hub.config_file(&file) {
-        Ok(content) => Editor {
-            file: file.clone(),
-            text: content.text,
-            modified: modified_field(content.modified),
-            error: None,
-        },
-        Err(error) => Editor {
-            file: file.clone(),
-            text: String::new(),
-            modified: String::new(),
-            error: Some(format!("{error:#}")),
-        },
-    });
+    let editor = FILES
+        .contains(&file.as_str())
+        .then(|| match hub.config_file(&file) {
+            Ok(content) => Editor {
+                file: file.clone(),
+                text: content.text,
+                modified: modified_field(content.modified),
+                error: None,
+            },
+            Err(error) => Editor {
+                file: file.clone(),
+                text: String::new(),
+                modified: String::new(),
+                error: Some(format!("{error:#}")),
+            },
+        });
 
     Ok(view! {
         layout(
@@ -144,7 +146,9 @@ pub async fn settings_file(cx: &Cx) -> Result<impl View> {
 
 fn file_description(file: &str) -> &'static str {
     match file {
-        "nodes.toml" => "Names of nodes, entities and channels, and the operation parameters and hardware the hub sets.",
+        "nodes.toml" => {
+            "Names of nodes, entities and channels, and the operation parameters and hardware the hub sets."
+        }
         "rules.toml" => "What happens on events, values, schedules, remote keys and buttons.",
         "remotes.toml" => "Infrared remotes and the names of their keys.",
         "dashboard.toml" => "The blocks of the home page.",
