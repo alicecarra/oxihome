@@ -5,10 +5,13 @@ use jiff::Timestamp;
 use topcoat::{
     Result,
     context::{Cx, app_context},
+    icon::icon,
     router::{content::Form, page, path_param, route},
     view::{View, ViewExt, ViewHandle, attributes, component, view},
 };
 
+use super::auth::Auth;
+use super::icons;
 use super::layout::layout;
 use serde::Deserialize;
 
@@ -25,6 +28,7 @@ path_param!(file);
 pub async fn settings(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
     let directory = hub.config_directory().display().to_string();
+    let login_enabled = app_context::<Auth>(cx).enabled();
     let files: Vec<(&str, String)> = FILES
         .iter()
         .map(|file| {
@@ -89,6 +93,27 @@ pub async fn settings(cx: &Cx) -> Result<impl View> {
                         </ul>
                     )
                 )
+                if login_enabled {
+                    card(
+                        card_header(
+                            <div class="flex flex-wrap items-center justify-between gap-3">
+                                <div class="flex flex-col gap-1.5">
+                                    card_title("Session")
+                                    card_description("Signed in to this browser with the hub password.")
+                                </div>
+                                <form method="post" action="/logout">
+                                    button(
+                                        variant: ButtonVariant::Outline,
+                                        size: ButtonSize::Sm,
+                                        attrs: attributes! { type="submit" },
+                                        icon(data: icons::SIGN_OUT, size: 16)
+                                        "Sign out"
+                                    )
+                                </form>
+                            </div>
+                        )
+                    )
+                }
             </div>
         )
     })
