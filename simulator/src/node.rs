@@ -160,9 +160,17 @@ impl Device for SimulatedDevice {
     fn entities(&self) -> Vec<EntityDescriptor> {
         self.entities
             .iter()
-            .map(|(id, profile)| EntityDescriptor {
-                id: *id,
-                channels: channels(*profile),
+            .map(|(id, profile)| {
+                EntityDescriptor {
+                    id: *id,
+                    name: None,
+                    channels: channels(*profile),
+                }
+                .named(match profile {
+                    Profile::Lamp => "Lamp",
+                    Profile::Button => "Button",
+                    Profile::ClimateSensor => "Climate sensor",
+                })
             })
             .collect()
     }
@@ -182,23 +190,32 @@ impl Device for SimulatedDevice {
 
 fn channels(profile: Profile) -> Vec<Channel> {
     match profile {
-        Profile::Lamp => vec![Channel {
-            id: 0,
-            access: Access::ReadWrite,
-            value: Some(ValueType::Bool),
-            quantity: None,
-            unit: None,
-        }],
-        Profile::Button => vec![Channel {
-            id: 0,
-            access: Access::Event,
-            value: None,
-            quantity: None,
-            unit: None,
-        }],
+        Profile::Lamp => vec![
+            Channel {
+                id: 0,
+                name: None,
+                access: Access::ReadWrite,
+                value: Some(ValueType::Bool),
+                quantity: None,
+                unit: None,
+            }
+            .named("Power"),
+        ],
+        Profile::Button => vec![
+            Channel {
+                id: 0,
+                name: None,
+                access: Access::Event,
+                value: None,
+                quantity: None,
+                unit: None,
+            }
+            .named("Press"),
+        ],
         Profile::ClimateSensor => vec![
             Channel {
                 id: 0,
+                name: None,
                 access: Access::Read,
                 value: Some(ValueType::Float {
                     min: -40.0,
@@ -207,9 +224,11 @@ fn channels(profile: Profile) -> Vec<Channel> {
                 }),
                 quantity: Some(Quantity::Temperature),
                 unit: Some(Unit::Celsius),
-            },
+            }
+            .named("Temperature"),
             Channel {
                 id: 1,
+                name: None,
                 access: Access::Read,
                 value: Some(ValueType::Float {
                     min: 0.0,
@@ -218,7 +237,8 @@ fn channels(profile: Profile) -> Vec<Channel> {
                 }),
                 quantity: Some(Quantity::Humidity),
                 unit: Some(Unit::Percent),
-            },
+            }
+            .named("Humidity"),
         ],
     }
 }
