@@ -210,6 +210,7 @@ pub async fn set_enabled(cx: &Cx, Form(form): Form<EnabledForm>) -> Result<ViewH
         if let Some(rule) = rule {
             rule_card(rule: rule)
         }
+        rules_indicator(failing: overview::failing_rules(hub), oob: true)
         <div id="status" class="mb-4" hx-swap-oob="true">
             if let Err(error) = result {
                 <pre class="text-sm whitespace-pre-wrap text-destructive">(format!("{error:#}"))</pre>
@@ -218,6 +219,39 @@ pub async fn set_enabled(cx: &Cx, Form(form): Form<EnabledForm>) -> Result<ViewH
     }
     .single()
     .await
+}
+
+/// The dot on the menu's Rules item while enabled rules failed their last run. Out of band, it
+/// replaces the one in the menu from another answer.
+#[component]
+pub(super) async fn rules_indicator(failing: usize, #[default] oob: bool) -> Result<impl View> {
+    let title = match failing {
+        1 => "1 rule failed its last run".to_string(),
+        count => format!("{count} rules failed their last run"),
+    };
+    Ok(view! {
+        <span
+            id="rules-indicator"
+            hx-get="/rules/indicator"
+            hx-trigger="sse:timeline"
+            hx-swap="outerHTML"
+            title=(title.clone())
+            aria-label=(title)
+            class="absolute -top-0.5 -right-1 size-2 rounded-full bg-destructive"
+            if failing == 0 {
+                hidden=""
+            }
+            if oob {
+                hx-swap-oob="true"
+            }
+        ></span>
+    })
+}
+
+#[page("/rules/indicator")]
+pub async fn indicator_fragment(cx: &Cx) -> Result<impl View> {
+    let hub: &Arc<Hub> = app_context(cx);
+    Ok(view! { rules_indicator(failing: overview::failing_rules(hub)) })
 }
 
 #[derive(Deserialize)]

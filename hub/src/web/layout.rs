@@ -9,6 +9,8 @@ use topcoat::{
 };
 
 use super::icons;
+use super::overview;
+use super::rules::rules_indicator;
 use super::toasts::toast_poller;
 use crate::hub::Hub;
 
@@ -26,6 +28,7 @@ pub(super) const MENU: [(&str, &str, IconData); 6] = [
 pub async fn layout(cx: &Cx, title: &str, #[default] child: Child<'_>) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
     let since = hub.last_notification_id();
+    let failing_rules = overview::failing_rules(hub);
     let path = uri(cx).path().to_string();
     // A section's own pages, like `/nodes/<id>`, light up its item too.
     let current =
@@ -63,7 +66,12 @@ pub async fn layout(cx: &Cx, title: &str, #[default] child: Child<'_>) -> Result
                                         "flex shrink-0 flex-col items-center gap-1 border-b-2 border-transparent px-2 py-1 text-muted-foreground hover:border-border hover:text-foreground"
                                     })
                                 >
-                                    icon(data: data, size: 18)
+                                    <span class="relative flex">
+                                        icon(data: data, size: 18)
+                                        if href == "/rules" {
+                                            rules_indicator(failing: failing_rules)
+                                        }
+                                    </span>
                                     (label)
                                 </a>
                             }

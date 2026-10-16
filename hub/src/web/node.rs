@@ -15,7 +15,8 @@ use topcoat::{
 
 use super::chart::{CHART_BUCKETS, Chart, ChartRange, chart, history_chart, series};
 use super::format::{
-    ago_label, channel_label, duration_label, elapsed, entity_label, rule_anchor, value_label,
+    ago_label, channel_label, duration_label, elapsed, entity_label, query_value, rule_anchor,
+    value_label,
 };
 use super::layout::layout;
 use super::nodes::{channel_controls, channel_value, presence_badge, protocol_badge};
@@ -521,7 +522,17 @@ async fn history_section(device_id: String, history: History) -> Result<impl Vie
             hx-swap="outerHTML"
         >
             card(
-                card_header(card_title("History"))
+                card_header(
+                    <div class="flex items-center justify-between gap-3">
+                        card_title("History")
+                        <a
+                            href=(format!("/timeline?node={}", query_value(&device_id)))
+                            class="text-sm font-medium text-muted-foreground hover:text-foreground hover:underline"
+                        >
+                            "Open in timeline"
+                        </a>
+                    </div>
+                )
                 card_content(
                     <div class="grid gap-6 md:grid-cols-2">
                         <div>

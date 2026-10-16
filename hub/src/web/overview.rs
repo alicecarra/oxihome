@@ -490,6 +490,19 @@ pub fn activity(
         .collect()
 }
 
+/// Enabled rules whose last run had a failed action.
+pub fn failing_rules(hub: &Hub) -> usize {
+    let runs = hub.rule_runs();
+    hub.rules()
+        .iter()
+        .filter(|rule| rule.enabled)
+        .filter(|rule| {
+            runs.get(&rule.name)
+                .is_some_and(|run| !run.errors.is_empty())
+        })
+        .count()
+}
+
 /// Every rule in `rules.toml`, described with friendly names, for the rules page.
 pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
     let rules = hub.rules();

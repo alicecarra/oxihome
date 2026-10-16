@@ -68,6 +68,7 @@ pub fn router(hub: Arc<Hub>, auth: Auth, listen_host: &str, allowed_hosts: &[Str
         .page(node::history_fragment)
         .page(node::hardware_fragment)
         .page(rules::rules)
+        .page(rules::indicator_fragment)
         .page(timeline::timeline)
         .page(timeline::timeline_fragment)
         .page(timeline::timeline_more)
