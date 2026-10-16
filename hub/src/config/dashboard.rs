@@ -29,6 +29,10 @@ use super::rules::Rules;
 /// type = "history"
 /// channel = { device = "weather", entity = 1, channel = 0 }
 /// range = "6h"
+///
+/// [[dashboards.blocks]]
+/// type = "feeds"
+/// device = "rss"
 /// ```
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -64,8 +68,10 @@ pub struct Block {
     pub channel: Option<ChannelReference>,
     /// `history` blocks only: `15m`, `1h`, `6h` or `24h` (default).
     pub range: Option<String>,
-    /// `events` blocks only: how many to show, 1 to 50 (default 10).
+    /// `events` and `feeds` blocks only: how many to show, 1 to 50 (default 10).
     pub limit: Option<usize>,
+    /// `feeds` blocks only: a node laid out like the rss node.
+    pub device: Option<String>,
 }
 
 pub const HISTORY_RANGES: [&str; 4] = ["15m", "1h", "6h", "24h"];
@@ -89,6 +95,8 @@ pub enum BlockKind {
     Rules,
     /// The latest node events and notifications.
     Events,
+    /// The items of an rss node, every feed in one list.
+    Feeds,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -113,6 +121,7 @@ impl BlockKind {
             BlockKind::History => "history",
             BlockKind::Rules => "rules",
             BlockKind::Events => "events",
+            BlockKind::Feeds => "feeds",
         }
     }
 }
@@ -146,6 +155,10 @@ impl Dashboards {
                     BlockKind::Buttons if block.buttons.is_empty() => {
                         bail!("{place}: a buttons block needs buttons")
                     }
+                    BlockKind::Feeds if block.device.is_none() => {
+                        bail!("{place}: a feeds block needs device")
+                    }
+                    BlockKind::Feeds => {}
                     BlockKind::Buttons => {
                         if let Some(button) = block
                             .buttons
@@ -162,6 +175,9 @@ impl Dashboards {
                 if block.kind != BlockKind::Buttons && !block.buttons.is_empty() {
                     bail!("{place}: only a buttons block has buttons");
                 }
+                if block.kind != BlockKind::Feeds && block.device.is_some() {
+                    bail!("{place}: only a feeds block has device");
+                }
                 if !matches!(block.kind, BlockKind::Value | BlockKind::History)
                     && block.channel.is_some()
                 {
@@ -177,8 +193,8 @@ impl Dashboards {
                     _ => {}
                 }
                 match block.limit {
-                    Some(_) if block.kind != BlockKind::Events => {
-                        bail!("{place}: only an events block has limit")
+                    Some(_) if !matches!(block.kind, BlockKind::Events | BlockKind::Feeds) => {
+                        bail!("{place}: only events and feeds blocks have limit")
                     }
                     Some(limit) if !(1..=MAX_EVENTS).contains(&limit) => {
                         bail!("{place}: limit must be from 1 to {MAX_EVENTS}")
@@ -227,6 +243,11 @@ mod tests {
         [[dashboards.blocks]]
         type = "events"
         limit = 5
+
+        [[dashboards.blocks]]
+        type = "feeds"
+        device = "rss"
+        limit = 20
     "#;
 
     fn rules() -> Rules {
@@ -255,10 +276,13 @@ mod tests {
                 BlockKind::History,
                 BlockKind::Rules,
                 BlockKind::Events,
+                BlockKind::Feeds,
             ]
         );
         assert_eq!(blocks[4].range.as_deref(), Some("6h"));
         assert_eq!(blocks[6].limit, Some(5));
+        assert_eq!(blocks[7].device.as_deref(), Some("rss"));
+        assert_eq!(blocks[7].limit, Some(20));
         assert_eq!(blocks[0].width, 1);
         assert_eq!(blocks[1].width, 2);
         assert_eq!(
@@ -286,7 +310,15 @@ mod tests {
         assert!(error(&block(&format!("type = \"history\"\n{channel}\nrange = \"2d\""))).contains("range must be"));
         assert!(error(&block(&format!("type = \"value\"\n{channel}\nrange = \"1h\""))).contains("only a history"));
         assert!(error(&block("type = \"events\"\nlimit = 0")).contains("limit must be"));
-        assert!(error(&block("type = \"rules\"\nlimit = 5")).contains("only an events"));
+        assert!(error(&block("type = \"rules\"\nlimit = 5")).contains("only events and feeds"));
+        assert!(error(&block("type = \"feeds\"")).contains("feeds block needs device"));
+        assert!(
+            error(&block("type = \"feeds\"\ndevice = \"rss\"\nlimit = 51"))
+                .contains("limit must be")
+        );
+        assert!(
+            error(&block("type = \"events\"\ndevice = \"rss\"")).contains("only a feeds block")
+        );
         assert!(
             error("[[dashboards]]\nname = \"A\"\n[[dashboards]]\nname = \"A\"")
                 .contains("two dashboards")

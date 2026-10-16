@@ -275,6 +275,15 @@ impl Hub {
         self.storage.recent_events(limit).await
     }
 
+    /// One node's events, newest first.
+    pub async fn events_of(
+        &self,
+        device_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<(EventRecord, Timestamp)>> {
+        self.storage.events_of(device_id, limit).await
+    }
+
     /// Newest first.
     pub async fn recent_notifications(
         &self,

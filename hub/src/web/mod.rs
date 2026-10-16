@@ -3,6 +3,7 @@ mod buttons;
 mod chart;
 mod dashboard;
 mod events;
+mod feeds;
 mod format;
 mod home;
 mod host;

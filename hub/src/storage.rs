@@ -304,6 +304,27 @@ impl Storage {
         Ok(events)
     }
 
+    /// One node's events, newest first.
+    pub async fn events_of(
+        &self,
+        device_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<(EventRecord, Timestamp)>> {
+        let mut events = Vec::new();
+        for row in sqlx::query(
+            "SELECT device_id, entity, channel, at, kind, data FROM events WHERE device_id = ?
+             ORDER BY at DESC LIMIT ?",
+        )
+        .bind(device_id)
+        .bind(i64::try_from(limit)?)
+        .fetch_all(&self.pool)
+        .await?
+        {
+            events.push(event_row(&row)?);
+        }
+        Ok(events)
+    }
+
     /// Newest first.
     pub async fn recent_notifications(
         &self,

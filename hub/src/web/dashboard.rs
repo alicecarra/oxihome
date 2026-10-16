@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use jiff::{SignedDuration, Timestamp};
@@ -11,6 +11,7 @@ use topcoat::{
 
 use super::buttons::{RuleButton, rule_button_view, rule_buttons};
 use super::chart::{CHART_BUCKETS, Chart, ChartRange, chart, history_chart, series};
+use super::feeds::{FeedList, feed_list, feeds_block};
 use super::format::{ago_label, rule_anchor, value_label};
 use super::layout::layout;
 use super::nodes::{channel_controls, channel_value, presence_badge, protocol_badge};
@@ -48,6 +49,14 @@ enum BlockContent {
     },
     Rules(RulesSummary),
     Events(Vec<Activity>),
+    Feeds {
+        list: Option<FeedList>,
+        device_id: String,
+        limit: usize,
+        show_read: bool,
+        /// The dashboard query that shows or hides the read items of this block.
+        toggle_query: String,
+    },
 }
 
 const UPCOMING_RULES: usize = 5;
@@ -55,7 +64,7 @@ const UPCOMING_RULES: usize = 5;
 #[page("/")]
 pub async fn dashboard_page(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
-    let (blocks, query) = block_views(hub, &picked_ranges(cx)).await;
+    let (blocks, query) = block_views(hub, &Picked::from_query(cx)).await;
     Ok(view! {
         layout(
             title: "Oxihome",
@@ -67,36 +76,53 @@ pub async fn dashboard_page(cx: &Cx) -> Result<impl View> {
 #[page("/dashboard/fragment")]
 pub async fn dashboard_fragment(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
-    let (blocks, query) = block_views(hub, &picked_ranges(cx)).await;
+    let (blocks, query) = block_views(hub, &Picked::from_query(cx)).await;
     Ok(view! { dashboard_root(blocks: blocks, query: query) })
 }
 
-/// The ranges picked on the page, `range<block>=6h` in the query, by block index.
-fn picked_ranges(cx: &Cx) -> HashMap<usize, String> {
-    parse_query_params::<HashMap<String, String>>(cx)
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|(key, value)| Some((key.strip_prefix("range")?.parse().ok()?, value)))
-        .collect()
+/// What was picked on the page, by block index: `range<block>=6h` for a chart's range,
+/// `read<block>=1` for a feeds block showing its read items.
+struct Picked {
+    ranges: HashMap<usize, String>,
+    read: HashSet<usize>,
 }
 
-/// The query keeping every history block's range, with `changed` set to `range`.
-fn ranges_query(ranges: &[(usize, ChartRange)], changed: Option<(usize, ChartRange)>) -> String {
+impl Picked {
+    fn from_query(cx: &Cx) -> Self {
+        let mut picked = Picked {
+            ranges: HashMap::new(),
+            read: HashSet::new(),
+        };
+        for (key, value) in parse_query_params::<HashMap<String, String>>(cx).unwrap_or_default() {
+            if let Some(index) = key
+                .strip_prefix("range")
+                .and_then(|index| index.parse().ok())
+            {
+                picked.ranges.insert(index, value);
+            } else if let Some(index) = key
+                .strip_prefix("read")
+                .and_then(|index| index.parse().ok())
+                && value == "1"
+            {
+                picked.read.insert(index);
+            }
+        }
+        picked
+    }
+}
+
+/// The query keeping every history block's range and every feeds block showing its read items.
+fn dashboard_query(ranges: &[(usize, ChartRange)], read_shown: &[usize]) -> String {
     ranges
         .iter()
-        .map(|&(index, range)| {
-            let range = match changed {
-                Some((changed_index, picked)) if changed_index == index => picked,
-                _ => range,
-            };
-            format!("range{index}={}", range.key())
-        })
+        .map(|&(index, range)| format!("range{index}={}", range.key()))
+        .chain(read_shown.iter().map(|index| format!("read{index}=1")))
         .collect::<Vec<_>>()
         .join("&")
 }
 
-/// The blocks and the query that keeps their picked ranges.
-async fn block_views(hub: &Hub, picked: &HashMap<usize, String>) -> (Vec<BlockView>, String) {
+/// The blocks and the query that keeps what was picked on them.
+async fn block_views(hub: &Hub, picked: &Picked) -> (Vec<BlockView>, String) {
     let Some(dashboard) = hub.dashboard() else {
         return (Vec::new(), String::new());
     };
@@ -107,12 +133,20 @@ async fn block_views(hub: &Hub, picked: &HashMap<usize, String>) -> (Vec<BlockVi
         .filter(|(_, block)| block.kind == BlockKind::History)
         .map(|(index, block)| {
             let key = picked
+                .ranges
                 .get(&index)
                 .map(String::as_str)
                 .or(block.range.as_deref())
                 .unwrap_or("24h");
             (index, ChartRange::from_key(Some(key)))
         })
+        .collect();
+    let read_shown: Vec<usize> = dashboard
+        .blocks
+        .iter()
+        .enumerate()
+        .filter(|(index, block)| block.kind == BlockKind::Feeds && picked.read.contains(index))
+        .map(|(index, _)| index)
         .collect();
     let mut views = Vec::new();
     for (index, block) in dashboard.blocks.iter().enumerate() {
@@ -123,11 +157,39 @@ async fn block_views(hub: &Hub, picked: &HashMap<usize, String>) -> (Vec<BlockVi
             .unwrap_or(ChartRange::Day);
         let choices = ChartRange::ALL
             .into_iter()
-            .map(|choice| (choice, ranges_query(&ranges, Some((index, choice)))))
+            .map(|choice| {
+                let changed: Vec<(usize, ChartRange)> = ranges
+                    .iter()
+                    .map(|&(history, range)| {
+                        (history, if history == index { choice } else { range })
+                    })
+                    .collect();
+                (choice, dashboard_query(&changed, &read_shown))
+            })
             .collect();
-        views.push(block_view(hub, block, range, choices).await);
+        let show_read = read_shown.contains(&index);
+        let toggled: Vec<usize> = if show_read {
+            read_shown
+                .iter()
+                .copied()
+                .filter(|shown| *shown != index)
+                .collect()
+        } else {
+            read_shown.iter().copied().chain([index]).collect()
+        };
+        let read = ReadToggle {
+            shown: show_read,
+            query: dashboard_query(&ranges, &toggled),
+        };
+        views.push(block_view(hub, block, range, choices, read).await);
     }
-    (views, ranges_query(&ranges, None))
+    (views, dashboard_query(&ranges, &read_shown))
+}
+
+/// Whether a feeds block shows its read items, and the query that flips it.
+struct ReadToggle {
+    shown: bool,
+    query: String,
 }
 
 /// Validation makes sure `value` and `history` blocks have a channel.
@@ -142,6 +204,7 @@ async fn block_view(
     block: &Block,
     range: ChartRange,
     choices: Vec<(ChartRange, String)>,
+    read: ReadToggle,
 ) -> BlockView {
     let (default_title, content) = match block.kind {
         BlockKind::Nodes => ("Nodes".to_string(), BlockContent::Nodes(overview::nodes(hub))),
@@ -211,6 +274,23 @@ async fn block_view(
                 BlockContent::Events(overview::activity(hub, events, notifications, limit)),
             )
         }
+        BlockKind::Feeds => {
+            let device_id = block.device.clone().unwrap_or_default();
+            let list = feed_list(hub, &device_id).await;
+            let title = list
+                .as_ref()
+                .map_or_else(|| device_id.clone(), |list| list.node_label.clone());
+            (
+                title,
+                BlockContent::Feeds {
+                    list,
+                    device_id,
+                    limit: block.limit.unwrap_or(DEFAULT_EVENTS),
+                    show_read: read.shown,
+                    toggle_query: read.query,
+                },
+            )
+        }
     };
     BlockView {
         title: block.title.clone().unwrap_or(default_title),
@@ -269,6 +349,13 @@ async fn dashboard_blocks(blocks: Vec<BlockView>) -> Result<impl View> {
                                 BlockContent::History { channel, chart, range, choices } => history_block(channel: channel, chart: chart, range: range, choices: choices),
                                 BlockContent::Rules(summary) => rules_block(summary: summary),
                                 BlockContent::Events(items) => events_block(items: items),
+                                BlockContent::Feeds { list, device_id, limit, show_read, toggle_query } => feeds_block(
+                                    list: list,
+                                    device_id: device_id,
+                                    limit: limit,
+                                    show_read: show_read,
+                                    toggle_query: toggle_query
+                                ),
                                 BlockContent::Buttons(buttons) => {
                                     // In one row while they fit, sharing the width.
                                     <div class="flex flex-wrap gap-3">

@@ -474,8 +474,14 @@ previous configuration stays in use.
   buttons; `range` of `15m`, `1h`, `6h` or `24h` sets the default, `24h` when missing; the picked range stays
   in the address, `?range4=6h` for the fifth block, through live updates and reloads), `rules` (the next 5 scheduled runs and the rules whose last run failed,
   with the error) and `events` (the latest node events and notifications, newest first, `limit` 1 to
-  50, default 10; IR codes show the key name from `remotes.toml`). Notifications are stored in the
-  database too (table `notifications`, same retention as events), so they survive a restart.
+  50, default 10; IR codes show the key name from `remotes.toml`) and `feeds` (the items of a node
+  laid out like the RSS node, `device = "rss"`: every feed in one list, newest first, the title
+  linking to the post in a new tab, the feed's name and age below; only unread items, with "Show
+  read (N)" bringing the read ones back, grey, and the choice kept in the address, `?read5=1` for
+  the sixth block; "Mark all read" invokes the node's entity 1; `limit` 1 to 50, default 10). The
+  node keeps an unread count per feed, not which items, so a feed's newest N items are the unread
+  ones. Notifications are stored in the database too (table `notifications`, same retention as
+  events), so they survive a restart.
 
   ```toml
   [[dashboards]]
@@ -494,6 +500,11 @@ previous configuration stays in use.
   [[dashboards.blocks]]
   type = "events"
   limit = 5
+
+  [[dashboards.blocks]]
+  type = "feeds"
+  device = "rss"
+  width = 2
   ```
 
 Clicking a node's name on the home page opens its page, `/nodes/<id>`, with two sections that
@@ -811,6 +822,9 @@ name = "Beep on a new Mosquitto release"
 when = { device = "rss", entity = 4, channel = 5, event = "Received" }
 then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Short" } }]
 ```
+
+On the hub, the dashboard's `feeds` block (see "Hub", `dashboard.toml`) reads the node: unread
+items from every feed in one list, with "Mark all read".
 
 The first fetch of a feed (and of a feed whose URL changed) only marks its items as seen, so
 nothing floods in. Afterwards, new items that pass the filter count as unread and become events,
