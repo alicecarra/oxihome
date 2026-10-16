@@ -360,7 +360,9 @@ editor instead, press **Reload config from disk**; a file with an error is repor
 previous configuration stays in use.
 
 - `nodes.toml`: each node by the id from its `Hello`, with its friendly names (node, entities,
-  channels) and its desired operation parameters in seconds. The hub sends a `Set` when a node
+  channels) and its desired operation parameters in seconds. A node may name its entities and
+  channels in its `Hello`; a name here wins over the node's, so only names the node does not give,
+  or that the house calls something else, need to be here. The hub sends a `Set` when a node
   reports another value: when it connects, comes back online, or after a reload. A parameter left
   out keeps the node's value. Ranges: `heartbeat_interval` 5–300, `wifi_check_interval` 1–60.
   The node's page shows the node's value next to the desired one. A misspelled key is an error. (Until
@@ -509,7 +511,8 @@ It is inline SVG drawn by the hub (`hub/src/web/chart.rs`), without JavaScript. 
 name and parameters, **Edit names** for entity and channel names), which turns only that section
 into fields; it stops updating while edited. Saving writes `nodes.toml` with `toml_edit`, keeping
 comments and the `entities.1 = { ... }` lines: an empty field removes the name or parameter, a field
-left out stays as it is, the whole configuration is validated first (an error shows at the top and
+left out stays as it is (an entity or channel name field holds only the hub's own name, with the
+node's name as placeholder, so emptying it goes back to the node's name), the whole configuration is validated first (an error shows at the top and
 keeps what was typed), and changed parameters go to the node right away. A node that never sent
 a `Hello` (none in the database either) shows as unknown. At the bottom, **Rules** lists, one line per rule, the rules
 that run on something from the node (an event or value of one of its channels, the node going
@@ -583,6 +586,12 @@ and returns a `Handle` to act on the node from elsewhere (a console, a chat bot)
 and connect again. The simulator is built this way. The firmware uses only the core: its `Board`
 implements `Device` (entities, LED and parameter state, LED, parameter and buzzer commands) and its
 own MQTT client carries the messages.
+
+Entities and channels may carry a `name` in the `Hello` (`EntityDescriptor::named` and
+`Channel::named`; at most `NAME_MAX_LENGTH`, 128 bytes, and left out of the JSON when missing). The
+hub shows it unless `nodes.toml` names the same thing, and ignores an empty or longer one. The
+software nodes name everything they declare (feeds, devices, disks and containers by their name in
+the node's configuration); the firmware does not name anything yet.
 
 Publishing never waits: outgoing messages go into a queue of `Broker::queue_size` messages
 (`mqtt::DEFAULT_QUEUE_SIZE`, 4096; `queue_size` under `[mqtt]` in each node's configuration) and

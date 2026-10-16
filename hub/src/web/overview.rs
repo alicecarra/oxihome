@@ -74,8 +74,11 @@ pub struct ParameterOverview {
 pub struct ChannelOverview {
     pub entity: u8,
     pub entity_name: Option<String>,
+    /// What the node calls it in its `Hello`; `entity_name` is this unless `nodes.toml` has one.
+    pub entity_declared_name: Option<String>,
     pub channel: u8,
     pub channel_name: Option<String>,
+    pub channel_declared_name: Option<String>,
     pub has_value: bool,
     pub value: Option<Value>,
     /// Kind, data as text and how long ago.
@@ -189,7 +192,7 @@ pub fn dashboard_channels(hub: &Hub, references: &[ChannelReference]) -> Vec<Das
                     channel.entity == reference.entity && channel.channel == reference.channel
                 })
             });
-            let name = |target: NameTarget| snapshot.nodes.name(&target).map(String::from);
+            let name = |target: NameTarget| name(&snapshot.nodes, &snapshot.registry, &target);
             let entity_name = name(NameTarget::Entity(
                 reference.device.clone(),
                 reference.entity,
@@ -237,7 +240,9 @@ fn node_overview(
     node: &Node,
     now: Timestamp,
 ) -> NodeOverview {
-    let name = |target: NameTarget| snapshot.nodes.name(&target).map(String::from);
+    let name = |target: NameTarget| name(&snapshot.nodes, &snapshot.registry, &target);
+    let declared_name =
+        |target: NameTarget| snapshot.registry.declared_name(&target).map(String::from);
     NodeOverview {
         device_id: device_id.to_string(),
         name: name(NameTarget::Node(device_id.to_string())),
@@ -258,8 +263,17 @@ fn node_overview(
                 entity.channels.iter().map(|channel| ChannelOverview {
                     entity: entity.id,
                     entity_name: name(NameTarget::Entity(device_id.to_string(), entity.id)),
+                    entity_declared_name: declared_name(NameTarget::Entity(
+                        device_id.to_string(),
+                        entity.id,
+                    )),
                     channel: channel.id,
                     channel_name: name(NameTarget::Channel(
+                        device_id.to_string(),
+                        entity.id,
+                        channel.id,
+                    )),
+                    channel_declared_name: declared_name(NameTarget::Channel(
                         device_id.to_string(),
                         entity.id,
                         channel.id,
@@ -450,6 +464,7 @@ pub fn activity(
             let activity = Activity {
                 title: channel_description(
                     &snapshot.nodes,
+                    &snapshot.registry,
                     &event.device_id,
                     event.entity,
                     event.channel,
@@ -510,7 +525,7 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
                 .then
                 .iter()
                 .map(|action| ActionOverview {
-                    text: action_description(&snapshot.nodes, action),
+                    text: action_description(&snapshot.nodes, &snapshot.registry, action),
                     warning: action_warning(&snapshot.registry, action),
                 })
                 .collect(),
@@ -525,7 +540,7 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
 
 fn trigger_description(nodes: &Nodes, registry: &Registry, trigger: &Trigger) -> String {
     match trigger {
-        Trigger::Event(trigger) => event_description(nodes, trigger),
+        Trigger::Event(trigger) => event_description(nodes, registry, trigger),
         Trigger::Threshold(trigger) => threshold_description(nodes, registry, trigger),
         Trigger::Schedule(trigger) => schedule_description(trigger),
         Trigger::Cron(trigger) => cron_description(trigger),
@@ -547,9 +562,10 @@ fn offline_description(nodes: &Nodes, trigger: &OfflineTrigger) -> String {
     }
 }
 
-fn event_description(nodes: &Nodes, trigger: &EventTrigger) -> String {
+fn event_description(nodes: &Nodes, registry: &Registry, trigger: &EventTrigger) -> String {
     let target = channel_description(
         nodes,
+        registry,
         &trigger.device,
         trigger.entity,
         trigger.channel,
@@ -593,6 +609,7 @@ fn threshold_description(nodes: &Nodes, registry: &Registry, trigger: &Threshold
     let declared = declared_channel(registry, &trigger.device, trigger.entity, trigger.channel);
     let target = channel_description(
         nodes,
+        registry,
         &trigger.device,
         trigger.entity,
         trigger.channel,
@@ -645,6 +662,7 @@ fn channel_condition_description(
     );
     let target = channel_description(
         nodes,
+        registry,
         &condition.device,
         condition.entity,
         condition.channel,
@@ -716,7 +734,7 @@ fn next_run_description(now: &Zoned, run: &Zoned) -> String {
     format!("{day} {}", run.strftime("%H:%M"))
 }
 
-fn action_description(nodes: &Nodes, action: &Action) -> String {
+fn action_description(nodes: &Nodes, registry: &Registry, action: &Action) -> String {
     match action {
         Action::Set {
             device,
@@ -725,7 +743,7 @@ fn action_description(nodes: &Nodes, action: &Action) -> String {
             value,
         } => format!(
             "Set {} to {}",
-            channel_description(nodes, device, *entity, *channel, None),
+            channel_description(nodes, registry, device, *entity, *channel, None),
             if *value { "on" } else { "off" }
         ),
         Action::Toggle {
@@ -734,7 +752,7 @@ fn action_description(nodes: &Nodes, action: &Action) -> String {
             channel,
         } => format!(
             "Toggle {}",
-            channel_description(nodes, device, *entity, *channel, None)
+            channel_description(nodes, registry, device, *entity, *channel, None)
         ),
         Action::Invoke {
             device,
@@ -742,7 +760,7 @@ fn action_description(nodes: &Nodes, action: &Action) -> String {
             channel,
             value,
         } => {
-            let target = channel_description(nodes, device, *entity, *channel, None);
+            let target = channel_description(nodes, registry, device, *entity, *channel, None);
             match value {
                 Some(value) => format!("Invoke {target} with {value}"),
                 None => format!("Invoke {target}"),
@@ -768,15 +786,24 @@ fn action_warning(registry: &Registry, action: &Action) -> Option<String> {
         .err()
 }
 
+/// `nodes.toml` first, then what the node declares in its `Hello`.
+pub fn name(nodes: &Nodes, registry: &Registry, target: &NameTarget) -> Option<String> {
+    nodes
+        .name(target)
+        .or_else(|| registry.declared_name(target))
+        .map(String::from)
+}
+
 /// `Test board › LED`; the channel only shows when it is not the entity's first.
 pub fn channel_description(
     nodes: &Nodes,
+    registry: &Registry,
     device_id: &str,
     entity: u8,
     channel: u8,
     quantity: Option<Quantity>,
 ) -> String {
-    let name = |target: NameTarget| nodes.name(&target).map(String::from);
+    let name = |target: NameTarget| name(nodes, registry, &target);
     let node =
         name(NameTarget::Node(device_id.to_string())).unwrap_or_else(|| device_id.to_string());
     let entity_name = entity_label(
@@ -820,7 +847,7 @@ mod tests {
             data: None,
         };
         assert_eq!(
-            event_description(&nodes(), &trigger),
+            event_description(&nodes(), &Registry::default(), &trigger),
             "Test board › BOOT button: LongPress"
         );
     }
@@ -835,7 +862,7 @@ mod tests {
             data: None,
         };
         assert_eq!(
-            event_description(&nodes(), &trigger),
+            event_description(&nodes(), &Registry::default(), &trigger),
             "sim-unknown › entity 3: Press"
         );
     }
@@ -850,7 +877,7 @@ mod tests {
             data: Some("NEC 00 52".into()),
         };
         assert_eq!(
-            event_description(&nodes(), &trigger),
+            event_description(&nodes(), &Registry::default(), &trigger),
             "Test board › BOOT button: Received NEC 00 52"
         );
     }
@@ -893,8 +920,10 @@ mod tests {
                 build: oxihome_protocol::Build::new("firmware", "0.6.0", "esp32"),
                 entities: vec![oxihome_protocol::EntityDescriptor {
                     id: 3,
+                    name: None,
                     channels: vec![oxihome_protocol::Channel {
                         id: 1,
+                        name: None,
                         access: Access::Read,
                         value: None,
                         quantity: Some(Quantity::Humidity),
@@ -914,6 +943,47 @@ mod tests {
             threshold_description(&nodes(), &registry, &trigger),
             "Test board › entity 3 · Humidity: above 85.0 %"
         );
+    }
+
+    #[test]
+    fn nodes_toml_names_win_over_declared_ones() {
+        let mut registry = Registry::new(3);
+        let channel = |id: u8| oxihome_protocol::Channel {
+            id,
+            name: None,
+            access: Access::ReadWrite,
+            value: Some(ValueType::Bool),
+            quantity: None,
+            unit: None,
+        };
+        let hello = oxihome_protocol::Message::new(
+            "esp32-test",
+            0,
+            oxihome_protocol::Payload::Hello {
+                build: oxihome_protocol::Build::new("simulator", "0.6.0", "linux-x86_64"),
+                entities: vec![
+                    oxihome_protocol::EntityDescriptor {
+                        id: 1,
+                        name: None,
+                        channels: vec![channel(0), channel(1).named("Dimmer")],
+                    }
+                    .named("Lamp"),
+                    oxihome_protocol::EntityDescriptor {
+                        id: 4,
+                        name: None,
+                        channels: vec![channel(0), channel(1).named("Power")],
+                    }
+                    .named("Fan"),
+                ],
+            },
+        );
+        registry.handle(&hello, std::time::Instant::now());
+        let description = |entity: u8, channel: u8| {
+            channel_description(&nodes(), &registry, "esp32-test", entity, channel, None)
+        };
+
+        assert_eq!(description(1, 1), "Test board › LED · Brightness");
+        assert_eq!(description(4, 1), "Test board › Fan · Power");
     }
 
     #[test]
@@ -961,7 +1031,7 @@ mod tests {
             channel: 1,
         };
         assert_eq!(
-            action_description(&nodes(), &toggle),
+            action_description(&nodes(), &Registry::default(), &toggle),
             "Toggle Test board › LED · Brightness"
         );
     }
@@ -979,11 +1049,11 @@ mod tests {
             message: "All lamps are off".into(),
         };
         assert_eq!(
-            action_description(&nodes(), &set),
+            action_description(&nodes(), &Registry::default(), &set),
             "Set Test board › LED to off"
         );
         assert_eq!(
-            action_description(&nodes(), &notify),
+            action_description(&nodes(), &Registry::default(), &notify),
             "Notify \"Good night\": All lamps are off"
         );
     }
@@ -1009,7 +1079,7 @@ mod tests {
             value: Some("Alarm".into()),
         };
         assert_eq!(
-            action_description(&nodes, &invoke),
+            action_description(&nodes, &Registry::default(), &invoke),
             "Invoke Test board › LED with Alarm"
         );
     }

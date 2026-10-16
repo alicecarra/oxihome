@@ -173,6 +173,7 @@ fn days(hub: &Hub, entries: Vec<TimelineEntry>, shown_day: Option<Date>) -> Vec<
                 icon: icons::EVENT,
                 title: channel_description(
                     &snapshot.nodes,
+                    &snapshot.registry,
                     &event.device_id,
                     event.entity,
                     event.channel,
@@ -208,6 +209,7 @@ fn days(hub: &Hub, entries: Vec<TimelineEntry>, shown_day: Option<Date>) -> Vec<
                 icon: icons::COMMAND,
                 title: channel_description(
                     &snapshot.nodes,
+                    &snapshot.registry,
                     &command.device_id,
                     command.entity,
                     command.channel,

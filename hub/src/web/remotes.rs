@@ -10,8 +10,9 @@ use topcoat::{
     view::{View, ViewExt, ViewHandle, attributes, component, view},
 };
 
-use super::format::{ago_label, elapsed};
+use super::format::{ago_label, elapsed, entity_label};
 use super::layout::layout;
+use super::overview;
 use crate::components::badge::{BadgeVariant, badge};
 use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::card::{card, card_content, card_description, card_header, card_title};
@@ -98,10 +99,14 @@ fn transmitters(hub: &Hub) -> Vec<Transmitter> {
             .iter()
             .filter(|entity| entity.driver == Driver::IrTransmitter)
         {
-            let entity_name = snapshot
-                .nodes
-                .name(&NameTarget::Entity(device_id.to_string(), entity.id))
-                .map_or_else(|| format!("entity {}", entity.id), String::from);
+            let entity_name = entity_label(
+                entity.id,
+                &overview::name(
+                    &snapshot.nodes,
+                    &snapshot.registry,
+                    &NameTarget::Entity(device_id.to_string(), entity.id),
+                ),
+            );
             transmitters.push(Transmitter {
                 value: format!("{device_id}/{}", entity.id),
                 label: format!(

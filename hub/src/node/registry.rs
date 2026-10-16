@@ -5,8 +5,10 @@ use std::time::{Duration, Instant};
 use jiff::Timestamp;
 use oxihome_protocol::management::{self, HEARTBEAT_INTERVAL};
 use oxihome_protocol::{
-    Access, Build, Channel, EntityDescriptor, Message, Payload, Value, ValueType,
+    Access, Build, Channel, EntityDescriptor, Message, NAME_MAX_LENGTH, Payload, Value, ValueType,
 };
+
+use crate::config::nodes::NameTarget;
 
 pub const DEFAULT_MISSED_HEARTBEATS: u32 = 3;
 
@@ -198,6 +200,27 @@ impl Registry {
         self.nodes.get(device_id)
     }
 
+    /// What the node calls an entity or channel in its `Hello`; an empty or too long name counts as
+    /// none.
+    pub fn declared_name(&self, target: &NameTarget) -> Option<&str> {
+        let name = match target {
+            NameTarget::Node(_) => None,
+            NameTarget::Entity(device_id, entity) => self
+                .node(device_id)?
+                .entities
+                .iter()
+                .find(|descriptor| descriptor.id == *entity)?
+                .name
+                .as_deref(),
+            NameTarget::Channel(device_id, entity, channel) => self
+                .node(device_id)?
+                .channel(*entity, *channel)?
+                .name
+                .as_deref(),
+        }?;
+        (!name.trim().is_empty() && name.len() <= NAME_MAX_LENGTH).then_some(name)
+    }
+
     pub fn stored(&self, device_id: &str) -> Option<StoredNode> {
         self.nodes.get(device_id).map(|node| StoredNode {
             device_id: device_id.to_string(),
@@ -377,9 +400,11 @@ mod tests {
                 build: Build::new("firmware", "0.7.0", "esp32"),
                 entities: vec![EntityDescriptor {
                     id: 5,
+                    name: None,
                     channels: vec![
                         Channel {
                             id: 0,
+                            name: None,
                             access: Access::Trigger,
                             value: Some(ValueType::Enum(vec!["Short".into(), "Alarm".into()])),
                             quantity: None,
@@ -387,6 +412,7 @@ mod tests {
                         },
                         Channel {
                             id: 1,
+                            name: None,
                             access: Access::Trigger,
                             value: None,
                             quantity: None,
@@ -394,6 +420,7 @@ mod tests {
                         },
                         Channel {
                             id: 3,
+                            name: None,
                             access: Access::Trigger,
                             value: Some(ValueType::Text { max_length: 5 }),
                             quantity: None,
@@ -401,6 +428,7 @@ mod tests {
                         },
                         Channel {
                             id: 2,
+                            name: None,
                             access: Access::ReadWrite,
                             value: Some(ValueType::Bool),
                             quantity: None,
@@ -664,5 +692,53 @@ mod tests {
         registry.handle(&hello(), now);
 
         assert!(!registry.asked_for_hello.contains(DEVICE));
+    }
+
+    #[test]
+    fn declared_names() {
+        let channel = |id: u8, name: &str| {
+            Channel {
+                id,
+                name: None,
+                access: Access::Read,
+                value: Some(ValueType::Bool),
+                quantity: None,
+                unit: None,
+            }
+            .named(name)
+        };
+        let mut registry = Registry::default();
+        registry.handle(
+            &message(Payload::Hello {
+                build: Build::new("rss", "0.2.0", "linux-x86_64"),
+                entities: vec![
+                    EntityDescriptor {
+                        id: 2,
+                        name: None,
+                        channels: vec![
+                            channel(0, "Reachable"),
+                            channel(1, ""),
+                            channel(2, &"x".repeat(NAME_MAX_LENGTH + 1)),
+                        ],
+                    }
+                    .named("Mosquitto releases"),
+                ],
+            }),
+            Instant::now(),
+        );
+        let name = |target: NameTarget| registry.declared_name(&target);
+
+        assert_eq!(
+            name(NameTarget::Entity(DEVICE.into(), 2)),
+            Some("Mosquitto releases")
+        );
+        assert_eq!(
+            name(NameTarget::Channel(DEVICE.into(), 2, 0)),
+            Some("Reachable")
+        );
+        assert_eq!(name(NameTarget::Channel(DEVICE.into(), 2, 1)), None);
+        assert_eq!(name(NameTarget::Channel(DEVICE.into(), 2, 2)), None);
+        assert_eq!(name(NameTarget::Channel(DEVICE.into(), 2, 3)), None);
+        assert_eq!(name(NameTarget::Node(DEVICE.into())), None);
     }
 }

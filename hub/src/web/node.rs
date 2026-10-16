@@ -331,10 +331,11 @@ fn hardware_rows(hub: &Hub, device_id: &str) -> Vec<HardwareRow> {
     ids.into_iter()
         .map(|id| HardwareRow {
             id,
-            name: snapshot
-                .nodes
-                .name(&NameTarget::Entity(device_id.to_string(), id))
-                .map(String::from),
+            name: overview::name(
+                &snapshot.nodes,
+                &snapshot.registry,
+                &NameTarget::Entity(device_id.to_string(), id),
+            ),
             desired: find(&desired, id),
             reported: find(&reported, id),
         })
@@ -861,6 +862,13 @@ async fn entity_card(
     range: ChartRange,
     editing: bool,
 ) -> Result<impl View> {
+    let declared_name = channels
+        .first()
+        .and_then(|channel| channel.entity_declared_name.clone());
+    // The field holds only the hub's own name; emptied, the node's name shows again.
+    let own_name = name
+        .clone()
+        .filter(|name| Some(name) != declared_name.as_ref());
     Ok(view! {
         card(
             attrs: attributes! { class="h-full" },
@@ -869,8 +877,8 @@ async fn entity_card(
                     if editing {
                         input(attrs: attributes! {
                             name=(format!("entity.{entity}"))
-                            value=(name.clone().unwrap_or_default())
-                            placeholder=(format!("entity {entity}"))
+                            value=(own_name.clone().unwrap_or_default())
+                            placeholder=(entity_label(entity, &declared_name))
                             aria-label=(format!("Entity {entity} name"))
                             class="h-9 font-semibold"
                         })
@@ -913,6 +921,10 @@ async fn field_row(
     editing: bool,
 ) -> Result<impl View> {
     let channel_name = channel_label(channel.channel, &channel.channel_name, channel.quantity);
+    let own_name = channel
+        .channel_name
+        .clone()
+        .filter(|name| Some(name) != channel.channel_declared_name.as_ref());
     let label = format!(
         "{} · {channel_name}",
         entity_label(channel.entity, &channel.entity_name)
@@ -930,8 +942,8 @@ async fn field_row(
                 if editing {
                     input(attrs: attributes! {
                         name=(format!("channel.{}.{}", channel.entity, channel.channel))
-                        value=(channel.channel_name.clone().unwrap_or_default())
-                        placeholder=(channel_label(channel.channel, &None, channel.quantity))
+                        value=(own_name.clone().unwrap_or_default())
+                        placeholder=(channel_label(channel.channel, &channel.channel_declared_name, channel.quantity))
                         aria-label=(format!("Channel {} name", channel.channel))
                         class="h-8"
                     })
