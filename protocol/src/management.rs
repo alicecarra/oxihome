@@ -84,6 +84,7 @@ impl Parameter {
     pub fn descriptor(&self) -> Channel {
         Channel {
             id: self.channel.into(),
+            name: None,
             access: Access::ReadWrite,
             value: Some(ValueType::Int {
                 min: self.min,
@@ -106,6 +107,7 @@ pub fn parameter(channel: u8) -> Option<Parameter> {
 pub fn ota_descriptor() -> Channel {
     Channel {
         id: ManagementChannel::Ota.into(),
+        name: None,
         access: Access::Trigger,
         value: Some(ValueType::Text {
             max_length: OTA_URL_MAX_LENGTH,
@@ -119,6 +121,7 @@ pub fn ota_descriptor() -> Channel {
 pub fn hardware_descriptor() -> Channel {
     Channel {
         id: ManagementChannel::Hardware.into(),
+        name: None,
         access: Access::ReadWrite,
         value: Some(ValueType::Text {
             max_length: HARDWARE_MAX_LENGTH,
@@ -132,6 +135,7 @@ pub fn hardware_descriptor() -> Channel {
 pub fn descriptor() -> EntityDescriptor {
     EntityDescriptor {
         id: ENTITY,
+        name: None,
         channels: PARAMETERS.iter().map(Parameter::descriptor).collect(),
     }
 }

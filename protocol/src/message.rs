@@ -115,8 +115,10 @@ mod tests {
             entities: vec![
                 EntityDescriptor {
                     id: 1,
+                    name: None,
                     channels: vec![Channel {
                         id: 0,
+                        name: None,
                         access: Access::Read,
                         value: Some(ValueType::Float {
                             min: -40.0,
@@ -129,18 +131,26 @@ mod tests {
                 },
                 EntityDescriptor {
                     id: 2,
-                    channels: vec![Channel {
-                        id: 0,
-                        access: Access::ReadWrite,
-                        value: Some(ValueType::Bool),
-                        quantity: None,
-                        unit: None,
-                    }],
-                },
+                    name: None,
+                    channels: vec![
+                        Channel {
+                            id: 0,
+                            name: None,
+                            access: Access::ReadWrite,
+                            value: Some(ValueType::Bool),
+                            quantity: None,
+                            unit: None,
+                        }
+                        .named("Power"),
+                    ],
+                }
+                .named("Lamp"),
                 EntityDescriptor {
                     id: 3,
+                    name: None,
                     channels: vec![Channel {
                         id: 0,
+                        name: None,
                         access: Access::Event,
                         value: None,
                         quantity: None,
@@ -214,6 +224,24 @@ mod tests {
         assert_eq!(json, r#"{"Text":"NEC 00 45"}"#);
         let json = serde_json::to_string(&ValueType::Text { max_length: 1024 }).unwrap();
         assert_eq!(json, r#"{"Text":{"max_length":1024}}"#);
+    }
+
+    #[test]
+    fn names_are_left_out_when_missing() {
+        let channel = Channel {
+            id: 0,
+            name: None,
+            access: Access::Trigger,
+            value: None,
+            quantity: None,
+            unit: None,
+        };
+        let json = serde_json::to_string(&channel).unwrap();
+        assert_eq!(
+            json,
+            r#"{"id":0,"access":"Trigger","value":null,"quantity":null,"unit":null}"#
+        );
+        assert_eq!(serde_json::from_str::<Channel>(&json).unwrap(), channel);
     }
 
     #[test]

@@ -44,7 +44,19 @@ pub enum Payload {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EntityDescriptor {
     pub id: u8,
+    /// What the node calls it; the hub's own name in `nodes.toml` wins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub channels: Vec<Channel>,
+}
+
+impl EntityDescriptor {
+    pub fn named(self, name: impl Into<String>) -> Self {
+        Self {
+            name: Some(name.into()),
+            ..self
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -6,7 +6,9 @@ pub mod management;
 mod message;
 mod payload;
 
-pub use channel::{Access, Channel, Color, ColorModel, Quantity, Unit, Value, ValueType};
+pub use channel::{
+    Access, Channel, Color, ColorModel, NAME_MAX_LENGTH, Quantity, Unit, Value, ValueType,
+};
 pub use error_code::ErrorCode;
 pub use management::ManagementChannel;
 pub use message::{Envelope, Message, PROTOCOL_VERSION};

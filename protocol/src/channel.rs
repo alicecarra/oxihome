@@ -1,14 +1,29 @@
 use serde::{Deserialize, Serialize};
 
+/// Longest entity or channel name a node may declare, in bytes of UTF-8.
+pub const NAME_MAX_LENGTH: usize = 128;
+
 /// Primitive property of an entity.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Channel {
     pub id: u8,
+    /// What the node calls it; the hub's own name in `nodes.toml` wins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub access: Access,
     /// `None` for channels without a value: a `Trigger` with no argument, an `Event` with no data.
     pub value: Option<ValueType>,
     pub quantity: Option<Quantity>,
     pub unit: Option<Unit>,
+}
+
+impl Channel {
+    pub fn named(self, name: impl Into<String>) -> Self {
+        Self {
+            name: Some(name.into()),
+            ..self
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
