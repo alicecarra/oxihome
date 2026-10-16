@@ -475,12 +475,17 @@ fn descriptor(id: u8, peripheral: &Peripheral) -> EntityDescriptor {
             )
         }],
     };
-    EntityDescriptor { id, channels }
+    EntityDescriptor {
+        id,
+        name: None,
+        channels,
+    }
 }
 
 fn channel(id: u8, access: Access, value: Option<ValueType>) -> Channel {
     Channel {
         id,
+        name: None,
         access,
         value,
         quantity: None,
