@@ -21,6 +21,7 @@ struct TestDevice {
 fn channel(id: u8, access: Access, value: Option<ValueType>) -> Channel {
     Channel {
         id,
+        name: None,
         access,
         value,
         quantity: None,
@@ -33,14 +34,17 @@ impl Device for TestDevice {
         vec![
             EntityDescriptor {
                 id: LAMP,
+                name: None,
                 channels: vec![channel(0, Access::ReadWrite, Some(ValueType::Bool))],
             },
             EntityDescriptor {
                 id: BUTTON,
+                name: None,
                 channels: vec![channel(0, Access::Event, None)],
             },
             EntityDescriptor {
                 id: BUZZER,
+                name: None,
                 channels: vec![
                     channel(
                         0,
@@ -52,6 +56,7 @@ impl Device for TestDevice {
             },
             EntityDescriptor {
                 id: DIMMER,
+                name: None,
                 channels: vec![
                     channel(
                         0,
