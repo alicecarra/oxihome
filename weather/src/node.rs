@@ -66,39 +66,54 @@ impl Device for WeatherDevice {
         vec![
             EntityDescriptor {
                 id: NOW_ENTITY,
+                name: None,
                 channels: vec![
-                    reading(0, -50.0, 60.0, Quantity::Temperature, Unit::Celsius),
-                    reading(1, 0.0, 100.0, Quantity::Humidity, Unit::Percent),
-                    reading(2, 0.0, 500.0, Quantity::Precipitation, Unit::Millimeter),
-                    reading(3, 0.0, 300.0, Quantity::WindSpeed, Unit::KilometerPerHour),
+                    reading(0, -50.0, 60.0, Quantity::Temperature, Unit::Celsius)
+                        .named("Temperature"),
+                    reading(1, 0.0, 100.0, Quantity::Humidity, Unit::Percent).named("Humidity"),
+                    reading(2, 0.0, 500.0, Quantity::Precipitation, Unit::Millimeter)
+                        .named("Precipitation"),
+                    reading(3, 0.0, 300.0, Quantity::WindSpeed, Unit::KilometerPerHour)
+                        .named("Wind"),
                     Channel {
                         id: 4,
+                        name: None,
                         access: Access::Read,
                         value: Some(ValueType::Bool),
                         quantity: None,
                         unit: None,
-                    },
+                    }
+                    .named("Raining"),
                 ],
-            },
+            }
+            .named("Now"),
             EntityDescriptor {
                 id: TODAY_ENTITY,
+                name: None,
                 channels: vec![
-                    reading(0, -50.0, 60.0, Quantity::Temperature, Unit::Celsius),
-                    reading(1, -50.0, 60.0, Quantity::Temperature, Unit::Celsius),
-                    // Chance of rain today.
-                    reading(2, 0.0, 100.0, Quantity::Precipitation, Unit::Percent),
+                    reading(0, -50.0, 60.0, Quantity::Temperature, Unit::Celsius).named("Maximum"),
+                    reading(1, -50.0, 60.0, Quantity::Temperature, Unit::Celsius).named("Minimum"),
+                    reading(2, 0.0, 100.0, Quantity::Precipitation, Unit::Percent)
+                        .named("Chance of rain"),
                 ],
-            },
+            }
+            .named("Today"),
             EntityDescriptor {
                 id: UPDATED_ENTITY,
-                channels: vec![Channel {
-                    id: 0,
-                    access: Access::Read,
-                    value: Some(ValueType::Text { max_length: 32 }),
-                    quantity: None,
-                    unit: None,
-                }],
-            },
+                name: None,
+                channels: vec![
+                    Channel {
+                        id: 0,
+                        name: None,
+                        access: Access::Read,
+                        value: Some(ValueType::Text { max_length: 32 }),
+                        quantity: None,
+                        unit: None,
+                    }
+                    .named("At"),
+                ],
+            }
+            .named("Updated"),
         ]
     }
 
@@ -135,6 +150,7 @@ impl Device for WeatherDevice {
 fn reading(id: u8, min: f32, max: f32, quantity: Quantity, unit: Unit) -> Channel {
     Channel {
         id,
+        name: None,
         access: Access::Read,
         value: Some(ValueType::Float {
             min,
