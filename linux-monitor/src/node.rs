@@ -32,9 +32,10 @@ pub struct MonitorNode {
 
 struct MonitorDevice {
     info: Info,
-    disks: usize,
-    interfaces: usize,
-    containers: usize,
+    /// Mount points, interface names and container names, in entity order.
+    disks: Vec<String>,
+    interfaces: Vec<String>,
+    containers: Vec<String>,
     /// `None` until the first report.
     sample: Option<Sample>,
 }
@@ -43,9 +44,9 @@ impl MonitorNode {
     pub fn new(
         device_id: String,
         sampler: Sampler,
-        disks: usize,
-        interfaces: usize,
-        containers: usize,
+        disks: Vec<String>,
+        interfaces: Vec<String>,
+        containers: Vec<String>,
     ) -> Self {
         Self {
             core: NodeCore::new(
@@ -131,90 +132,136 @@ impl MonitorDevice {
 impl Device for MonitorDevice {
     fn entities(&self) -> Vec<EntityDescriptor> {
         let mut cpu = vec![
-            reading(0, 100.0, None, Unit::Percent),
-            number(1),
-            number(2),
-            number(3),
-            reading(4, 10_000.0, Some(Quantity::Frequency), Unit::Megahertz),
+            reading(0, 100.0, None, Unit::Percent).named("Usage"),
+            number(1).named("Load 1 min"),
+            number(2).named("Load 5 min"),
+            number(3).named("Load 15 min"),
+            reading(4, 10_000.0, Some(Quantity::Frequency), Unit::Megahertz).named("Frequency"),
         ];
         if self.info.has_cpu_temperature {
-            cpu.push(temperature(5));
+            cpu.push(temperature(5).named("Temperature"));
         }
         let mut entities = vec![
             EntityDescriptor {
                 id: CPU_ENTITY,
+                name: None,
                 channels: cpu,
-            },
+            }
+            .named("CPU"),
             EntityDescriptor {
                 id: MEMORY_ENTITY,
+                name: None,
                 channels: vec![
-                    reading(0, 100.0, None, Unit::Percent),
-                    size(1, 4096.0),
-                    size(2, 4096.0),
-                    size(3, 4096.0),
-                    reading(4, 100.0, None, Unit::Percent),
+                    reading(0, 100.0, None, Unit::Percent).named("Used"),
+                    size(1, 4096.0).named("Used"),
+                    size(2, 4096.0).named("Available"),
+                    size(3, 4096.0).named("Total"),
+                    reading(4, 100.0, None, Unit::Percent).named("Swap used"),
                 ],
-            },
+            }
+            .named("Memory"),
         ];
         if self.info.has_battery {
-            entities.push(EntityDescriptor {
-                id: BATTERY_ENTITY,
-                channels: vec![reading(0, 100.0, None, Unit::Percent), flag(1), flag(2)],
-            });
+            entities.push(
+                EntityDescriptor {
+                    id: BATTERY_ENTITY,
+                    name: None,
+                    channels: vec![
+                        reading(0, 100.0, None, Unit::Percent).named("Charge"),
+                        flag(1).named("Charging"),
+                        flag(2).named("Plugged in"),
+                    ],
+                }
+                .named("Battery"),
+            );
         }
-        entities.push(EntityDescriptor {
-            id: SYSTEM_ENTITY,
-            channels: vec![
-                count(0, Some(Unit::Second)),
-                text(1, 64),
-                text(2, 64),
-                text(3, 128),
-            ],
-        });
-        entities.extend((0..self.disks).map(|index| EntityDescriptor {
-            id: FIRST_DISK_ENTITY + index as u8,
-            channels: vec![
-                reading(0, 100.0, None, Unit::Percent),
-                size(1, 1_000_000.0),
-                size(2, 1_000_000.0),
-            ],
+        entities.push(
+            EntityDescriptor {
+                id: SYSTEM_ENTITY,
+                name: None,
+                channels: vec![
+                    count(0, Some(Unit::Second)).named("Uptime"),
+                    text(1, 64).named("Hostname"),
+                    text(2, 64).named("Kernel"),
+                    text(3, 128).named("Distribution"),
+                ],
+            }
+            .named("System"),
+        );
+        entities.extend(self.disks.iter().enumerate().map(|(index, mount)| {
+            EntityDescriptor {
+                id: FIRST_DISK_ENTITY + index as u8,
+                name: None,
+                channels: vec![
+                    reading(0, 100.0, None, Unit::Percent).named("Used"),
+                    size(1, 1_000_000.0).named("Free"),
+                    size(2, 1_000_000.0).named("Total"),
+                ],
+            }
+            .named(format!("Disk {mount}"))
         }));
-        entities.extend((0..self.interfaces).map(|index| EntityDescriptor {
-            id: FIRST_INTERFACE_ENTITY + index as u8,
-            channels: vec![rate(0), rate(1), flag(2), text(3, 45)],
-        }));
+        entities.extend(
+            self.interfaces
+                .iter()
+                .enumerate()
+                .map(|(index, interface)| {
+                    EntityDescriptor {
+                        id: FIRST_INTERFACE_ENTITY + index as u8,
+                        name: None,
+                        channels: vec![
+                            rate(0).named("Download"),
+                            rate(1).named("Upload"),
+                            flag(2).named("Connected"),
+                            text(3, 45).named("Address"),
+                        ],
+                    }
+                    .named(interface)
+                }),
+        );
         let cpu_max = 100.0 * self.info.cpu_count as f32;
-        entities.extend((0..self.containers).map(|index| EntityDescriptor {
-            id: FIRST_CONTAINER_ENTITY + index as u8,
-            channels: vec![
-                flag(0),
-                Channel {
-                    id: 1,
-                    access: Access::Read,
-                    value: Some(ValueType::Enum(
-                        HEALTH_OPTIONS.iter().map(|option| option.to_string()).collect(),
-                    )),
-                    quantity: None,
-                    unit: None,
-                },
-                reading(2, cpu_max, None, Unit::Percent),
-                reading(
-                    3,
-                    1_000_000.0,
-                    Some(Quantity::DataSize),
-                    Unit::Megabyte,
-                ),
-                count(4, None),
-                count(5, Some(Unit::Second)),
-                Channel {
-                    id: CONTAINER_CHANGE_CHANNEL,
-                    access: Access::Event,
-                    value: Some(ValueType::Text { max_length: 16 }),
-                    quantity: None,
-                    unit: None,
-                },
-            ],
-        }));
+        entities.extend(
+            self.containers
+                .iter()
+                .enumerate()
+                .map(|(index, container)| {
+                    EntityDescriptor {
+                        id: FIRST_CONTAINER_ENTITY + index as u8,
+                        name: None,
+                        channels: vec![
+                            flag(0).named("Running"),
+                            Channel {
+                                id: 1,
+                                name: None,
+                                access: Access::Read,
+                                value: Some(ValueType::Enum(
+                                    HEALTH_OPTIONS
+                                        .iter()
+                                        .map(|option| option.to_string())
+                                        .collect(),
+                                )),
+                                quantity: None,
+                                unit: None,
+                            }
+                            .named("Health"),
+                            reading(2, cpu_max, None, Unit::Percent).named("CPU"),
+                            reading(3, 1_000_000.0, Some(Quantity::DataSize), Unit::Megabyte)
+                                .named("Memory"),
+                            count(4, None).named("Restarts"),
+                            count(5, Some(Unit::Second)).named("Up for"),
+                            Channel {
+                                id: CONTAINER_CHANGE_CHANNEL,
+                                name: None,
+                                access: Access::Event,
+                                value: Some(ValueType::Text { max_length: 16 }),
+                                quantity: None,
+                                unit: None,
+                            }
+                            .named("Change"),
+                        ],
+                    }
+                    .named(container)
+                }),
+        );
         entities
     }
 
@@ -261,7 +308,7 @@ impl Device for MonitorDevice {
                 confirmed(2, Value::Text(self.info.kernel.clone())),
                 confirmed(3, Value::Text(self.info.distribution.clone())),
             ],
-            id if (FIRST_DISK_ENTITY..FIRST_DISK_ENTITY + self.disks as u8).contains(&id) => {
+            id if (FIRST_DISK_ENTITY..FIRST_DISK_ENTITY + self.disks.len() as u8).contains(&id) => {
                 let disk = sample.disks[(id - FIRST_DISK_ENTITY) as usize].as_ref()?;
                 vec![
                     float(0, disk.used_percent),
@@ -269,7 +316,8 @@ impl Device for MonitorDevice {
                     float(2, disk.total_gb),
                 ]
             }
-            id if (FIRST_INTERFACE_ENTITY..FIRST_INTERFACE_ENTITY + self.interfaces as u8)
+            id if (FIRST_INTERFACE_ENTITY
+                ..FIRST_INTERFACE_ENTITY + self.interfaces.len() as u8)
                 .contains(&id) =>
             {
                 let interface =
@@ -284,7 +332,8 @@ impl Device for MonitorDevice {
                 .flatten()
                 .collect()
             }
-            id if (FIRST_CONTAINER_ENTITY..FIRST_CONTAINER_ENTITY + self.containers as u8)
+            id if (FIRST_CONTAINER_ENTITY
+                ..FIRST_CONTAINER_ENTITY + self.containers.len() as u8)
                 .contains(&id) =>
             {
                 let container =
@@ -328,6 +377,7 @@ fn float_channel(
 ) -> Channel {
     Channel {
         id,
+        name: None,
         access: Access::Read,
         value: Some(ValueType::Float {
             min: 0.0,
@@ -387,6 +437,7 @@ fn rate(id: u8) -> Channel {
 fn count(id: u8, unit: Option<Unit>) -> Channel {
     Channel {
         id,
+        name: None,
         access: Access::Read,
         value: Some(ValueType::Int {
             min: 0,
@@ -401,6 +452,7 @@ fn count(id: u8, unit: Option<Unit>) -> Channel {
 fn flag(id: u8) -> Channel {
     Channel {
         id,
+        name: None,
         access: Access::Read,
         value: Some(ValueType::Bool),
         quantity: None,
@@ -411,6 +463,7 @@ fn flag(id: u8) -> Channel {
 fn text(id: u8, max_length: u16) -> Channel {
     Channel {
         id,
+        name: None,
         access: Access::Read,
         value: Some(ValueType::Text { max_length }),
         quantity: None,
@@ -442,9 +495,9 @@ mod tests {
                 has_battery,
                 cpu_count: 4,
             },
-            disks: 2,
-            interfaces: 1,
-            containers: 2,
+            disks: vec!["/".into(), "/home".into()],
+            interfaces: vec!["wlan0".into()],
+            containers: vec!["mosquitto".into(), "trilium".into()],
             sample: None,
         }
     }

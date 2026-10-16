@@ -102,9 +102,9 @@ async fn main() -> anyhow::Result<()> {
         MonitorNode::new(
             device_id,
             sampler,
-            monitor.disks.len(),
-            monitor.interfaces.len(),
-            monitor.containers.len(),
+            monitor.disks,
+            monitor.interfaces,
+            monitor.containers,
         ),
         Broker {
             host: config.mqtt.host,
