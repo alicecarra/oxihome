@@ -108,6 +108,7 @@ impl Device for TelegramDevice {
     fn entities(&self) -> Vec<EntityDescriptor> {
         let message = |id| Channel {
             id,
+            name: None,
             access: Access::Trigger,
             value: Some(ValueType::Text {
                 max_length: MESSAGE_MAX_LENGTH,
@@ -118,39 +119,56 @@ impl Device for TelegramDevice {
         vec![
             EntityDescriptor {
                 id: MESSAGE_ENTITY,
-                channels: vec![message(0), message(SILENT_CHANNEL)],
-            },
+                name: None,
+                channels: vec![
+                    message(0).named("Send"),
+                    message(SILENT_CHANNEL).named("Send silently"),
+                ],
+            }
+            .named("Message"),
             EntityDescriptor {
                 id: COMMAND_ENTITY,
-                channels: vec![Channel {
-                    id: 0,
-                    access: Access::Event,
-                    value: Some(ValueType::Enum(self.commands.clone())),
-                    quantity: None,
-                    unit: None,
-                }],
-            },
-            EntityDescriptor {
-                id: CONNECTION_ENTITY,
+                name: None,
                 channels: vec![
                     Channel {
                         id: 0,
+                        name: None,
+                        access: Access::Event,
+                        value: Some(ValueType::Enum(self.commands.clone())),
+                        quantity: None,
+                        unit: None,
+                    }
+                    .named("Received"),
+                ],
+            }
+            .named("Command"),
+            EntityDescriptor {
+                id: CONNECTION_ENTITY,
+                name: None,
+                channels: vec![
+                    Channel {
+                        id: 0,
+                        name: None,
                         access: Access::Read,
                         value: Some(ValueType::Bool),
                         quantity: None,
                         unit: None,
-                    },
+                    }
+                    .named("Reachable"),
                     Channel {
                         id: 1,
+                        name: None,
                         access: Access::Read,
                         value: Some(ValueType::Text {
                             max_length: ERROR_MAX_LENGTH,
                         }),
                         quantity: None,
                         unit: None,
-                    },
+                    }
+                    .named("Last error"),
                 ],
-            },
+            }
+            .named("Connection"),
         ]
     }
 
