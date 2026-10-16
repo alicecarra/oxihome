@@ -190,6 +190,7 @@ impl Device for Devices {
     fn entities(&self) -> Vec<EntityDescriptor> {
         let text = |id, max_length, access| Channel {
             id,
+            name: None,
             access,
             value: Some(ValueType::Text { max_length }),
             quantity: None,
@@ -197,6 +198,7 @@ impl Device for Devices {
         };
         let count = |id| Channel {
             id,
+            name: None,
             access: Access::Read,
             value: Some(ValueType::Int {
                 min: 0,
@@ -209,26 +211,39 @@ impl Device for Devices {
         let mut entities: Vec<EntityDescriptor> = self
             .watched
             .iter()
-            .map(|watch| EntityDescriptor {
-                id: watch.device.entity,
-                channels: vec![
-                    Channel {
-                        id: ONLINE_CHANNEL,
-                        access: Access::Read,
-                        value: Some(ValueType::Bool),
-                        quantity: None,
-                        unit: None,
-                    },
-                    text(CHANGE_CHANNEL, 8, Access::Event),
-                    text(ADDRESS_CHANNEL, 15, Access::Read),
-                    text(SINCE_CHANNEL, 16, Access::Read),
-                ],
+            .map(|watch| {
+                EntityDescriptor {
+                    id: watch.device.entity,
+                    name: None,
+                    channels: vec![
+                        Channel {
+                            id: ONLINE_CHANNEL,
+                            name: None,
+                            access: Access::Read,
+                            value: Some(ValueType::Bool),
+                            quantity: None,
+                            unit: None,
+                        }
+                        .named("Online"),
+                        text(CHANGE_CHANNEL, 8, Access::Event).named("Change"),
+                        text(ADDRESS_CHANNEL, 15, Access::Read).named("Address"),
+                        text(SINCE_CHANNEL, 16, Access::Read).named("Since"),
+                    ],
+                }
+                .named(&watch.device.name)
             })
             .collect();
-        entities.push(EntityDescriptor {
-            id: NETWORK_ENTITY,
-            channels: vec![count(ANSWERING_CHANNEL), count(UNKNOWN_CHANNEL)],
-        });
+        entities.push(
+            EntityDescriptor {
+                id: NETWORK_ENTITY,
+                name: None,
+                channels: vec![
+                    count(ANSWERING_CHANNEL).named("Answering"),
+                    count(UNKNOWN_CHANNEL).named("Unknown"),
+                ],
+            }
+            .named("Network"),
+        );
         entities
     }
 

@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, ensure};
 use oxihome_node::mqtt::{self, Broker};
+use oxihome_protocol::NAME_MAX_LENGTH;
 use serde::Deserialize;
 
 use node::{NETWORK_ENTITY, NetworkDevicesNode, Scan, WatchedDevice};
@@ -141,6 +142,11 @@ fn watched_devices(config: &Config) -> anyhow::Result<Vec<WatchedDevice>> {
             ensure!(
                 device.entity != 0 && device.entity != NETWORK_ENTITY,
                 "{}: entities 0 and {NETWORK_ENTITY} are reserved",
+                device.name
+            );
+            ensure!(
+                device.name.len() <= NAME_MAX_LENGTH,
+                "{}: name longer than {NAME_MAX_LENGTH} bytes",
                 device.name
             );
             ensure!(
