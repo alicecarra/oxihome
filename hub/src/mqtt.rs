@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
@@ -5,6 +6,8 @@ use oxihome_protocol::legacy::{self, ReadError};
 use oxihome_protocol::{Message, Payload};
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use tokio::sync::mpsc;
+
+use crate::traffic::{Direction, Reading, Traffic};
 
 const SOURCE: &str = "oxihome-hub";
 const UP_TOPICS: &str = "oxihome/+/up";
@@ -27,6 +30,7 @@ pub enum Incoming {
 pub struct Mqtt {
     client: AsyncClient,
     next_message_id: AtomicU32,
+    traffic: Arc<Traffic>,
 }
 
 impl Mqtt {
@@ -45,6 +49,8 @@ impl Mqtt {
         let (sender, receiver) = mpsc::channel(64);
 
         let subscriber = client.clone();
+        let traffic = Arc::new(Traffic::default());
+        let recorder = traffic.clone();
         tokio::spawn(async move {
             loop {
                 let incoming = match event_loop.poll().await {
@@ -57,30 +63,14 @@ impl Mqtt {
                     }
                     Ok(Event::Incoming(Packet::Publish(publish))) => {
                         let text = String::from_utf8_lossy(&publish.payload);
-                        match legacy::read(&text) {
-                            // The broker's ACL ties each topic to its node, but not the `src` field.
-                            Ok(message)
-                                if publish.topic != format!("oxihome/{}/up", message.src) =>
-                            {
-                                println!(
-                                    "dropping message from {} on {}",
-                                    message.src, publish.topic
-                                );
-                                continue;
-                            }
-                            Ok(message) => Incoming::Message(message),
-                            Err(ReadError::Unsupported { version, src })
-                                if publish.topic == format!("oxihome/{src}/up") =>
-                            {
-                                Incoming::OtherProtocol {
-                                    device_id: src,
-                                    version,
-                                }
-                            }
-                            Err(error) => {
-                                println!("invalid message on {}: {error}", publish.topic);
-                                continue;
-                            }
+                        let (incoming, reading) = read(&publish.topic, &text);
+                        if let (None, Reading::Dropped(reason)) = (&incoming, &reading) {
+                            println!("{reason}");
+                        }
+                        recorder.record(Direction::Up, &publish.topic, &text, reading);
+                        match incoming {
+                            Some(incoming) => incoming,
+                            None => continue,
                         }
                     }
                     Ok(_) => continue,
@@ -100,9 +90,14 @@ impl Mqtt {
             Self {
                 client,
                 next_message_id: AtomicU32::new(0),
+                traffic,
             },
             receiver,
         )
+    }
+
+    pub fn traffic(&self) -> &Traffic {
+        &self.traffic
     }
 
     pub fn next_message_id(&self) -> u32 {
@@ -128,9 +123,91 @@ impl Mqtt {
             Some(device_id) => format!("oxihome/{device_id}/down"),
             None => BROADCAST_TOPIC.into(),
         };
+        let reading = Reading::of(&message.payload);
+        let text = message.to_json()?;
         self.client
-            .publish(topic, QoS::AtLeastOnce, false, message.to_json()?)
+            .publish(topic.as_str(), QoS::AtLeastOnce, false, text.as_str())
             .await?;
+        self.traffic.record(Direction::Down, &topic, &text, reading);
         Ok(())
+    }
+}
+
+/// What reaches the hub's loop, `None` for a message thrown away.
+fn read(topic: &str, text: &str) -> (Option<Incoming>, Reading) {
+    match legacy::read(text) {
+        // The broker's ACL ties each topic to its node, but not the `src` field.
+        Ok(message) if topic != format!("oxihome/{}/up", message.src) => (
+            None,
+            Reading::Dropped(format!("dropping message from {} on {topic}", message.src)),
+        ),
+        Ok(message) => {
+            let reading = Reading::of(&message.payload);
+            (Some(Incoming::Message(message)), reading)
+        }
+        Err(ReadError::Unsupported { version, src }) if topic == format!("oxihome/{src}/up") => (
+            Some(Incoming::OtherProtocol {
+                device_id: src,
+                version,
+            }),
+            Reading::Dropped(format!("protocol version {version}")),
+        ),
+        Err(error) => (
+            None,
+            Reading::Dropped(format!("invalid message on {topic}: {error}")),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::traffic::MessageKind;
+
+    fn heartbeat_from(source: &str) -> String {
+        Message::new(
+            source,
+            1,
+            Payload::Heartbeat {
+                uptime_s: 10,
+                rssi: None,
+                battery: None,
+            },
+        )
+        .to_json()
+        .unwrap()
+    }
+
+    #[test]
+    fn reads_a_message_on_its_own_topic() {
+        let (incoming, reading) = read("oxihome/a/up", &heartbeat_from("a"));
+        assert!(matches!(incoming, Some(Incoming::Message(_))));
+        assert_eq!(
+            reading,
+            Reading::Read {
+                kind: MessageKind::Heartbeat,
+                entity: None,
+                channels: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn drops_a_source_that_does_not_match_the_topic() {
+        let (incoming, reading) = read("oxihome/a/up", &heartbeat_from("b"));
+        assert!(incoming.is_none());
+        assert_eq!(
+            reading,
+            Reading::Dropped("dropping message from b on oxihome/a/up".into())
+        );
+    }
+
+    #[test]
+    fn drops_invalid_json() {
+        let (incoming, reading) = read("oxihome/a/up", "not json");
+        assert!(incoming.is_none());
+        assert!(
+            matches!(reading, Reading::Dropped(reason) if reason.starts_with("invalid message"))
+        );
     }
 }

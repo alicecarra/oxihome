@@ -29,6 +29,7 @@ use crate::storage::{
     History, Operation, Restored, Storage, StoredCommand, StoredNotification, StoredUpdate,
     TimelineEntry, TimelineQuery, UpdateOutcome, Write,
 };
+use crate::traffic::Traffic;
 
 /// Read access for the web interface, see `Hub::snapshot`.
 pub struct Snapshot<'a> {
@@ -178,6 +179,10 @@ impl Hub {
 
     pub fn mqtt(&self) -> &Mqtt {
         &self.mqtt
+    }
+
+    pub fn traffic(&self) -> &Traffic {
+        self.mqtt.traffic()
     }
 
     pub fn handle(

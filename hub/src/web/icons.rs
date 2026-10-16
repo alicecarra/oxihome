@@ -30,3 +30,5 @@ pub const UPDATE: IconData = iconify_icon!("tabler:cloud-download");
 pub const SORT: IconData = iconify_icon!("tabler:selector");
 pub const SORT_ASCENDING: IconData = iconify_icon!("tabler:chevron-up");
 pub const SORT_DESCENDING: IconData = iconify_icon!("tabler:chevron-down");
+pub const UP: IconData = iconify_icon!("tabler:arrow-up");
+pub const DOWN: IconData = iconify_icon!("tabler:arrow-down");

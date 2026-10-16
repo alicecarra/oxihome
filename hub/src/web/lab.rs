@@ -14,6 +14,7 @@ pub async fn lab() -> Result<impl View> {
         layout(
             title: "Oxihome lab",
             <div class="space-y-8">
+                <a href="/settings" class="text-sm text-muted-foreground hover:underline">"← Settings"</a>
                 <div>
                     <h1 class="text-2xl font-semibold">"Lab"</h1>
                     <p class="text-sm text-muted-foreground">"A page outside the menu for trying things out."</p>

@@ -11,6 +11,7 @@ mod notifications;
 mod ota;
 mod schedule;
 mod storage;
+mod traffic;
 mod web;
 
 use std::path::PathBuf;

@@ -42,7 +42,7 @@ pub async fn settings(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         layout(
             title: "Oxihome settings",
-            <div class="max-w-3xl">
+            <div class="max-w-3xl space-y-4">
                 card(
                     card_header(
                         <div class="flex flex-wrap items-center justify-between gap-3">
@@ -71,10 +71,37 @@ pub async fn settings(cx: &Cx) -> Result<impl View> {
                         </ul>
                     )
                 )
+                card(
+                    card_header(
+                        card_title("Tools")
+                        card_description("Pages left out of the menu.")
+                    )
+                    card_content(
+                        <ul class="divide-y divide-border">
+                            for (href, name, description) in TOOLS {
+                                <li>
+                                    <a href=(href) class="block py-3 hover:bg-foreground/5">
+                                        <p class="text-sm font-medium">(name)</p>
+                                        <p class="text-sm text-muted-foreground">(description)</p>
+                                    </a>
+                                </li>
+                            }
+                        </ul>
+                    )
+                )
             </div>
         )
     })
 }
+
+const TOOLS: [(&str, &str, &str); 2] = [
+    (
+        "/traffic",
+        "Traffic",
+        "MQTT messages the hub receives and sends, live.",
+    ),
+    ("/lab", "Lab", "Components and styles being tried out."),
+];
 
 #[page("/settings/{file}")]
 pub async fn settings_file(cx: &Cx) -> Result<impl View> {

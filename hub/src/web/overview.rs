@@ -803,22 +803,35 @@ pub fn channel_description(
     channel: u8,
     quantity: Option<Quantity>,
 ) -> String {
+    let node = name(nodes, registry, &NameTarget::Node(device_id.to_string()))
+        .unwrap_or_else(|| device_id.to_string());
+    let channel = channel_name(nodes, registry, device_id, entity, channel, quantity);
+    format!("{node} › {channel}")
+}
+
+/// `LED · Brightness`, `LED`: `channel_description` without the node.
+pub fn channel_name(
+    nodes: &Nodes,
+    registry: &Registry,
+    device_id: &str,
+    entity: u8,
+    channel: u8,
+    quantity: Option<Quantity>,
+) -> String {
     let name = |target: NameTarget| name(nodes, registry, &target);
-    let node =
-        name(NameTarget::Node(device_id.to_string())).unwrap_or_else(|| device_id.to_string());
     let entity_name = entity_label(
         entity,
         &name(NameTarget::Entity(device_id.to_string(), entity)),
     );
     if channel == 0 {
-        return format!("{node} › {entity_name}");
+        return entity_name;
     }
     let channel_name = channel_label(
         channel,
         &name(NameTarget::Channel(device_id.to_string(), entity, channel)),
         quantity,
     );
-    format!("{node} › {entity_name} · {channel_name}")
+    format!("{entity_name} · {channel_name}")
 }
 
 #[cfg(test)]
