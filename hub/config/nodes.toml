@@ -1,6 +1,7 @@
 # Each node, by the id from its Hello: friendly names shown on the web interface and the desired
 # operation parameters (seconds), which the hub sets on nodes that report another value.
-# Channels without a name show their quantity (e.g. Temperature) or "channel N".
+# A name here wins over the one the node declares in its Hello; without either, a channel shows its
+# quantity (e.g. Temperature) or "channel N".
 # Parameter ranges: heartbeat_interval 5-300, wifi_check_interval 1-60; a missing one keeps the
 # node's value.
 # hardware: what is wired to each pin of a board, sent when the board mounts something else (it
@@ -30,7 +31,7 @@ hardware = [
 ]
 
 [nodes."esp32-14335c2e7270"]
-name = "Outra placa"
+name = "IR emitter"
 entities.1 = { name = "LED", channels.0 = "Power" }
 entities.2 = { name = "BOOT button", channels.0 = "Press" }
 entities.3 = { name = "IR transmitter", channels.0 = "Code" }
@@ -41,50 +42,27 @@ hardware = [
     { id = 3, pin = 18, driver = "ir_transmitter" },
 ]
 
-[nodes."sim-living-room"]
-name = "Living room (simulated)"
-entities.1 = { name = "Lamp", channels.0 = "Power" }
-entities.2 = { name = "Button", channels.0 = "Press" }
-entities.3 = { name = "Climate sensor" }
-
-[nodes."sim-bedroom"]
-name = "Bedroom (simulated)"
-entities.1 = { name = "Lamp", channels.0 = "Power" }
-
 [nodes.weather]
 name = "Weather"
-entities.1 = { name = "Now", channels.3 = "Wind", channels.4 = "Raining" }
-entities.2 = { name = "Today", channels.0 = "Maximum", channels.1 = "Minimum", channels.2 = "Chance of rain" }
-entities.3 = { name = "Updated", channels.0 = "At" }
 
 [nodes.network-devices]
 name = "Network devices"
-entities.1 = { name = "Alice S23", channels.0 = "Online", channels.1 = "Change", channels.2 = "Address", channels.3 = "Since" }
-entities.2 = { name = "tablet", channels.0 = "Online", channels.1 = "Change", channels.2 = "Address", channels.3 = "Since" }
-entities.3 = { name = "Alice Watch6", channels.0 = "Online", channels.1 = "Change", channels.2 = "Address", channels.3 = "Since" }
-entities.100 = { name = "Network", channels.0 = "Answering", channels.1 = "Unknown" }
 
 [nodes.notebook]
 name = "Notebook"
-entities.1 = { name = "CPU", channels.0 = "Usage", channels.1 = "Load 1 min", channels.2 = "Load 5 min", channels.3 = "Load 15 min" }
-entities.2 = { name = "Memory", channels.0 = "Used", channels.1 = "Used", channels.2 = "Available", channels.3 = "Total", channels.4 = "Swap used" }
-entities.3 = { name = "Battery", channels.0 = "Charge", channels.1 = "Charging", channels.2 = "Plugged in" }
-entities.4 = { name = "System", channels.0 = "Uptime", channels.1 = "Hostname", channels.2 = "Kernel", channels.3 = "Distribution" }
-entities.10 = { name = "Disk /", channels.0 = "Used", channels.1 = "Free", channels.2 = "Total" }
-entities.11 = { name = "Disk /boot/efi", channels.0 = "Used", channels.1 = "Free", channels.2 = "Total" }
-entities.30 = { name = "Wi-Fi", channels.0 = "Download", channels.1 = "Upload", channels.2 = "Connected", channels.3 = "Address" }
-entities.50 = { name = "Trilium", channels.0 = "Running", channels.1 = "Health", channels.2 = "CPU", channels.3 = "Memory", channels.4 = "Restarts", channels.5 = "Up for", channels.6 = "Change" }
-entities.51 = { name = "Mosquitto", channels.0 = "Running", channels.1 = "Health", channels.2 = "CPU", channels.3 = "Memory", channels.4 = "Restarts", channels.5 = "Up for", channels.6 = "Change" }
-entities.52 = { name = "Redis", channels.0 = "Running", channels.1 = "Health", channels.2 = "CPU", channels.3 = "Memory", channels.4 = "Restarts", channels.5 = "Up for", channels.6 = "Change" }
+entities.30 = { name = "Wi-Fi" }
+entities.50 = { name = "Trilium" }
+entities.51 = { name = "Mosquitto" }
+entities.52 = { name = "Redis" }
 
 [nodes.docker-host]
 name = "Docker host"
-entities.1 = { name = "CPU", channels.0 = "Usage", channels.1 = "Load 1 min", channels.2 = "Load 5 min", channels.3 = "Load 15 min" }
-entities.2 = { name = "Memory", channels.0 = "Used", channels.1 = "Used", channels.2 = "Available", channels.3 = "Total", channels.4 = "Swap used" }
-entities.4 = { name = "System", channels.0 = "Uptime", channels.1 = "Hostname", channels.2 = "Kernel", channels.3 = "Distribution" }
-entities.10 = { name = "Disk /", channels.0 = "Used", channels.1 = "Free", channels.2 = "Total" }
-entities.30 = { name = "Network", channels.0 = "Download", channels.1 = "Upload", channels.2 = "Connected", channels.3 = "Address" }
-entities.50 = { name = "Pi-hole", channels.0 = "Running", channels.1 = "Health", channels.2 = "CPU", channels.3 = "Memory", channels.4 = "Restarts", channels.5 = "Up for", channels.6 = "Change" }
-entities.51 = { name = "Jellyfin", channels.0 = "Running", channels.1 = "Health", channels.2 = "CPU", channels.3 = "Memory", channels.4 = "Restarts", channels.5 = "Up for", channels.6 = "Change" }
-entities.52 = { name = "Trilium", channels.0 = "Running", channels.1 = "Health", channels.2 = "CPU", channels.3 = "Memory", channels.4 = "Restarts", channels.5 = "Up for", channels.6 = "Change" }
-entities.53 = { name = "Portainer", channels.0 = "Running", channels.1 = "Health", channels.2 = "CPU", channels.3 = "Memory", channels.4 = "Restarts", channels.5 = "Up for", channels.6 = "Change" }
+entities.30 = { name = "Network" }
+entities.50 = { name = "Pi-hole" }
+entities.51 = { name = "Jellyfin" }
+entities.52 = { name = "Trilium" }
+entities.53 = { name = "Portainer" }
+
+[nodes.telegram]
+name = "Telegram"
+entities.1 = { channels.0 = "With sound", channels.1 = "Silent" }

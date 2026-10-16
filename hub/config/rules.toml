@@ -124,3 +124,18 @@ then = [
 name = "Receiver power"
 when = { button = "Power" }
 then = [{ invoke = { device = "esp32-14335c2e7270", entity = 3, channel = 0, value = "SONY15 30 15" } }]
+
+[[rules]]
+name = "Telegram /receiver: receiver power"
+when = { device = "telegram", entity = 2, channel = 0, event = "Received", data = "receiver" }
+then = [{ invoke = { device = "esp32-14335c2e7270", entity = 3, channel = 0, value = "SONY15 30 15" } }]
+
+[[rules]]
+name = "Telegram /achar: buzzer alarm"
+when = { device = "telegram", entity = 2, channel = 0, event = "Received", data = "achar" }
+then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
+
+[[rules]]
+name = "Any node offline: Telegram"
+when = { offline = "*" }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "A node went offline" } }]

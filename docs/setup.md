@@ -583,7 +583,7 @@ The `mqtt` feature (Tokio and `rumqttc`, for computers only) runs a software nod
 `mqtt::spawn` connects it with its own MQTT client, subscribes to its topics and the broadcast,
 announces on every connection, publishes the report every `report_interval`, reconnects by itself,
 and returns a `Handle` to act on the node from elsewhere (a console, a chat bot) or to disconnect it
-and connect again. The simulator is built this way. The firmware uses only the core: its `Board`
+and connect again; `Handle::is_connected` says whether what `act` returns gets published now. The simulator is built this way. The firmware uses only the core: its `Board`
 implements `Device` (entities, LED and parameter state, LED, parameter and buzzer commands) and its
 own MQTT client carries the messages.
 

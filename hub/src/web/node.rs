@@ -782,9 +782,11 @@ async fn fields_section(
             None => entities.push((channel.entity, channel.entity_name.clone(), vec![channel])),
         }
     }
-    // Shown, it refreshes on every change; edited, it is the form and does not refresh.
+    // Shown, it refreshes on every change; edited, it is the form and does not refresh. Only a
+    // div when shown: the channel controls are forms, and a browser drops a form inside a form.
     let attrs = attributes! {
         id="node-fields"
+        class="space-y-3"
         if out_of_band {
             hx-swap-oob="outerHTML"
         }
@@ -793,37 +795,57 @@ async fn fields_section(
             hx-target="#status"
         } else {
             hx-get=(format!("/nodes/{device_id}/fields{query}"))
-            // The form's fields would repeat `range` in the query.
-            hx-params="none"
             hx-disinherit="*"
             hx-trigger="sse:nodes, refresh"
             hx-swap="outerHTML"
         }
     };
     Ok(view! {
-        <form class="space-y-3" (attrs)>
-            <input type="hidden" name="device_id" value=(device_id.clone())>
-            <input type="hidden" name="section" value="fields">
-            <input type="hidden" name="range" value=(range.key())>
-            <div class="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                    <h2 class="text-base font-semibold">"Node fields"</h2>
-                    <p class="text-sm text-muted-foreground">"What the node declares: each entity's channels, what they are, their values and controls."</p>
-                </div>
-                <div class="flex flex-wrap items-center gap-2">
-                    if has_charts && !editing {
-                        range_picker(device_id: device_id.clone(), range: range)
-                    }
-                    edit_buttons(device_id: device_id.clone(), path: "fields", target: "#node-fields", editing: editing, label: "Edit names", query: query.clone())
-                </div>
+        if editing {
+            <form (attrs)>
+                <input type="hidden" name="device_id" value=(device_id.clone())>
+                <input type="hidden" name="section" value="fields">
+                <input type="hidden" name="range" value=(range.key())>
+                fields_content(device_id: device_id.clone(), entities: entities.clone(), rules: rules.clone(), charts: charts.clone(), range: range, has_charts: has_charts, editing: true)
+            </form>
+        } else {
+            <div (attrs)>
+                fields_content(device_id: device_id.clone(), entities: entities.clone(), rules: rules.clone(), charts: charts.clone(), range: range, has_charts: has_charts, editing: false)
             </div>
-            // Cards of a row share its height, so the grid stays aligned.
-            <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                for (entity, name, channels) in entities {
-                    entity_card(device_id: device_id.clone(), entity: entity, name: name, channels: channels, rules: rules.clone(), charts: charts.clone(), range: range, editing: editing)
+        }
+    })
+}
+
+#[component]
+async fn fields_content(
+    device_id: String,
+    entities: Vec<(u8, Option<String>, Vec<ChannelOverview>)>,
+    rules: Vec<RuleUse>,
+    charts: HashMap<(u8, u8), Chart>,
+    range: ChartRange,
+    has_charts: bool,
+    editing: bool,
+) -> Result<impl View> {
+    let query = format!("?range={}", range.key());
+    Ok(view! {
+        <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+                <h2 class="text-base font-semibold">"Node fields"</h2>
+                <p class="text-sm text-muted-foreground">"What the node declares: each entity's channels, what they are, their values and controls."</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+                if has_charts && !editing {
+                    range_picker(device_id: device_id.clone(), range: range)
                 }
+                edit_buttons(device_id: device_id.clone(), path: "fields", target: "#node-fields", editing: editing, label: "Edit names", query: query.clone())
             </div>
-        </form>
+        </div>
+        // Cards of a row share its height, so the grid stays aligned.
+        <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            for (entity, name, channels) in entities {
+                entity_card(device_id: device_id.clone(), entity: entity, name: name, channels: channels, rules: rules.clone(), charts: charts.clone(), range: range, editing: editing)
+            }
+        </div>
     })
 }
 
