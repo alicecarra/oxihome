@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 pub use condition::{ChannelCondition, Condition, Expected, HomeState, ValueTest};
 pub use editing::with_rule_enabled;
-pub use run::{Action, Subject, run};
+pub use run::{Action, Subject, has_placeholders, run};
 pub use trigger::{
     CronTrigger, Day, EventTrigger, Limit, OfflineTrigger, ScheduleTrigger, ThresholdTrigger,
     TrafficTrigger, Trigger,
@@ -201,6 +201,18 @@ impl Rules {
                     rule.name,
                     trigger.button
                 );
+            }
+        }
+        Ok(())
+    }
+
+    /// Every placeholder in a rule's texts is one its trigger fills.
+    pub fn check_placeholders(&self) -> anyhow::Result<()> {
+        for rule in &self.rules {
+            for text in rule.then.iter().flat_map(Action::texts) {
+                if let Err(error) = run::check_placeholders(text, rule.when.placeholders()) {
+                    bail!("rule \"{}\": {error}", rule.name);
+                }
             }
         }
         Ok(())
@@ -887,6 +899,39 @@ mod tests {
         assert_eq!(roles("sim-living-room"), [(RuleRole::Checks, Some((3, 0)))]);
         assert_eq!(roles("phone"), [(RuleRole::Checks, None)]);
         assert_eq!(roles("tv"), [(RuleRole::Checks, None)]);
+    }
+
+    #[test]
+    fn placeholders_must_be_filled_by_the_trigger() {
+        let check = |when: &str, message: &str| {
+            let text = format!(
+                "[[rules]]\nname = \"R\"\nwhen = {when}\nthen = [{{ notify = {{ title = \"T\", message = \"{message}\" }} }}]"
+            );
+            let rules: Rules = toml::from_str(&text).unwrap();
+            rules
+                .check_placeholders()
+                .map_err(|error| error.to_string())
+        };
+        let threshold = r#"{ device = "w", entity = 1, channel = 3, above = 50 }"#;
+        assert!(check(threshold, "{node} › {channel}: {value}").is_ok());
+        assert!(check(r#"{ offline = "*" }"#, "{node} went offline").is_ok());
+        assert!(check(r#"{ stopped = "*" }"#, "{node} › {channel}: {detail}").is_ok());
+        let received = r#"{ device = "n", entity = 1, channel = 1, event = "Received" }"#;
+        assert!(check(received, "{value}").is_ok());
+        let error = check(
+            r#"{ device = "b", entity = 2, channel = 0, event = "Press" }"#,
+            "{value}",
+        )
+        .unwrap_err();
+        assert!(error.starts_with("rule \"R\": {value}"), "{error}");
+        assert!(check(r#"{ unanswered = "*" }"#, "{channel}").is_err());
+        assert!(
+            check(r#"{ at = "07:00" }"#, "{node}")
+                .unwrap_err()
+                .contains("no placeholders")
+        );
+        assert!(check(r#"{ at = "07:00" }"#, "{{node}}").is_ok());
+        assert!(check(threshold, "{nde}").is_err());
     }
 
     #[test]

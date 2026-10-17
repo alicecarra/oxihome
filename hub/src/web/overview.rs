@@ -12,7 +12,8 @@ use crate::config::nodes::{ConfiguredEntity, NameTarget, Nodes};
 use crate::config::remotes::Remotes;
 use crate::config::rules::{
     Action, ChannelCondition, Condition, CronTrigger, Day, EventTrigger, Expected, Limit,
-    OfflineTrigger, ScheduleTrigger, ThresholdTrigger, TrafficTrigger, Trigger, ValueTest,
+    OfflineTrigger, ScheduleTrigger, Subject, ThresholdTrigger, TrafficTrigger, Trigger, ValueTest,
+    has_placeholders,
 };
 use crate::hub::{Hub, Snapshot};
 use crate::node::events::{EventRecord, data_label};
@@ -513,33 +514,36 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
     let local_now = Zoned::now().with_time_zone(hub.time_zone().clone());
     rules
         .into_iter()
-        .map(|rule| RuleOverview {
-            trigger: trigger_description(&snapshot.nodes, &snapshot.registry, &rule.when),
-            next_run: rule
-                .when
-                .next_run(&local_now)
-                .filter(|_| rule.enabled)
-                .map(|run| next_run_description(&local_now, &run)),
-            conditions: rule
-                .conditions
-                .iter()
-                .map(|condition| {
-                    condition_description(&snapshot.nodes, &snapshot.registry, condition)
-                })
-                .collect(),
-            actions: rule
-                .then
-                .iter()
-                .map(|action| ActionOverview {
-                    text: action_description(&snapshot.nodes, &snapshot.registry, action),
-                    warning: action_warning(&snapshot.registry, action),
-                })
-                .collect(),
-            last_run: runs
-                .remove(&rule.name)
-                .map(|run| (elapsed(run.at, now), run.errors)),
-            name: rule.name,
-            enabled: rule.enabled,
+        .map(|rule| {
+            let subject = Subject::by_hand(&rule.when, hub);
+            RuleOverview {
+                trigger: trigger_description(&snapshot.nodes, &snapshot.registry, &rule.when),
+                next_run: rule
+                    .when
+                    .next_run(&local_now)
+                    .filter(|_| rule.enabled)
+                    .map(|run| next_run_description(&local_now, &run)),
+                conditions: rule
+                    .conditions
+                    .iter()
+                    .map(|condition| {
+                        condition_description(&snapshot.nodes, &snapshot.registry, condition)
+                    })
+                    .collect(),
+                actions: rule
+                    .then
+                    .iter()
+                    .map(|action| ActionOverview {
+                        text: action_description(&snapshot.nodes, &snapshot.registry, action),
+                        warning: action_warning(&snapshot.registry, action, &subject),
+                    })
+                    .collect(),
+                last_run: runs
+                    .remove(&rule.name)
+                    .map(|run| (elapsed(run.at, now), run.errors)),
+                name: rule.name,
+                enabled: rule.enabled,
+            }
         })
         .collect()
 }
@@ -806,7 +810,9 @@ fn action_description(nodes: &Nodes, registry: &Registry, action: &Action) -> St
     }
 }
 
-fn action_warning(registry: &Registry, action: &Action) -> Option<String> {
+/// Checks an invoke's value as the rule would send it, with the placeholders filled with the
+/// stand-ins of a run by hand.
+fn action_warning(registry: &Registry, action: &Action, subject: &Subject) -> Option<String> {
     let Action::Invoke {
         device,
         entity,
@@ -816,9 +822,15 @@ fn action_warning(registry: &Registry, action: &Action) -> Option<String> {
     else {
         return None;
     };
-    registry
-        .node(device)?
-        .invoke_value(*entity, *channel, value.as_deref())
+    let node = registry.node(device)?;
+    let takes_options = node
+        .channel(*entity, *channel)
+        .is_some_and(|declared| matches!(declared.value, Some(ValueType::Enum(_))));
+    if takes_options && value.as_deref().is_some_and(has_placeholders) {
+        return Some("an option of the channel cannot have placeholders".into());
+    }
+    let filled = value.as_deref().map(|value| subject.fill(value));
+    node.invoke_value(*entity, *channel, filled.as_deref())
         .err()
 }
 

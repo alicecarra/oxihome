@@ -389,11 +389,23 @@ previous configuration stays in use.
   `Hello` decides what `value` is: one of the options of an `Enum` channel, or any text up to the
   `max_length` of a `Text` channel. While the node is online the hub refuses other values without
   sending them, and `/rules` shows the problem under the action. In the title and message of
-  `notify` and the `value` of `invoke`, `{node}` becomes the node's name for `offline`, traffic
-  and `reported` triggers, `{channel}` the channel's name for `stopped` and `noisy`, and
-  `{detail}` what happened for traffic and `reported` triggers (the report's text, or e.g.
-  "Used to report every 30 s"). "Run now" on `/rules` fills them with stand-ins ("any node",
-  "a channel", "run by hand"), or the node's name when the trigger names one.
+  `notify` and the `value` of `invoke`, placeholders take what the trigger is about:
+
+  | Trigger | Placeholders |
+  |---|---|
+  | channel event | `{node}`, `{channel}`; `{value}` too for `Received` (the event's text, e.g. `offline`) |
+  | channel limit (`above`/`below`) | `{node}`, `{channel}`, `{value}` (the new value with its unit, e.g. `52.3 km/h`) |
+  | `offline` | `{node}` |
+  | `stopped`, `noisy` | `{node}`, `{channel}`, `{detail}` |
+  | `unanswered`, `reported` | `{node}`, `{detail}` (the report's text, or e.g. "Used to report every 30 s") |
+  | `at`, `cron`, `button`, `remote` | none |
+
+  Names come from `nodes.toml`, then from what the node declares. A placeholder the trigger does
+  not fill, or a misspelled one, stops the file from loading; `{{` and `}}` are literal braces.
+  An `invoke` on an `Enum` channel cannot use placeholders, since the value must be one of the
+  options. "Run now" on `/rules` fills them with stand-ins ("any node", "a channel", "run by
+  hand", the limit for `{value}`), or the node's name when the trigger names one; `/rules` checks
+  an `invoke`'s text against the channel with those stand-ins.
   `enabled = false` turns a rule off. Triggers:
   - an event of a channel: `when = { device = "...", entity = 2, channel = 0, event = "Press" }`;
     `data = "NEC 00 52"` also requires the event's text to be exactly that (a held key's
@@ -807,7 +819,7 @@ then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "{nod
 [[rules]]
 name = "Warn on Telegram when a channel stops reporting"
 when = { stopped = "*" }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} › {channel} stopped reporting" } }]
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} › {channel} stopped reporting: {detail}" } }]
 ```
 
 A command is accepted only when it is declared, at most 10 per minute, and younger than `max_age`

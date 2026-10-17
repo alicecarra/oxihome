@@ -61,6 +61,7 @@ impl HomeConfig {
             .check_names()
             .and_then(|()| rules.check_remote_keys(&remotes))
             .and_then(|()| rules.check_buttons())
+            .and_then(|()| rules.check_placeholders())
             .with_context(|| format!("{}", path.display()))?;
         let path = directory.join("dashboard.toml");
         let dashboards: Dashboards = parse(&path, &text("dashboard.toml")?)?;

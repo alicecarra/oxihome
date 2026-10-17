@@ -30,6 +30,7 @@ use crate::storage::{
     TimelineEntry, TimelineQuery, UpdateOutcome, Write,
 };
 use crate::traffic::{Alert, Traffic};
+use crate::web::format::value_label;
 
 /// Read access for the web interface, see `Hub::snapshot`.
 pub struct Snapshot<'a> {
@@ -816,6 +817,18 @@ impl Hub {
         let channel_name = name(NameTarget::Channel(device_id.to_string(), entity, channel))
             .unwrap_or_else(|| format!("channel {channel}"));
         format!("{entity_name} · {channel_name}")
+    }
+
+    /// `22.3 °C`: with the unit the node declares for the channel.
+    pub fn value_label(&self, device_id: &str, entity: u8, channel: u8, value: &Value) -> String {
+        let unit = self
+            .registry
+            .lock()
+            .unwrap()
+            .node(device_id)
+            .and_then(|node| node.channel(entity, channel))
+            .and_then(|channel| channel.unit);
+        value_label(value, unit)
     }
 
     pub fn is_updating(&self, device_id: &str) -> bool {

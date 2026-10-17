@@ -21,7 +21,9 @@ then = [
 [[rules]]
 name = "Tablet left the network: Telegram"
 when = { device = "network-devices", entity = 2, channel = 1, event = "Received", data = "offline" }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "The tablet left the network" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "The tablet left the network" } },
+]
 
 # TV and receiver (IR emitter: RC6 is the Philips TV, SONY15 30 the receiver)
 
@@ -39,65 +41,89 @@ then = [
 [[rules]]
 name = "Started raining: Telegram"
 when = { device = "weather", entity = 1, channel = 2, above = 0 }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "It started raining, bring in the laundry" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "It started raining ({value})." } },
+]
 
 [[rules]]
 name = "Cold day: Telegram in the morning"
 when = { at = "07:00" }
 if = [{ device = "weather", entity = 2, channel = 1, below = 10 }]
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Cold today: the minimum is below 10 °C" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "Cold today: the minimum is below 10 °C" } },
+]
 
 [[rules]]
 name = "Strong wind: Telegram"
 when = { device = "weather", entity = 1, channel = 3, above = 50 }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Strong wind: above 50 km/h" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "Strong wind: {value}" } },
+]
 
 # Servers (linux-monitor: 2 memory, 4 system, 10 disk /, 50+ containers)
 
 [[rules]]
 name = "Notebook disk almost full: Telegram"
 when = { device = "notebook", entity = 10, channel = 0, above = 90 }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Notebook disk is above 90%" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "Notebook disk is at {value}" } },
+]
 
 [[rules]]
 name = "Docker host disk almost full: Telegram"
 when = { device = "docker-host", entity = 10, channel = 0, above = 90 }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Docker host disk is above 90%" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "Docker host disk is at {value}" } },
+]
 
 [[rules]]
 name = "Docker host memory high: Telegram"
 when = { device = "docker-host", entity = 2, channel = 0, above = 90 }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Docker host memory is above 90%" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "Docker host memory is at {value}" } },
+]
 
 [[rules]]
 name = "Docker host restarted: Telegram"
 when = { device = "docker-host", entity = 4, channel = 0, below = 600 }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Docker host restarted" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "Docker host restarted" } },
+]
 
 [[rules]]
 name = "Pi-hole using two cores: Telegram"
 when = { device = "docker-host", entity = 50, channel = 2, above = 200 }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Pi-hole is using more than two cores" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "Pi-hole is using {value} CPU" } },
+]
 
 [[rules]]
 name = "Jellyfin using two cores: Telegram"
 when = { device = "docker-host", entity = 51, channel = 2, above = 200 }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Jellyfin is using more than two cores" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "Jellyfin is using {value} CPU" } },
+]
 
 [[rules]]
 name = "Trilium using two cores: Telegram"
 when = { device = "docker-host", entity = 52, channel = 2, above = 200 }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Trilium is using more than two cores" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "Trilium is using {value} CPU" } },
+]
 
 [[rules]]
 name = "Portainer using two cores: Telegram"
 when = { device = "docker-host", entity = 53, channel = 2, above = 200 }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Portainer is using more than two cores" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "Portainer is using {value} CPU" } },
+]
 
 [[rules]]
 name = "Hub using two cores: Telegram"
 when = { device = "docker-host", entity = 55, channel = 2, above = 200 }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "The Oxihome hub is using more than two cores" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "The Oxihome hub is using {value} CPU" } },
+]
 
 # Reading
 
@@ -105,7 +131,9 @@ then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "The 
 name = "Feeds piling up: Telegram on Sunday"
 when = { cron = "0 10 * * sun" }
 if = [{ device = "rss", entity = 1, channel = 1, above = 50 }]
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "More than 50 unread feed items" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "More than 50 unread feed items" } },
+]
 
 # House health
 
@@ -113,7 +141,9 @@ then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "More
 name = "Any node offline: Telegram"
 when = { offline = "*" }
 if = [{ online = "telegram" }]
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} went offline" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} went offline" } },
+]
 
 [[rules]]
 name = "Telegram bot offline: buzzer"
@@ -126,19 +156,56 @@ then = [
 [[rules]]
 name = "Node stopped reporting: Telegram"
 when = { stopped = "*" }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} › {channel} stopped reporting: {detail}" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} › {channel} stopped reporting: {detail}" } },
+]
 
 [[rules]]
 name = "Node noisy: Telegram"
 when = { noisy = "*" }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} › {channel} is noisy: {detail}" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} › {channel} is noisy: {detail}" } },
+]
 
 [[rules]]
 name = "Node not answering: Telegram"
 when = { unanswered = "*" }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} is not answering commands: {detail}" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} is not answering commands: {detail}" } },
+]
 
 [[rules]]
 name = "Node reported a problem: Telegram"
 when = { reported = "*" }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} reported a problem: {detail}" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} reported a problem: {detail}" } },
+]
+
+# Simulator (temporary, to test placeholders)
+
+[[rules]]
+name = "Sim: living room hot"
+when = { device = "sim-living-room", entity = 3, channel = 0, above = 25 }
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "{node}: {channel} at {value}" } },
+]
+
+[[rules]]
+name = "Sim: living room cool"
+when = { device = "sim-living-room", entity = 3, channel = 0, below = 20 }
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "{node}: {channel} down to {value}" } },
+]
+
+[[rules]]
+name = "Sim: button toggles the bedroom lamp"
+when = { device = "sim-living-room", entity = 2, channel = 0, event = "Press" }
+then = [
+    { toggle = { device = "sim-bedroom", entity = 1, channel = 0 } },
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} › {channel} pressed" } },
+]
+
+[[rules]]
+name = "Telegram echo"
+when = { device = "telegram", entity = 2, channel = 0, event = "Received" }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Got /{value}" } }]

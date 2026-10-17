@@ -37,6 +37,27 @@ impl Trigger {
         }
     }
 
+    /// The placeholders this trigger fills in the rule's texts.
+    pub fn placeholders(&self) -> &'static [&'static str] {
+        match self {
+            Trigger::Event(trigger) if trigger.event == EventKind::Received => {
+                &["node", "channel", "value"]
+            }
+            Trigger::Event(_) => &["node", "channel"],
+            Trigger::Threshold(_) => &["node", "channel", "value"],
+            Trigger::Offline(_) => &["node"],
+            Trigger::Traffic(TrafficTrigger {
+                kind: AlertKind::Stopped | AlertKind::Noisy,
+                ..
+            }) => &["node", "channel", "detail"],
+            Trigger::Traffic(_) => &["node", "detail"],
+            Trigger::Schedule(_)
+            | Trigger::Cron(_)
+            | Trigger::RemoteKey(_)
+            | Trigger::Button(_) => &[],
+        }
+    }
+
     pub(super) fn is_due(&self, minute: DateTime) -> bool {
         match self {
             Trigger::Event(_)

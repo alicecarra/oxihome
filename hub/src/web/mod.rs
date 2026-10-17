@@ -4,7 +4,7 @@ mod chart;
 mod dashboard;
 mod events;
 mod feeds;
-mod format;
+pub(crate) mod format;
 mod home;
 mod host;
 mod icons;

@@ -276,7 +276,7 @@ pub async fn run_now(cx: &Cx, Form(form): Form<RunForm>) -> Result<ViewHandle> {
         Some(rule) => (
             "text-muted-foreground",
             {
-                let subject = Subject::by_hand(&rule.when, |device_id| hub.node_name(device_id));
+                let subject = Subject::by_hand(&rule.when, hub.as_ref());
                 run(hub.clone(), rule, subject).await
             }
             .map(|condition| {

@@ -89,12 +89,20 @@ pub async fn on_message(hub: &Arc<Hub>, message: &Message) -> anyhow::Result<()>
 
     for update in updates {
         println!("{update}");
-        spawn_rules(hub, hub.crossed_rules(&update), Subject::default());
+        spawn_rules(
+            hub,
+            hub.crossed_rules(&update),
+            Subject::of_update(&update, hub.as_ref()),
+        );
     }
 
     if let Some(event) = event {
         println!("{event}");
-        spawn_rules(hub, hub.matching_rules(&event), Subject::default());
+        spawn_rules(
+            hub,
+            hub.matching_rules(&event),
+            Subject::of_event(&event, hub.as_ref()),
+        );
     }
     Ok(())
 }
@@ -136,6 +144,7 @@ fn on_alert(hub: &Arc<Hub>, raised: &RaisedAlert) {
         node: Some(node),
         channel,
         detail: Some(raised.detail.clone()),
+        value: None,
     };
     spawn_rules(hub, hub.traffic_rules(alert), subject);
 }
