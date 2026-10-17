@@ -89,6 +89,26 @@ impl Remotes {
     }
 }
 
+/// A code as an IR receiver decodes it: `NEC 00 45`, `NEC 1234 45`, `SONY15 30 15`, `RC5 00 0C`
+/// or `RC6 00 0C`; not a held key's `repeat`, raw timings nor any other text.
+pub fn is_decoded_code(text: &str) -> bool {
+    let hex = |word: &str, lengths: &[usize]| {
+        lengths.contains(&word.len()) && word.chars().all(|digit| digit.is_ascii_hexdigit())
+    };
+    match text.split(' ').collect::<Vec<_>>().as_slice() {
+        [protocol, address, command] => {
+            let address_lengths: &[usize] = match *protocol {
+                "NEC" => &[2, 4],
+                "SONY12" | "SONY15" | "RC5" | "RC6" => &[2],
+                "SONY20" => &[4],
+                _ => return false,
+            };
+            hex(address, address_lengths) && hex(command, &[2])
+        }
+        _ => false,
+    }
+}
+
 /// `remotes.toml` with one more key, keeping the file's comments and layout.
 pub fn with_key(text: &str, remote: &str, key: &str, code: &str) -> anyhow::Result<String> {
     let mut document: DocumentMut = text.parse()?;
@@ -164,6 +184,29 @@ mod tests {
         assert_eq!(remotes.remote_for("SONY15 30 12"), Some("Receiver"));
         assert_eq!(remotes.remote_for("NEC 04 16"), None);
         assert_eq!(remotes.remote_for("RC5 00 0C"), None);
+    }
+
+    #[test]
+    fn decoded_codes() {
+        for code in [
+            "NEC 00 45",
+            "NEC 1234 45",
+            "SONY15 30 15",
+            "SONY20 0A1B 15",
+            "RC6 00 0C",
+        ] {
+            assert!(is_decoded_code(code), "{code}");
+        }
+        for text in [
+            "NEC 00 45 repeat",
+            "raw 9000 4500 560",
+            "Mosquitto 2.0.22",
+            "NEC 0 45",
+            "SONY 30 15",
+            "",
+        ] {
+            assert!(!is_decoded_code(text), "{text}");
+        }
     }
 
     #[test]

@@ -980,13 +980,12 @@ impl Hub {
     }
 }
 
-/// Codes worth naming: decoded IR codes, not the repeats of a held key nor undecoded `raw` timings.
+/// Codes worth naming: decoded IR codes, not the text other nodes receive (feeds, devices).
 fn learnable_code(event: &EventRecord) -> Option<&str> {
     match &event.data {
         Some(Value::Text(code))
             if event.kind == oxihome_protocol::EventKind::Received
-                && !code.ends_with(" repeat")
-                && !code.starts_with("raw") =>
+                && crate::config::remotes::is_decoded_code(code) =>
         {
             Some(code)
         }
