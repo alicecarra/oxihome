@@ -21,6 +21,15 @@ pub struct Notifications {
 }
 
 impl Notifications {
+    /// Taken from the clock at start, `first_id` keeps ids growing across restarts, so a page left
+    /// open through a restart still gets the new toasts.
+    pub fn starting_at(first_id: u64) -> Self {
+        Self {
+            recent: VecDeque::new(),
+            last_id: first_id.saturating_sub(1),
+        }
+    }
+
     pub fn push(&mut self, title: String, message: String, source: String) -> u64 {
         self.last_id += 1;
         self.recent.push_back(Notification {
@@ -127,6 +136,16 @@ mod tests {
             .collect();
         assert_eq!(titles, vec!["third"]);
         assert!(notifications.since(notifications.last_id()).is_empty());
+    }
+
+    #[test]
+    fn ids_after_a_restart_are_newer() {
+        let mut before = Notifications::starting_at(1_000);
+        let seen = push(&mut before, "before");
+        let mut after = Notifications::starting_at(2_000);
+        push(&mut after, "after");
+
+        assert_eq!(after.since(seen).len(), 1);
     }
 
     #[test]

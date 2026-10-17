@@ -165,7 +165,9 @@ impl Hub {
             remotes: Mutex::new(config.remotes),
             dashboards: Mutex::new(config.dashboards),
             recent_codes: Mutex::new(recent_codes),
-            notifications: Mutex::default(),
+            notifications: Mutex::new(Notifications::starting_at(
+                u64::try_from(Timestamp::now().as_millisecond()).unwrap_or(0),
+            )),
             commands: Commands::default(),
             hardware: Mutex::default(),
             storage,
