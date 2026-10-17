@@ -2,8 +2,9 @@
 
 mod counters;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use jiff::Timestamp;
 use oxihome_protocol::{Message, Payload};
@@ -13,6 +14,8 @@ use counters::Counters;
 pub use counters::{Highlight, NodeSummary};
 
 const KEPT: usize = 500;
+/// The same alert is not told again sooner, so one at the edge of its limit does not flap.
+const ALERT_COOLDOWN: Duration = Duration::from_secs(30 * 60);
 
 /// The MQTT buffer of the firmware, both ways.
 pub const BOARD_LIMIT: usize = 4096;
@@ -157,6 +160,130 @@ impl TrafficEntry {
     }
 }
 
+/// What a rule can run on, from the highlights of the traffic map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AlertKind {
+    /// A channel that reported regularly went quiet.
+    Stopped,
+    /// A channel sends far more than usual.
+    Noisy,
+    /// Commands to the node went without an answer in the last hour.
+    Unanswered,
+    /// The node reported a problem by itself: an `Error` that answers nothing, such as a sensor
+    /// that stopped responding. Not from the map: it comes with the message.
+    Reported,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Alert {
+    pub kind: AlertKind,
+    pub device_id: String,
+    /// Entity and channel; `None` for `Unanswered` and `Reported`.
+    pub channel: Option<(u8, u8)>,
+}
+
+/// An alert that just went up, with what to tell about it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RaisedAlert {
+    pub alert: Alert,
+    pub detail: String,
+}
+
+fn seconds_label(duration: Duration) -> String {
+    match duration.as_secs() {
+        seconds @ 0..60 => format!("{seconds} s"),
+        seconds => format!("{} min", seconds / 60),
+    }
+}
+
+/// The alerts standing in `summary`.
+fn alerts(summary: &[NodeSummary]) -> Vec<RaisedAlert> {
+    let mut alerts = Vec::new();
+    for node in summary {
+        let Some(device_id) = &node.device_id else {
+            continue;
+        };
+        for channel in &node.channels {
+            let (kind, detail) = match channel.highlight {
+                Some(Highlight::Stopped { typical }) => (
+                    AlertKind::Stopped,
+                    format!("Used to report every {}", seconds_label(typical)),
+                ),
+                Some(Highlight::Noisy) => (
+                    AlertKind::Noisy,
+                    format!("{:.0} messages a minute", channel.per_minute),
+                ),
+                None => continue,
+            };
+            alerts.push(RaisedAlert {
+                alert: Alert {
+                    kind,
+                    device_id: device_id.clone(),
+                    channel: Some((channel.entity, channel.channel)),
+                },
+                detail,
+            });
+        }
+        if node.unanswered > 0 {
+            alerts.push(RaisedAlert {
+                alert: Alert {
+                    kind: AlertKind::Unanswered,
+                    device_id: device_id.clone(),
+                    channel: None,
+                },
+                detail: match node.unanswered {
+                    1 => "1 command without an answer in the last hour".into(),
+                    count => format!("{count} commands without an answer in the last hour"),
+                },
+            });
+        }
+    }
+    alerts
+}
+
+/// Which alerts are up and when each was last told.
+#[derive(Default)]
+struct AlertState {
+    raised: HashSet<Alert>,
+    told: HashMap<Alert, Timestamp>,
+}
+
+impl AlertState {
+    /// The `standing` alerts to tell: not up at the last check, about a node `may_tell` accepts
+    /// (online and not updating), and not told in the last `ALERT_COOLDOWN`. One that goes up
+    /// while `may_tell` refuses counts as up, so the node coming back does not tell it.
+    fn check(
+        &mut self,
+        standing: Vec<RaisedAlert>,
+        now: Timestamp,
+        may_tell: impl Fn(&str) -> bool,
+    ) -> Vec<RaisedAlert> {
+        let to_tell: Vec<RaisedAlert> = standing
+            .iter()
+            .filter(|standing| !self.raised.contains(&standing.alert))
+            .filter(|standing| may_tell(&standing.alert.device_id))
+            .filter(|standing| {
+                self.told.get(&standing.alert).is_none_or(|told| {
+                    Duration::try_from(now.duration_since(*told))
+                        .is_ok_and(|ago| ago >= ALERT_COOLDOWN)
+                })
+            })
+            .cloned()
+            .collect();
+        for told in &to_tell {
+            self.told.insert(told.alert.clone(), now);
+        }
+        self.told.retain(|_, told| {
+            Duration::try_from(now.duration_since(*told)).is_ok_and(|ago| ago < ALERT_COOLDOWN)
+        });
+        self.raised = standing
+            .into_iter()
+            .map(|standing| standing.alert)
+            .collect();
+        to_tell
+    }
+}
+
 /// `oxihome/<device id>/up` and `oxihome/<device id>/down`.
 fn device_of(topic: &str) -> Option<String> {
     let rest = topic.strip_prefix("oxihome/")?;
@@ -169,6 +296,7 @@ fn device_of(topic: &str) -> Option<String> {
 pub struct Traffic {
     recent: Mutex<VecDeque<Arc<TrafficEntry>>>,
     counters: Mutex<Counters>,
+    alerts: Mutex<AlertState>,
     sender: broadcast::Sender<Arc<TrafficEntry>>,
 }
 
@@ -177,6 +305,7 @@ impl Default for Traffic {
         Self {
             recent: Mutex::default(),
             counters: Mutex::new(Counters::new(Timestamp::now())),
+            alerts: Mutex::default(),
             sender: broadcast::channel(256).0,
         }
     }
@@ -206,6 +335,15 @@ impl Traffic {
     /// Since `counting_since`.
     pub fn summary(&self) -> Vec<NodeSummary> {
         self.counters.lock().unwrap().summary(Timestamp::now())
+    }
+
+    /// Alerts that went up since the last call, to tell; see `AlertState::check`.
+    pub fn new_alerts(&self, may_tell: impl Fn(&str) -> bool) -> Vec<RaisedAlert> {
+        let standing = alerts(&self.summary());
+        self.alerts
+            .lock()
+            .unwrap()
+            .check(standing, Timestamp::now(), may_tell)
     }
 
     pub fn counting_since(&self) -> Timestamp {
@@ -344,6 +482,70 @@ mod tests {
         traffic.record(Direction::Down, "oxihome/b/down", "b 5", command(5));
         assert_eq!(traffic.answered("a", 4).unwrap().text, "a 4");
         assert!(traffic.answered("a", 5).is_none());
+    }
+
+    fn raised(kind: AlertKind, device_id: &str) -> RaisedAlert {
+        RaisedAlert {
+            alert: Alert {
+                kind,
+                device_id: device_id.into(),
+                channel: None,
+            },
+            detail: String::new(),
+        }
+    }
+
+    fn minutes(minutes: i64) -> Timestamp {
+        Timestamp::from_second(1_800_000_000 + minutes * 60).unwrap()
+    }
+
+    #[test]
+    fn an_alert_is_told_once_while_it_stays_up() {
+        let mut state = AlertState::default();
+        let online = |_: &str| true;
+        let stopped = raised(AlertKind::Stopped, "a");
+        let noisy = raised(AlertKind::Noisy, "b");
+        assert_eq!(
+            state.check(vec![stopped.clone()], minutes(0), online),
+            [stopped.clone()]
+        );
+        assert_eq!(
+            state.check(vec![stopped.clone(), noisy.clone()], minutes(1), online),
+            [noisy.clone()]
+        );
+        assert!(state.check(vec![noisy], minutes(2), online).is_empty());
+        // Down and up again within the cooldown: not told.
+        assert!(
+            state
+                .check(vec![stopped.clone()], minutes(3), online)
+                .is_empty()
+        );
+        assert!(state.check(Vec::new(), minutes(40), online).is_empty());
+        assert_eq!(
+            state.check(vec![stopped.clone()], minutes(41), online),
+            [stopped]
+        );
+    }
+
+    #[test]
+    fn an_offline_node_is_not_told_even_when_it_comes_back() {
+        let mut state = AlertState::default();
+        let unanswered = raised(AlertKind::Unanswered, "a");
+        assert!(
+            state
+                .check(vec![unanswered.clone()], minutes(0), |_| false)
+                .is_empty()
+        );
+        assert!(
+            state
+                .check(vec![unanswered.clone()], minutes(1), |_| true)
+                .is_empty()
+        );
+        assert!(state.check(Vec::new(), minutes(70), |_| true).is_empty());
+        assert_eq!(
+            state.check(vec![unanswered.clone()], minutes(71), |_| true),
+            [unanswered]
+        );
     }
 
     #[test]

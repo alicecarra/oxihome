@@ -11,6 +11,7 @@ use crate::hub::Hub;
 use crate::node::registry::NodeEvent;
 use crate::node::{hardware, parameters};
 use crate::schedule::Schedule;
+use crate::traffic::{Alert, AlertKind, RaisedAlert};
 
 /// (Re)connected to the broker: ask every node to introduce itself and report its state.
 pub async fn on_connected(hub: &Hub) -> anyhow::Result<()> {
@@ -39,7 +40,18 @@ pub async fn on_message(hub: &Arc<Hub>, message: &Message) -> anyhow::Result<()>
         Payload::Error {
             detail: Some(detail),
             ..
-        } if message.reply_to.is_none() => hub.record_node_report(&message.src, detail),
+        } if message.reply_to.is_none() => {
+            hub.record_node_report(&message.src, detail);
+            let report = RaisedAlert {
+                alert: Alert {
+                    kind: AlertKind::Reported,
+                    device_id: message.src.clone(),
+                    channel: None,
+                },
+                detail: detail.clone(),
+            };
+            on_alert(hub, &report);
+        }
         _ => {}
     }
 
@@ -97,6 +109,41 @@ pub fn on_presence_check(hub: &Arc<Hub>) {
     for node_event in hub.check_presence(Instant::now()) {
         on_node_event(hub, &node_event);
     }
+    // A node rebooting into an update goes quiet for a while, like an offline one.
+    for raised in hub
+        .traffic()
+        .new_alerts(|device_id| hub.is_online(device_id) && !hub.is_updating(device_id))
+    {
+        on_alert(hub, &raised);
+    }
+}
+
+fn on_alert(hub: &Arc<Hub>, raised: &RaisedAlert) {
+    let alert = &raised.alert;
+    let node = hub.node_name(&alert.device_id);
+    let channel = alert
+        .channel
+        .map(|(entity, channel)| hub.channel_name(&alert.device_id, entity, channel));
+    let about = match &channel {
+        Some(channel) => format!("{node} › {channel}"),
+        None => node.clone(),
+    };
+    let title = match alert.kind {
+        AlertKind::Stopped => format!("{about} stopped reporting"),
+        AlertKind::Noisy => format!("{about} is noisy"),
+        AlertKind::Unanswered => format!("{about} is not answering commands"),
+        AlertKind::Reported => format!("{about} reported a problem"),
+    };
+    println!("{title}: {}", raised.detail);
+    hub.notify(title, raised.detail.clone(), alert.device_id.clone());
+    for rule in hub.traffic_rules(alert) {
+        let subject = rules::Subject {
+            node: Some(node.clone()),
+            channel: channel.clone(),
+            detail: Some(raised.detail.clone()),
+        };
+        tokio::spawn(rules::run_about(hub.clone(), rule, subject));
+    }
 }
 
 /// Runs the scheduled rules of each new local minute.
@@ -113,7 +160,11 @@ fn on_node_event(hub: &Arc<Hub>, node_event: &NodeEvent) {
     hub.notify_node_event(node_event);
     if let NodeEvent::Offline(device_id) = node_event {
         for rule in hub.offline_rules(device_id) {
-            tokio::spawn(rules::run(hub.clone(), rule));
+            let subject = rules::Subject {
+                node: Some(hub.node_name(device_id)),
+                ..rules::Subject::default()
+            };
+            tokio::spawn(rules::run_about(hub.clone(), rule, subject));
         }
     }
 }

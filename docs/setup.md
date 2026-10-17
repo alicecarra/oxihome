@@ -388,7 +388,12 @@ previous configuration stays in use.
   transmitter (`value = "SONY15 30 15"`, the code to send). The node's
   `Hello` decides what `value` is: one of the options of an `Enum` channel, or any text up to the
   `max_length` of a `Text` channel. While the node is online the hub refuses other values without
-  sending them, and `/rules` shows the problem under the action.
+  sending them, and `/rules` shows the problem under the action. In the title and message of
+  `notify` and the `value` of `invoke`, `{node}` becomes the node's name for `offline`, traffic
+  and `reported` triggers, `{channel}` the channel's name for `stopped` and `noisy`, and
+  `{detail}` what happened for traffic and `reported` triggers (the report's text, or e.g.
+  "Used to report every 30 s"). "Run now" on `/rules` fills them with stand-ins ("any node",
+  "a channel", "run by hand"), or the node's name when the trigger names one.
   `enabled = false` turns a rule off. Triggers:
   - an event of a channel: `when = { device = "...", entity = 2, channel = 0, event = "Press" }`;
     `data = "NEC 00 52"` also requires the event's text to be exactly that (a held key's
@@ -409,7 +414,19 @@ previous configuration stays in use.
     `when = { cron = "*/30 8-22 * * mon-fri" }`. When both the day of month and the day of week
     are restricted, either one matching is enough, as in classic cron;
   - a node going offline: `when = { offline = "sim-bedroom" }`, or `offline = "*"` for any node.
-    It runs when the hub marks the node offline (the same moment as the toast).
+    It runs when the hub marks the node offline (the same moment as the toast);
+  - an alert of the traffic map on `/traffic`, checked every 10 s: `when = { stopped = "..." }` (a
+    channel that sent `State` regularly went quiet while the node keeps sending other messages; a
+    node that goes silent altogether is the `offline` trigger's), `noisy = "..."` (a channel sends
+    far more than usual for at least 3 of the last 5 minutes, so holding a remote key is not noise)
+    or `unanswered = "..."` (commands to the node went without an answer in the last hour), with a
+    node id or `"*"` for any node. It runs when the alert goes up, not again while it stays up nor
+    within 30 minutes of the last time; alerts about a node that is offline or installing an
+    update are skipped, also after it comes back. The hub also shows a toast. The counts live in
+    memory, so they start over when the hub restarts;
+  - a node reporting a problem by itself: `when = { reported = "..." }` (node id or `"*"`), for an
+    `Error` that answers no command, such as the firmware's "DHT11 not responding". It runs for
+    every report; the hub also shows a toast and lists the report on the node's page.
 
   Conditions (`if`, optional) are checked when the trigger fires; the actions only run when every
   condition holds, otherwise the hub logs `rule "...": skipped, ... does not hold`. Each condition is
@@ -785,7 +802,12 @@ then = [{ invoke = { device = "esp32-14335c2e7270", entity = 3, channel = 0, val
 [[rules]]
 name = "Warn on Telegram when a node goes offline"
 when = { offline = "*" }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "A node went offline" } }]
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} went offline" } }]
+
+[[rules]]
+name = "Warn on Telegram when a channel stops reporting"
+when = { stopped = "*" }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} › {channel} stopped reporting" } }]
 ```
 
 A command is accepted only when it is declared, at most 10 per minute, and younger than `max_age`

@@ -15,7 +15,7 @@ use crate::components::badge::{BadgeVariant, badge};
 use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::card::{card, card_content, card_header, card_title};
 use crate::components::switch::switch;
-use crate::config::rules::run;
+use crate::config::rules::{Subject, run_about};
 use crate::hub::Hub;
 
 #[page("/rules")]
@@ -275,7 +275,11 @@ pub async fn run_now(cx: &Cx, Form(form): Form<RunForm>) -> Result<ViewHandle> {
         ),
         Some(rule) => (
             "text-muted-foreground",
-            run(hub.clone(), rule).await.map(|condition| {
+            {
+                let subject = Subject::by_hand(&rule.when, |device_id| hub.node_name(device_id));
+                run_about(hub.clone(), rule, subject).await
+            }
+            .map(|condition| {
                 format!(
                     "{}: skipped, \"{}\" does not hold",
                     form.name,

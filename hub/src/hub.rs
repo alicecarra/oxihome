@@ -29,7 +29,7 @@ use crate::storage::{
     History, Operation, Restored, Storage, StoredCommand, StoredNotification, StoredUpdate,
     TimelineEntry, TimelineQuery, UpdateOutcome, Write,
 };
-use crate::traffic::Traffic;
+use crate::traffic::{Alert, Traffic};
 
 /// Read access for the web interface, see `Hub::snapshot`.
 pub struct Snapshot<'a> {
@@ -712,6 +712,16 @@ impl Hub {
             .collect()
     }
 
+    pub fn traffic_rules(&self, alert: &Alert) -> Vec<Rule> {
+        self.rules
+            .lock()
+            .unwrap()
+            .traffic(alert)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
     pub fn due_rules(&self, minute: DateTime) -> Vec<Rule> {
         self.rules
             .lock()
@@ -786,6 +796,32 @@ impl Hub {
             .unwrap()
             .name(&NameTarget::Node(device_id.to_string()))
             .map_or_else(|| device_id.to_string(), String::from)
+    }
+
+    /// `LED · Brightness`, `LED`: from `nodes.toml`, or what the node declares.
+    pub fn channel_name(&self, device_id: &str, entity: u8, channel: u8) -> String {
+        let registry = self.registry.lock().unwrap();
+        let nodes = self.nodes.lock().unwrap();
+        let name = |target: NameTarget| {
+            nodes
+                .name(&target)
+                .or_else(|| registry.declared_name(&target))
+                .map(String::from)
+        };
+        let entity_name = name(NameTarget::Entity(device_id.to_string(), entity))
+            .unwrap_or_else(|| format!("entity {entity}"));
+        if channel == 0 {
+            return entity_name;
+        }
+        let channel_name = name(NameTarget::Channel(device_id.to_string(), entity, channel))
+            .unwrap_or_else(|| format!("channel {channel}"));
+        format!("{entity_name} · {channel_name}")
+    }
+
+    pub fn is_updating(&self, device_id: &str) -> bool {
+        self.ota
+            .as_ref()
+            .is_some_and(|ota| ota.updating(device_id).is_some())
     }
 
     /// Only for an online node that declares the `Ota` channel.

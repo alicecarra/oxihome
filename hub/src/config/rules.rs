@@ -15,6 +15,7 @@ use super::remotes::Remotes;
 use crate::hub::{CommandOrigin, Hub};
 use crate::node::events::EventRecord;
 use crate::node::state::ChannelUpdate;
+use crate::traffic::{Alert, AlertKind};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Rule {
@@ -36,6 +37,7 @@ pub enum Trigger {
     Cron(CronTrigger),
     Threshold(ThresholdTrigger),
     Offline(OfflineTrigger),
+    Traffic(TrafficTrigger),
     RemoteKey(RemoteKeyTrigger),
     Button(ButtonTrigger),
 }
@@ -47,6 +49,7 @@ impl Trigger {
             Trigger::Event(_)
             | Trigger::Threshold(_)
             | Trigger::Offline(_)
+            | Trigger::Traffic(_)
             | Trigger::RemoteKey(_)
             | Trigger::Button(_) => None,
             Trigger::Schedule(trigger) => trigger.next_run(now),
@@ -59,6 +62,7 @@ impl Trigger {
             Trigger::Event(_)
             | Trigger::Threshold(_)
             | Trigger::Offline(_)
+            | Trigger::Traffic(_)
             | Trigger::RemoteKey(_)
             | Trigger::Button(_) => false,
             Trigger::Schedule(trigger) => trigger.is_due(minute),
@@ -83,6 +87,10 @@ struct TriggerFields {
     days: Vec<Day>,
     cron: Option<String>,
     offline: Option<String>,
+    stopped: Option<String>,
+    noisy: Option<String>,
+    unanswered: Option<String>,
+    reported: Option<String>,
     remote: Option<String>,
     key: Option<String>,
     button: Option<String>,
@@ -91,7 +99,42 @@ struct TriggerFields {
 impl TryFrom<TriggerFields> for Trigger {
     type Error = String;
 
-    fn try_from(fields: TriggerFields) -> Result<Self, String> {
+    fn try_from(mut fields: TriggerFields) -> Result<Self, String> {
+        let traffic: Vec<(AlertKind, String)> = [
+            (AlertKind::Stopped, fields.stopped.take()),
+            (AlertKind::Noisy, fields.noisy.take()),
+            (AlertKind::Unanswered, fields.unanswered.take()),
+            (AlertKind::Reported, fields.reported.take()),
+        ]
+        .into_iter()
+        .filter_map(|(kind, device)| device.map(|device| (kind, device)))
+        .collect();
+        if !traffic.is_empty() {
+            let alone = fields.device.is_none()
+                && fields.entity.is_none()
+                && fields.channel.is_none()
+                && fields.event.is_none()
+                && fields.data.is_none()
+                && fields.above.is_none()
+                && fields.below.is_none()
+                && fields.at.is_none()
+                && fields.days.is_empty()
+                && fields.cron.is_none()
+                && fields.offline.is_none()
+                && fields.remote.is_none()
+                && fields.key.is_none()
+                && fields.button.is_none();
+            let [(kind, device)] = <[_; 1]>::try_from(traffic).map_err(|_| {
+                "use only one of `stopped`, `noisy`, `unanswered` and `reported`".to_string()
+            })?;
+            if !alone {
+                return Err(
+                    "`stopped`, `noisy`, `unanswered` and `reported` go alone in `when`".into(),
+                );
+            }
+            let device = (device != "*").then_some(device);
+            return Ok(Trigger::Traffic(TrafficTrigger { kind, device }));
+        }
         if let Some(button) = fields.button {
             let alone = fields.device.is_none()
                 && fields.entity.is_none()
@@ -516,6 +559,23 @@ pub struct OfflineTrigger {
     pub device: Option<String>,
 }
 
+/// Runs when the traffic map raises an alert about the node; `None` for any node (`"*"`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrafficTrigger {
+    pub kind: AlertKind,
+    pub device: Option<String>,
+}
+
+impl TrafficTrigger {
+    fn matches(&self, alert: &Alert) -> bool {
+        self.kind == alert.kind
+            && self
+                .device
+                .as_deref()
+                .is_none_or(|device| device == alert.device_id)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct EventTrigger {
     pub device: String,
@@ -743,11 +803,9 @@ impl Rules {
                 Trigger::Threshold(trigger) if trigger.device == device_id => {
                     add(RuleRole::RunsOn, Some((trigger.entity, trigger.channel)));
                 }
-                Trigger::Offline(trigger)
-                    if trigger
-                        .device
-                        .as_deref()
-                        .is_none_or(|device| device == device_id) =>
+                Trigger::Offline(OfflineTrigger { device })
+                | Trigger::Traffic(TrafficTrigger { device, .. })
+                    if device.as_deref().is_none_or(|device| device == device_id) =>
                 {
                     add(RuleRole::RunsOn, None);
                 }
@@ -875,6 +933,16 @@ impl Rules {
             .collect()
     }
 
+    pub fn traffic(&self, alert: &Alert) -> Vec<&Rule> {
+        self.rules
+            .iter()
+            .filter(|rule| {
+                rule.enabled
+                    && matches!(&rule.when, Trigger::Traffic(trigger) if trigger.matches(alert))
+            })
+            .collect()
+    }
+
     /// Scheduled rules for a local minute (seconds are ignored).
     pub fn due(&self, minute: DateTime) -> Vec<&Rule> {
         self.rules
@@ -894,9 +962,63 @@ impl HomeState for Hub {
     }
 }
 
+/// What a rule runs about, for `{node}`, `{channel}` and `{detail}` in the text of its `notify`
+/// and `invoke` actions.
+#[derive(Debug, Clone, Default)]
+pub struct Subject {
+    pub node: Option<String>,
+    pub channel: Option<String>,
+    pub detail: Option<String>,
+}
+
+impl Subject {
+    /// For a rule run from `/rules`: stand-ins that read well in a message, named after what the
+    /// trigger names. `node_name` gives a node's name from its id.
+    pub fn by_hand(trigger: &Trigger, node_name: impl Fn(&str) -> String) -> Self {
+        let node = |device: &Option<String>| {
+            Some(
+                device
+                    .as_deref()
+                    .map_or_else(|| "any node".to_string(), &node_name),
+            )
+        };
+        match trigger {
+            Trigger::Offline(OfflineTrigger { device }) => Self {
+                node: node(device),
+                ..Self::default()
+            },
+            Trigger::Traffic(TrafficTrigger { kind, device }) => Self {
+                node: node(device),
+                channel: matches!(kind, AlertKind::Stopped | AlertKind::Noisy)
+                    .then(|| "a channel".to_string()),
+                detail: Some("run by hand".into()),
+            },
+            _ => Self::default(),
+        }
+    }
+
+    fn fill(&self, text: &str) -> String {
+        let mut text = text.to_string();
+        for (placeholder, value) in [
+            ("{node}", &self.node),
+            ("{channel}", &self.channel),
+            ("{detail}", &self.detail),
+        ] {
+            if let Some(value) = value {
+                text = text.replace(placeholder, value);
+            }
+        }
+        text
+    }
+}
+
+pub async fn run(hub: Arc<Hub>, rule: Rule) -> Option<Condition> {
+    run_about(hub, rule, Subject::default()).await
+}
+
 /// Runs the actions in order when every condition holds; a failed action does not stop the
 /// next ones. Returns the condition that did not hold when it skips the rule.
-pub async fn run(hub: Arc<Hub>, rule: Rule) -> Option<Condition> {
+pub async fn run_about(hub: Arc<Hub>, rule: Rule, subject: Subject) -> Option<Condition> {
     let at = Timestamp::now();
     let now = at.to_zoned(hub.time_zone().clone()).datetime();
     if let Some(condition) = rule
@@ -909,7 +1031,7 @@ pub async fn run(hub: Arc<Hub>, rule: Rule) -> Option<Condition> {
     }
     let mut errors = Vec::new();
     for action in &rule.then {
-        match perform(&hub, action, &rule.name).await {
+        match perform(&hub, action, &rule.name, &subject).await {
             Ok(outcome) => println!("rule \"{}\": {action} -> {outcome}", rule.name),
             Err(error) => {
                 println!("rule \"{}\": {action} failed: {error}", rule.name);
@@ -927,10 +1049,19 @@ pub async fn run(hub: Arc<Hub>, rule: Rule) -> Option<Condition> {
 }
 
 /// Returns what happened, for the log.
-async fn perform(hub: &Hub, action: &Action, rule_name: &str) -> anyhow::Result<String> {
+async fn perform(
+    hub: &Hub,
+    action: &Action,
+    rule_name: &str,
+    subject: &Subject,
+) -> anyhow::Result<String> {
     let (device, entity, channel, value) = match action {
         Action::Notify { title, message } => {
-            hub.notify(title.clone(), message.clone(), rule_name.to_string());
+            hub.notify(
+                subject.fill(title),
+                subject.fill(message),
+                rule_name.to_string(),
+            );
             return Ok("shown".into());
         }
         Action::Invoke {
@@ -943,7 +1074,7 @@ async fn perform(hub: &Hub, action: &Action, rule_name: &str) -> anyhow::Result<
                 device,
                 *entity,
                 *channel,
-                value.clone(),
+                value.as_deref().map(|value| subject.fill(value)),
                 CommandOrigin::Rule(rule_name.to_string()),
             )
             .await?;
@@ -1904,5 +2035,114 @@ then = []
         assert_eq!(roles("sim-living-room"), [(RuleRole::Checks, Some((3, 0)))]);
         assert_eq!(roles("phone"), [(RuleRole::Checks, None)]);
         assert_eq!(roles("tv"), [(RuleRole::Checks, None)]);
+    }
+
+    #[test]
+    fn traffic_triggers_parse() {
+        assert_eq!(
+            when(r#"{ stopped = "*" }"#),
+            Ok(Trigger::Traffic(TrafficTrigger {
+                kind: AlertKind::Stopped,
+                device: None,
+            }))
+        );
+        assert_eq!(
+            when(r#"{ unanswered = "esp32-test" }"#),
+            Ok(Trigger::Traffic(TrafficTrigger {
+                kind: AlertKind::Unanswered,
+                device: Some("esp32-test".into()),
+            }))
+        );
+        assert!(
+            when(r#"{ stopped = "*", noisy = "*" }"#)
+                .unwrap_err()
+                .contains("only one")
+        );
+        assert!(
+            when(r#"{ noisy = "*", offline = "*" }"#)
+                .unwrap_err()
+                .contains("go alone")
+        );
+    }
+
+    #[test]
+    fn traffic_rules_match_kind_and_node() {
+        let rules: Rules = toml::from_str(
+            r#"
+            [[rules]]
+            name = "Any stopped"
+            when = { stopped = "*" }
+            then = []
+
+            [[rules]]
+            name = "Board noisy"
+            when = { noisy = "esp32-test" }
+            then = []
+            "#,
+        )
+        .unwrap();
+        let alert = |kind, device_id: &str| Alert {
+            kind,
+            device_id: device_id.into(),
+            channel: Some((3, 0)),
+        };
+        assert_eq!(
+            names(rules.traffic(&alert(AlertKind::Stopped, "other"))),
+            ["Any stopped"]
+        );
+        assert_eq!(
+            names(rules.traffic(&alert(AlertKind::Noisy, "esp32-test"))),
+            ["Board noisy"]
+        );
+        assert!(rules.traffic(&alert(AlertKind::Noisy, "other")).is_empty());
+        assert_eq!(
+            rules.involving("esp32-test").len(),
+            2,
+            "both rules run on the board"
+        );
+    }
+
+    #[test]
+    fn subject_fills_its_placeholders() {
+        let subject = Subject {
+            node: Some("Test board".into()),
+            ..Subject::default()
+        };
+        assert_eq!(
+            subject.fill("{node} › {channel} stopped"),
+            "Test board › {channel} stopped"
+        );
+        assert_eq!(Subject::default().fill("{node}"), "{node}");
+    }
+
+    #[test]
+    fn a_rule_run_by_hand_reads_well() {
+        let name = |device: &str| format!("Board {device}");
+        let filled = |trigger: &str| {
+            Subject::by_hand(&when(trigger).unwrap(), name).fill("{node} › {channel}: {detail}")
+        };
+        assert_eq!(
+            filled(r#"{ stopped = "*" }"#),
+            "any node › a channel: run by hand"
+        );
+        assert_eq!(
+            filled(r#"{ unanswered = "a" }"#),
+            "Board a › {channel}: run by hand"
+        );
+        assert_eq!(
+            filled(r#"{ offline = "a" }"#),
+            "Board a › {channel}: {detail}"
+        );
+    }
+
+    #[test]
+    fn reported_trigger_parses() {
+        assert_eq!(
+            when(r#"{ reported = "*" }"#),
+            Ok(Trigger::Traffic(TrafficTrigger {
+                kind: AlertKind::Reported,
+                device: None,
+            }))
+        );
     }
 }

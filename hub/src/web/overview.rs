@@ -12,12 +12,13 @@ use crate::config::nodes::{ConfiguredEntity, NameTarget, Nodes};
 use crate::config::remotes::Remotes;
 use crate::config::rules::{
     Action, ChannelCondition, Condition, CronTrigger, Day, EventTrigger, Expected, Limit,
-    OfflineTrigger, ScheduleTrigger, ThresholdTrigger, Trigger, ValueTest,
+    OfflineTrigger, ScheduleTrigger, ThresholdTrigger, TrafficTrigger, Trigger, ValueTest,
 };
 use crate::hub::{Hub, Snapshot};
 use crate::node::events::{EventRecord, data_label};
 use crate::node::registry::{Node, Registry};
 use crate::storage::StoredNotification;
+use crate::traffic::AlertKind;
 
 #[derive(Clone)]
 pub struct NodeOverview {
@@ -550,6 +551,7 @@ fn trigger_description(nodes: &Nodes, registry: &Registry, trigger: &Trigger) ->
         Trigger::Schedule(trigger) => schedule_description(trigger),
         Trigger::Cron(trigger) => cron_description(trigger),
         Trigger::Offline(trigger) => offline_description(nodes, trigger),
+        Trigger::Traffic(trigger) => traffic_description(nodes, trigger),
         Trigger::RemoteKey(trigger) => format!("{}: key {}", trigger.remote, trigger.key),
         Trigger::Button(trigger) => format!("Button \"{}\"", trigger.button),
     }
@@ -564,6 +566,29 @@ fn offline_description(nodes: &Nodes, trigger: &OfflineTrigger) -> String {
             format!("{node} goes offline")
         }
         None => "Any node goes offline".into(),
+    }
+}
+
+fn capitalized(text: &str) -> String {
+    let mut characters = text.chars();
+    characters.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(characters).collect()
+    })
+}
+
+fn traffic_description(nodes: &Nodes, trigger: &TrafficTrigger) -> String {
+    let node = match &trigger.device {
+        Some(device) => nodes
+            .name(&NameTarget::Node(device.clone()))
+            .unwrap_or(device)
+            .to_string(),
+        None => "any node".into(),
+    };
+    match trigger.kind {
+        AlertKind::Stopped => format!("A channel of {node} stops reporting"),
+        AlertKind::Noisy => format!("A channel of {node} gets noisy"),
+        AlertKind::Unanswered => format!("Commands to {node} go unanswered"),
+        AlertKind::Reported => format!("{} reports a problem", capitalized(&node)),
     }
 }
 
