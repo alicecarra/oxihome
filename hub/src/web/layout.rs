@@ -9,6 +9,7 @@ use topcoat::{
 };
 
 use super::icons;
+use super::install::install_links;
 use super::overview;
 use super::rules::rules_indicator;
 use super::toasts::toast_poller;
@@ -48,6 +49,7 @@ pub async fn layout(cx: &Cx, title: &str, #[default] child: Child<'_>) -> Result
                 <link rel="stylesheet" href="/static/app.css">
                 <script src="/static/htmx.min.js"></script>
                 <script src="/static/htmx-ext-sse.min.js"></script>
+                install_links()
             </head>
             <body hx-ext="sse" sse-connect="/events">
                 <header class="sticky top-0 z-40 border-b border-border bg-card/95 backdrop-blur">

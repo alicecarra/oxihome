@@ -8,6 +8,7 @@ mod format;
 mod home;
 mod host;
 mod icons;
+mod install;
 mod lab;
 mod layout;
 mod node;
@@ -102,6 +103,11 @@ pub fn router(hub: Arc<Hub>, auth: Auth, listen_host: &str, allowed_hosts: &[Str
         .route(remote_codes_script)
         .route(traffic_script)
         .route(stylesheet)
+        .route(install::manifest)
+        .route(install::service_worker)
+        .route(install::registration)
+        .route(install::icon_192)
+        .route(install::icon_512)
         .app_context(hub)
         .app_context(auth)
         .build()

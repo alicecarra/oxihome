@@ -28,6 +28,7 @@ use topcoat::{
 
 use super::format::query_value;
 use super::icons;
+use super::install::{self, install_links};
 use crate::components::button::button;
 use crate::components::card::{card, card_content, card_description, card_header, card_title};
 use crate::components::input::input;
@@ -168,7 +169,11 @@ impl Layer for AuthLayer {
 
     fn handle<'a>(&'a self, cx: &'a Cx, body: Body, next: Next<'a>) -> LayerFuture<'a> {
         Box::pin(async move {
-            if PUBLIC_PATHS.contains(&uri(cx).path()) || signed_in(cx).await? {
+            let path = uri(cx).path();
+            if PUBLIC_PATHS.contains(&path)
+                || install::PUBLIC_PATHS.contains(&path)
+                || signed_in(cx).await?
+            {
                 return next.run(cx, body).await;
             }
             let request_headers = headers(cx);
@@ -295,6 +300,7 @@ async fn login_document(
                 <title>"Oxihome"</title>
                 <link rel="icon" type="image/svg+xml" href=(icons::FAVICON)>
                 <link rel="stylesheet" href="/static/app.css">
+                install_links()
             </head>
             <body>
                 <main class="flex min-h-screen items-center justify-center p-4">
