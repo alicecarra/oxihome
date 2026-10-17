@@ -91,6 +91,9 @@ pub struct Hub {
     state: Mutex<State>,
     events: Mutex<Events>,
     config_directory: PathBuf,
+    /// Held across each read, check and write of the config files, so concurrent edits do not
+    /// undo one another.
+    config_writes: Mutex<()>,
     nodes: Mutex<Nodes>,
     rules: Mutex<Rules>,
     /// Last run of each rule, by name.
@@ -159,6 +162,7 @@ impl Hub {
             state: Mutex::new(state),
             events: Mutex::new(events),
             config_directory,
+            config_writes: Mutex::default(),
             nodes: Mutex::new(config.nodes),
             rules: Mutex::new(config.rules),
             rule_runs: Mutex::new(restored.rule_runs.into_iter().collect()),
@@ -440,6 +444,7 @@ impl Hub {
 
     /// Rereads the config directory; on error the current configuration stays.
     pub fn reload_config(&self) -> anyhow::Result<usize> {
+        let _writing = self.config_writes.lock().unwrap();
         let config = HomeConfig::load(&self.config_directory)?;
         Ok(self.apply_config(config))
     }
@@ -451,6 +456,30 @@ impl Hub {
     /// Validates the whole configuration with the new text, then writes and applies it.
     /// Refuses when the file changed on disk since `expected_modified` was read.
     pub fn save_config_file(
+        &self,
+        file: &str,
+        text: &str,
+        expected_modified: Option<SystemTime>,
+    ) -> anyhow::Result<usize> {
+        let _writing = self.config_writes.lock().unwrap();
+        self.write_config_file(file, text, expected_modified)
+    }
+
+    /// Like `save_config_file`, with the text made from the current one.
+    fn edit_config_file(
+        &self,
+        file: &str,
+        edit: impl FnOnce(&str) -> anyhow::Result<String>,
+    ) -> anyhow::Result<()> {
+        let _writing = self.config_writes.lock().unwrap();
+        let current = self.config_file(file)?;
+        let text = edit(&current.text)?;
+        self.write_config_file(file, &text, current.modified)?;
+        Ok(())
+    }
+
+    /// Only with `config_writes` held.
+    fn write_config_file(
         &self,
         file: &str,
         text: &str,
@@ -635,31 +664,25 @@ impl Hub {
 
     /// Adds a key to `remotes.toml` (keeping its comments), validates and applies the configuration.
     pub fn learn_key(&self, remote: &str, key: &str, code: &str) -> anyhow::Result<()> {
-        let file = "remotes.toml";
-        let current = self.config_file(file)?;
-        let text = crate::config::remotes::with_key(&current.text, remote, key, code)?;
-        self.save_config_file(file, &text, current.modified)?;
-        Ok(())
+        self.edit_config_file("remotes.toml", |text| {
+            crate::config::remotes::with_key(text, remote, key, code)
+        })
     }
 
     /// Turns a rule on or off in `rules.toml` (keeping its comments), validates and applies the
     /// configuration.
     pub fn set_rule_enabled(&self, name: &str, enabled: bool) -> anyhow::Result<()> {
-        let file = "rules.toml";
-        let current = self.config_file(file)?;
-        let text = crate::config::rules::with_rule_enabled(&current.text, name, enabled)?;
-        self.save_config_file(file, &text, current.modified)?;
-        Ok(())
+        self.edit_config_file("rules.toml", |text| {
+            crate::config::rules::with_rule_enabled(text, name, enabled)
+        })
     }
 
     /// Changes a node's names and parameters in `nodes.toml` (keeping its comments), validates
     /// and applies the configuration.
     pub fn edit_node(&self, device_id: &str, edits: &NodeEdits) -> anyhow::Result<()> {
-        let file = "nodes.toml";
-        let current = self.config_file(file)?;
-        let text = crate::config::nodes::with_node_edits(&current.text, device_id, edits)?;
-        self.save_config_file(file, &text, current.modified)?;
-        Ok(())
+        self.edit_config_file("nodes.toml", |text| {
+            crate::config::nodes::with_node_edits(text, device_id, edits)
+        })
     }
 
     pub fn crossed_rules(&self, update: &ChannelUpdate) -> Vec<Rule> {

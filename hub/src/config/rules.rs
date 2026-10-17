@@ -803,6 +803,17 @@ impl Rules {
     }
 
     /// Button names are unique.
+    /// Rule runs, the timeline and `set_rule_enabled` find rules by name.
+    pub fn check_names(&self) -> anyhow::Result<()> {
+        let mut names = HashSet::new();
+        for rule in &self.rules {
+            if !names.insert(&rule.name) {
+                bail!("two rules are named \"{}\"", rule.name);
+            }
+        }
+        Ok(())
+    }
+
     pub fn check_buttons(&self) -> anyhow::Result<()> {
         let mut buttons = HashSet::new();
         for rule in &self.rules {
@@ -1036,6 +1047,41 @@ mod tests {
         .unwrap();
         let error = twice.check_buttons().unwrap_err().to_string();
         assert!(error.contains("another rule has the button"), "{error}");
+    }
+
+    #[test]
+    fn rule_names_are_unique() {
+        let rules: Rules = toml::from_str(
+            r#"
+            [[rules]]
+            name = "A"
+            when = { button = "Good night" }
+            then = []
+
+            [[rules]]
+            name = "B"
+            when = { button = "Alarm" }
+            then = []
+        "#,
+        )
+        .unwrap();
+        assert!(rules.check_names().is_ok());
+        let twice: Rules = toml::from_str(
+            r#"
+            [[rules]]
+            name = "A"
+            when = { button = "Good night" }
+            then = []
+
+            [[rules]]
+            name = "A"
+            when = { button = "Alarm" }
+            then = []
+        "#,
+        )
+        .unwrap();
+        let error = twice.check_names().unwrap_err().to_string();
+        assert_eq!(error, "two rules are named \"A\"");
     }
 
     #[test]

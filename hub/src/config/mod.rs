@@ -58,7 +58,8 @@ impl HomeConfig {
         let path = directory.join("rules.toml");
         let rules: Rules = parse(&path, &text("rules.toml")?)?;
         rules
-            .check_remote_keys(&remotes)
+            .check_names()
+            .and_then(|()| rules.check_remote_keys(&remotes))
             .and_then(|()| rules.check_buttons())
             .with_context(|| format!("{}", path.display()))?;
         let path = directory.join("dashboard.toml");
