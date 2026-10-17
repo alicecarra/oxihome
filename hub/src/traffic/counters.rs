@@ -16,6 +16,9 @@ const STATE_TIMES: usize = 20;
 const NOISY_FACTOR: f64 = 3.0;
 const NOISY_MINIMUM_PER_MINUTE: f64 = 6.0;
 const NOISY_ALWAYS_PER_MINUTE: f64 = 60.0;
+/// Minutes of the recent window at `NOISY_MINIMUM_PER_MINUTE` or more: holding a remote key or
+/// turning the potentiometer for a few seconds is not noise.
+const NOISY_MINUTES: usize = 3;
 
 const STOPPED_FACTOR: u32 = 3;
 const STOPPED_MINIMUM: Duration = Duration::from_secs(2 * 60);
@@ -87,6 +90,8 @@ struct ChannelCounters {
 struct NodeCounters {
     minutes: Minutes<NodeMinute>,
     last_at: Option<Timestamp>,
+    /// The last message from the node itself.
+    last_up_at: Option<Timestamp>,
     channels: BTreeMap<(u8, u8), ChannelCounters>,
 }
 
@@ -164,9 +169,13 @@ impl Window {
         }
     }
 
+    /// The slots of the recent window.
+    fn recent<'a>(&self, series: &'a [u64]) -> &'a [u64] {
+        &series[series.len() - self.recent_slots..]
+    }
+
     fn recent_rate(&self, series: &[u64]) -> f64 {
-        let recent: u64 = series[series.len() - self.recent_slots..].iter().sum();
-        Self::rate(self.recent_minutes, recent)
+        Self::rate(self.recent_minutes, self.recent(series).iter().sum())
     }
 
     fn earlier_rate(&self, series: &[u64]) -> Option<f64> {
@@ -199,7 +208,10 @@ impl Counters {
         node.last_at = Some(entry.at);
         let tally = node.minutes.at(minute);
         match entry.direction {
-            Direction::Up => tally.up += 1,
+            Direction::Up => {
+                tally.up += 1;
+                node.last_up_at = Some(entry.at);
+            }
             Direction::Down => tally.down += 1,
         }
         tally.bytes += entry.text.len() as u64;
@@ -270,7 +282,14 @@ impl Counters {
                         .channels
                         .iter()
                         .map(|(&(entity, channel), counters)| {
-                            channel_summary(entity, channel, counters, &window, minute, now)
+                            channel_summary(
+                                (entity, channel),
+                                counters,
+                                node.last_up_at,
+                                &window,
+                                minute,
+                                now,
+                            )
                         })
                         .collect(),
                 }
@@ -279,10 +298,12 @@ impl Counters {
     }
 }
 
+/// `node_last_up_at` tells a quiet channel from a quiet node: when the whole node went silent,
+/// presence (offline) covers it.
 fn channel_summary(
-    entity: u8,
-    channel: u8,
+    (entity, channel): (u8, u8),
     counters: &ChannelCounters,
+    node_last_up_at: Option<Timestamp>,
     window: &Window,
     minute: i64,
     now: Timestamp,
@@ -291,13 +312,21 @@ fn channel_summary(
     let counts: Vec<u64> = series.iter().map(|count| u64::from(*count)).collect();
     let per_minute = window.recent_rate(&counts);
     let typical = typical_gap(&counters.states);
-    let noisy = per_minute >= NOISY_ALWAYS_PER_MINUTE
-        || window.earlier_rate(&counts).is_some_and(|earlier| {
-            per_minute >= NOISY_MINIMUM_PER_MINUTE && per_minute >= NOISY_FACTOR * earlier
-        });
+    let busy_minutes = window
+        .recent(&counts)
+        .iter()
+        .filter(|count| **count as f64 >= NOISY_MINIMUM_PER_MINUTE)
+        .count();
+    let noisy = busy_minutes >= NOISY_MINUTES
+        && (per_minute >= NOISY_ALWAYS_PER_MINUTE
+            || window.earlier_rate(&counts).is_some_and(|earlier| {
+                per_minute >= NOISY_MINIMUM_PER_MINUTE && per_minute >= NOISY_FACTOR * earlier
+            }));
     let stopped = match (typical, counters.states.back()) {
         (Some(typical), Some(last)) if counters.states.len() >= STOPPED_MINIMUM_STATES => {
-            elapsed(*last, now) > (typical * STOPPED_FACTOR).max(STOPPED_MINIMUM)
+            let limit = (typical * STOPPED_FACTOR).max(STOPPED_MINIMUM);
+            elapsed(*last, now) > limit
+                && node_last_up_at.is_some_and(|up| elapsed(up, now) <= limit)
         }
         _ => false,
     };
@@ -413,14 +442,27 @@ mod tests {
     #[test]
     fn plenty_is_noisy_from_the_start() {
         let mut counters = Counters::new(at(0));
-        for second in 0..60 {
+        for second in 0..180 {
             counters.record(&entry(second, MessageKind::Event, Some(0)));
             counters.record(&entry(second, MessageKind::Event, Some(0)));
         }
         assert_eq!(
-            only_channel(&counters, 59).highlight,
+            only_channel(&counters, 179).highlight,
             Some(Highlight::Noisy)
         );
+    }
+
+    #[test]
+    fn holding_a_remote_key_is_not_noise() {
+        let mut counters = Counters::new(at(0));
+        // One code a minute for 50 minutes, then a key held for 30 s: 9 repeats a second.
+        for minute in 0..50 {
+            counters.record(&entry(minute * 60, MessageKind::Event, Some(0)));
+        }
+        for repeat in 0..270 {
+            counters.record(&entry(50 * 60 + repeat / 9, MessageKind::Event, Some(0)));
+        }
+        assert_eq!(only_channel(&counters, 50 * 60 + 40).highlight, None);
     }
 
     #[test]
@@ -430,16 +472,33 @@ mod tests {
             counters.record(&entry(reading * 30, MessageKind::State, Some(0)));
         }
         let last = 9 * 30;
+        // The node keeps sending heartbeats, up to each check.
+        for seconds in (10..=100).step_by(10) {
+            counters.record(&entry(last + seconds, MessageKind::Heartbeat, None));
+        }
         let channel = only_channel(&counters, last + 100);
         assert_eq!(channel.typical, Some(Duration::from_secs(30)));
         // 3 × 30 s is under the 2 minute minimum.
         assert_eq!(channel.highlight, None);
+        for seconds in [110, 120] {
+            counters.record(&entry(last + seconds, MessageKind::Heartbeat, None));
+        }
         assert_eq!(
             only_channel(&counters, last + 121).highlight,
             Some(Highlight::Stopped {
                 typical: Duration::from_secs(30)
             })
         );
+    }
+
+    #[test]
+    fn a_silent_node_is_offline_not_stopped() {
+        let mut counters = Counters::new(at(0));
+        for reading in 0..10 {
+            counters.record(&entry(reading * 30, MessageKind::State, Some(0)));
+            counters.record(&entry(reading * 30 + 15, MessageKind::Heartbeat, None));
+        }
+        assert_eq!(only_channel(&counters, 9 * 30 + 300).highlight, None);
     }
 
     #[test]
