@@ -32,25 +32,34 @@ pub async fn remotes_page(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         layout(
             title: "Oxihome remotes",
-            // `remote-codes.js` sets `data-codes` from the switch, which the code cells follow.
-            <div id="remotes-page" class="group space-y-4" data-codes="hidden">
+            // `remote-codes.js` sets `data-codes` and `data-removing` from the switches, which the
+            // code cells and the key buttons follow.
+            <div id="remotes-page" class="group space-y-4" data-codes="hidden" data-removing="off">
+                <p class="text-sm text-muted-foreground">"Infrared remotes and the codes of their keys. Rules can use a key by name. They come from remotes.toml."</p>
                 <div class="flex flex-wrap items-center justify-between gap-4">
-                    <p class="text-sm text-muted-foreground">"Infrared remotes and the codes of their keys. Rules can use a key by name. They come from remotes.toml."</p>
-                    <div class="flex flex-wrap items-center gap-4">
-                        <label class="flex items-center gap-2 text-sm">
-                            switch(attrs: attributes! { id="show-codes" })
-                            "Codes"
-                        </label>
-                        if transmitters.is_empty() {
-                            <p class="text-sm text-muted-foreground">"No IR transmitter to send with"</p>
-                        } else {
+                    if transmitters.is_empty() {
+                        <p class="text-sm text-muted-foreground">"No IR transmitter to send with"</p>
+                    } else {
+                        <label class="flex items-center gap-2 text-sm font-medium">
+                            "Send with"
                             // Outside #remotes, so the choice survives its refreshes.
-                            <select id="transmitter" name="transmitter" class=(SELECT) aria-label="IR transmitter">
+                            <select id="transmitter" name="transmitter" class=(SELECT)>
                                 for transmitter in transmitters {
                                     <option value=(transmitter.value)>(transmitter.label)</option>
                                 }
                             </select>
-                        }
+                        </label>
+                    }
+                    <div class="flex flex-wrap items-center gap-4">
+                        <label class="flex items-center gap-2 text-sm">
+                            switch(attrs: attributes! { id="show-codes" })
+                            "Show codes"
+                        </label>
+                        <label class="flex items-center gap-2 text-sm">
+                            switch(attrs: attributes! { id="remove-keys" })
+                            "Remove keys"
+                        </label>
+                        <span class="h-5 w-px bg-border" aria-hidden="true"></span>
                         <a href="/settings/remotes.toml" class="text-sm font-medium whitespace-nowrap hover:underline">"Edit in Settings"</a>
                     </div>
                 </div>
@@ -188,12 +197,12 @@ async fn remotes_content(
                     attrs: attributes! { class="h-full" },
                     card_header(card_title((remote.name.clone())))
                     card_content(
-                        <dl class="grid grid-cols-[5rem_1fr_auto_auto] items-center gap-x-3 gap-y-2 text-sm group-data-[codes=hidden]:grid-cols-[1fr_auto_auto]">
+                        <dl class="grid grid-cols-[5rem_1fr_auto] items-center gap-x-3 gap-y-2 text-sm group-data-[codes=hidden]:grid-cols-[1fr_auto]">
                             for (key, code) in remote.keys {
                                 <dt class="font-medium">(key.clone())</dt>
                                 <dd class="group-data-[codes=hidden]:hidden"><code class="font-mono text-muted-foreground">(code.clone())</code></dd>
-                                <dd>send_button(code: code, can_send: can_send)</dd>
-                                <dd>remove_button(remote: remote.name.clone(), key: key)</dd>
+                                <dd class="group-data-[removing=on]:hidden">send_button(code: code, can_send: can_send)</dd>
+                                <dd class="group-data-[removing=off]:hidden">remove_button(remote: remote.name.clone(), key: key)</dd>
                             }
                         </dl>
                     )
@@ -337,10 +346,9 @@ async fn remove_button(remote: String, key: String) -> Result<impl View> {
         <form
             hx-post="/remotes/keys/remove"
             hx-target="#status"
-            hx-confirm=(format!("Remove {key} from {remote}?"))
             ("hx-on--after-request")="htmx.trigger('#remotes', 'refresh')"
         >
-            <input type="hidden" name="remote" value=(remote.clone())>
+            <input type="hidden" name="remote" value=(remote)>
             <input type="hidden" name="key" value=(key.clone())>
             button(
                 variant: ButtonVariant::Ghost,
@@ -349,7 +357,7 @@ async fn remove_button(remote: String, key: String) -> Result<impl View> {
                     type="submit"
                     title="Remove"
                     aria-label=(format!("Remove {key}"))
-                    class="size-8 text-muted-foreground hover:text-destructive"
+                    class="size-8 text-destructive"
                 },
                 icon(data: icons::REMOVE, size: 16)
             )

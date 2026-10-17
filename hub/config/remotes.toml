@@ -5,7 +5,6 @@
 3 = "NEC 00 0D"
 up = "NEC 00 46"
 ok = "NEC 00 40"
-5 = "NEC 00 18"
 
 [remotes.Receiver.keys]
 power = "SONY15 30 15"
