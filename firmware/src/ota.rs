@@ -66,6 +66,8 @@ impl Ota {
             }
             update.write(&buffer[..read])?;
             received += read;
+            // A slow download must not pass for a stuck loop; a stalled one still times out above.
+            unsafe { esp_idf_svc::sys::esp_task_wdt_reset() };
         }
         update.complete().context("image rejected")?;
         log::info!("OTA: {size} bytes written, rebooting");
