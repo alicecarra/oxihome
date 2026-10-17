@@ -6,7 +6,7 @@ use std::time::Instant;
 use jiff::Timestamp;
 use oxihome_protocol::{Message, Payload, QueryKind, management};
 
-use crate::config::rules;
+use crate::config::rules::{self, Rule, Subject};
 use crate::hub::Hub;
 use crate::node::registry::NodeEvent;
 use crate::node::{hardware, parameters};
@@ -89,16 +89,12 @@ pub async fn on_message(hub: &Arc<Hub>, message: &Message) -> anyhow::Result<()>
 
     for update in updates {
         println!("{update}");
-        for rule in hub.crossed_rules(&update) {
-            tokio::spawn(rules::run(hub.clone(), rule));
-        }
+        spawn_rules(hub, hub.crossed_rules(&update), Subject::default());
     }
 
     if let Some(event) = event {
         println!("{event}");
-        for rule in hub.matching_rules(&event) {
-            tokio::spawn(rules::run(hub.clone(), rule));
-        }
+        spawn_rules(hub, hub.matching_rules(&event), Subject::default());
     }
     Ok(())
 }
@@ -136,22 +132,18 @@ fn on_alert(hub: &Arc<Hub>, raised: &RaisedAlert) {
     };
     println!("{title}: {}", raised.detail);
     hub.notify(title, raised.detail.clone(), alert.device_id.clone());
-    for rule in hub.traffic_rules(alert) {
-        let subject = rules::Subject {
-            node: Some(node.clone()),
-            channel: channel.clone(),
-            detail: Some(raised.detail.clone()),
-        };
-        tokio::spawn(rules::run_about(hub.clone(), rule, subject));
-    }
+    let subject = Subject {
+        node: Some(node),
+        channel,
+        detail: Some(raised.detail.clone()),
+    };
+    spawn_rules(hub, hub.traffic_rules(alert), subject);
 }
 
 /// Runs the scheduled rules of each new local minute.
 pub fn on_clock_tick(hub: &Arc<Hub>, schedule: &mut Schedule) {
     for minute in schedule.new_minutes(Timestamp::now()) {
-        for rule in hub.due_rules(minute) {
-            tokio::spawn(rules::run(hub.clone(), rule));
-        }
+        spawn_rules(hub, hub.due_rules(minute), Subject::default());
     }
 }
 
@@ -159,13 +151,17 @@ fn on_node_event(hub: &Arc<Hub>, node_event: &NodeEvent) {
     println!("{node_event}");
     hub.notify_node_event(node_event);
     if let NodeEvent::Offline(device_id) = node_event {
-        for rule in hub.offline_rules(device_id) {
-            let subject = rules::Subject {
-                node: Some(hub.node_name(device_id)),
-                ..rules::Subject::default()
-            };
-            tokio::spawn(rules::run_about(hub.clone(), rule, subject));
-        }
+        let subject = Subject {
+            node: Some(hub.node_name(device_id)),
+            ..Subject::default()
+        };
+        spawn_rules(hub, hub.offline_rules(device_id), subject);
+    }
+}
+
+fn spawn_rules(hub: &Arc<Hub>, matched: Vec<Rule>, subject: Subject) {
+    for rule in matched {
+        tokio::spawn(rules::run(hub.clone(), rule, subject.clone()));
     }
 }
 

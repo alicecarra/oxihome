@@ -1,144 +1,144 @@
+# Presence (network-devices: 1 Alice S23, 2 tablet, 3 Alice Watch6)
+
 [[rules]]
-name = "Test board button held down"
-when = { device = "esp32-08d1f9ca41e4", entity = 2, channel = 0, event = "LongPress" }
+name = "Arrived home at night: external LED and Telegram"
+when = { device = "network-devices", entity = 1, channel = 1, event = "Received", data = "online" }
+if = [{ from = "18:00", to = "06:00" }]
 then = [
-    { notify = { title = "Test board", message = "BOOT button held down" } },
-]
-
-[[rules]]
-name = "Disabled rule"
-enabled = false
-when = { device = "esp32-08d1f9ca41e4", entity = 2, channel = 0, event = "LongPress" }
-then = [
-    { notify = { title = "Disabled message", message = "why are you seeing this???" } },
-]
-
-
-[[rules]]
-name = "Test board LED on for waking up"
-enabled = false
-when = { at = "07:00", days = [
-    "monday",
-    "tuesday",
-    "wednesday",
-    "thursday",
-    "friday",
-] }
-then = [
-    { set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = true } },
-]
-
-[[rules]]
-name = "Any node offline: buzzer alarm"
-enabled = false
-when = { offline = "*" }
-then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
-
-[[rules]]
-name = "Pi-hole stopped: buzzer alarm"
-enabled = false
-when = { device = "docker-host", entity = 50, channel = 6, event = "Received", data = "stopped" }
-then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
-
-[[rules]]
-name = "Jellyfin stopped: buzzer alarm"
-enabled = false
-when = { device = "docker-host", entity = 51, channel = 6, event = "Received", data = "stopped" }
-then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
-
-[[rules]]
-name = "Trilium stopped: buzzer alarm"
-when = { device = "docker-host", entity = 52, channel = 6, event = "Received", data = "stopped" }
-then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
-
-[[rules]]
-name = "Portainer stopped: buzzer alarm"
-enabled = false
-when = { device = "docker-host", entity = 53, channel = 6, event = "Received", data = "stopped" }
-then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
-
-[[rules]]
-name = "Remote key 0 toggles the external LED"
-when = { remote = "Kit Lafvin", key = "0" }
-then = [{ toggle = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0 } }]
-
-[[rules]]
-name = "Remote key 1 beeps short"
-when = { remote = "Kit Lafvin", key = "1" }
-then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Short" } }]
-
-[[rules]]
-name = "Remote key 2 beeps long"
-when = { remote = "Kit Lafvin", key = "2" }
-then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Long" } }]
-
-[[rules]]
-name = "Remote key 3 sounds the alarm"
-when = { remote = "Kit Lafvin", key = "3" }
-then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
-
-[[rules]]
-name = "Receiver power toggles the external LED"
-when = { remote = "Receiver", key = "power" }
-then = [{ toggle = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0 } }]
-
-[[rules]]
-name = "Turn on the LEDs with a beep"
-enabled = false
-when = { button = "Turn on" }
-then = [
-    { set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = true } },
     { set = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0, value = true } },
-    { invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Short" } },
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "Welcome home" } },
 ]
 
 [[rules]]
-name = "Turn off every light"
-when = { button = "Turn off" }
+name = "Left home: lights off and Telegram"
+when = { device = "network-devices", entity = 1, channel = 1, event = "Received", data = "offline" }
 then = [
     { set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = false } },
     { set = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0, value = false } },
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "You left home, the lights are off" } },
 ]
 
 [[rules]]
-name = "Test board hot: beep and warn, daytime only"
-enabled = false
-when = { device = "esp32-08d1f9ca41e4", entity = 3, channel = 0, above = 28 }
-if = [{ from = "08:00", to = "22:00" }]
-then = [
-    { invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Long" } },
-    { notify = { title = "Test board", message = "Above 28 °C" } },
-]
-
-[[rules]]
-name = "Outra placa button: beep on the test board"
-when = { device = "esp32-14335c2e7270", entity = 2, channel = 0, event = "Press" }
-then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Short" } }, { notify = { title = "BEEP", message = "beep" } }]
-
-[[rules]]
-name = "tablet out of Internet"
-enabled = false
+name = "Tablet left the network: Telegram"
 when = { device = "network-devices", entity = 2, channel = 1, event = "Received", data = "offline" }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "The tablet left the network" } }]
+
+# TV and receiver (IR emitter: RC6 is the Philips TV, SONY15 30 the receiver)
+
+[[rules]]
+name = "Turn on TV"
+when = { button = "Turn on TV" }
 then = [
-    { invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } },
+    { invoke = { device = "esp32-14335c2e7270", entity = 3, channel = 0, value = "RC6 00 0C" } },
+    { invoke = { device = "esp32-14335c2e7270", entity = 3, channel = 0, value = "SONY15 30 15" } },
+    { invoke = { device = "esp32-14335c2e7270", entity = 3, channel = 0, value = "SONY15 30 6A" } },
 ]
 
-[[rules]]
-name = "Receiver power"
-when = { button = "Power" }
-then = [{ invoke = { device = "esp32-14335c2e7270", entity = 3, channel = 0, value = "SONY15 30 15" } }]
+# Weather
 
 [[rules]]
-name = "Telegram /receiver: receiver power"
-when = { device = "telegram", entity = 2, channel = 0, event = "Received", data = "receiver" }
-then = [{ invoke = { device = "esp32-14335c2e7270", entity = 3, channel = 0, value = "SONY15 30 15" } }]
+name = "Started raining: Telegram"
+when = { device = "weather", entity = 1, channel = 2, above = 0 }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "It started raining, bring in the laundry" } }]
 
 [[rules]]
-name = "Telegram /achar: buzzer alarm"
-when = { device = "telegram", entity = 2, channel = 0, event = "Received", data = "achar" }
-then = [{ invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Alarm" } }]
+name = "Cold day: Telegram in the morning"
+when = { at = "07:00" }
+if = [{ device = "weather", entity = 2, channel = 1, below = 10 }]
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Cold today: the minimum is below 10 °C" } }]
+
+[[rules]]
+name = "Strong wind: Telegram"
+when = { device = "weather", entity = 1, channel = 3, above = 50 }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Strong wind: above 50 km/h" } }]
+
+# Servers (linux-monitor: 2 memory, 4 system, 10 disk /, 50+ containers)
+
+[[rules]]
+name = "Notebook disk almost full: Telegram"
+when = { device = "notebook", entity = 10, channel = 0, above = 90 }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Notebook disk is above 90%" } }]
+
+[[rules]]
+name = "Docker host disk almost full: Telegram"
+when = { device = "docker-host", entity = 10, channel = 0, above = 90 }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Docker host disk is above 90%" } }]
+
+[[rules]]
+name = "Docker host memory high: Telegram"
+when = { device = "docker-host", entity = 2, channel = 0, above = 90 }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Docker host memory is above 90%" } }]
+
+[[rules]]
+name = "Docker host restarted: Telegram"
+when = { device = "docker-host", entity = 4, channel = 0, below = 600 }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Docker host restarted" } }]
+
+[[rules]]
+name = "Pi-hole using two cores: Telegram"
+when = { device = "docker-host", entity = 50, channel = 2, above = 200 }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Pi-hole is using more than two cores" } }]
+
+[[rules]]
+name = "Jellyfin using two cores: Telegram"
+when = { device = "docker-host", entity = 51, channel = 2, above = 200 }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Jellyfin is using more than two cores" } }]
+
+[[rules]]
+name = "Trilium using two cores: Telegram"
+when = { device = "docker-host", entity = 52, channel = 2, above = 200 }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Trilium is using more than two cores" } }]
+
+[[rules]]
+name = "Portainer using two cores: Telegram"
+when = { device = "docker-host", entity = 53, channel = 2, above = 200 }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Portainer is using more than two cores" } }]
+
+[[rules]]
+name = "Hub using two cores: Telegram"
+when = { device = "docker-host", entity = 55, channel = 2, above = 200 }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "The Oxihome hub is using more than two cores" } }]
+
+# Reading
+
+[[rules]]
+name = "Feeds piling up: Telegram on Sunday"
+when = { cron = "0 10 * * sun" }
+if = [{ device = "rss", entity = 1, channel = 1, above = 50 }]
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "More than 50 unread feed items" } }]
+
+# House health
 
 [[rules]]
 name = "Any node offline: Telegram"
 when = { offline = "*" }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "A node went offline" } }]
+if = [{ online = "telegram" }]
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} went offline" } }]
+
+[[rules]]
+name = "Telegram bot offline: buzzer"
+when = { offline = "telegram" }
+then = [
+    { invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Short" } },
+    { notify = { title = "Telegram bot offline", message = "Telegram messages will not arrive" } },
+]
+
+[[rules]]
+name = "Node stopped reporting: Telegram"
+when = { stopped = "*" }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} › {channel} stopped reporting: {detail}" } }]
+
+[[rules]]
+name = "Node noisy: Telegram"
+when = { noisy = "*" }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} › {channel} is noisy: {detail}" } }]
+
+[[rules]]
+name = "Node not answering: Telegram"
+when = { unanswered = "*" }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} is not answering commands: {detail}" } }]
+
+[[rules]]
+name = "Node reported a problem: Telegram"
+when = { reported = "*" }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} reported a problem: {detail}" } }]

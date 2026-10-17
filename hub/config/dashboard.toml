@@ -13,9 +13,9 @@ name = "Home"
 
 [[dashboards.blocks]]
 type = "buttons"
-title = "Receiver"
+title = "TV"
 width = 1
-buttons = ["Power"]
+buttons = ["Turn on TV"]
 
 [[dashboards.blocks]]
 type = "nodes"
