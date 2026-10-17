@@ -31,7 +31,8 @@ pub enum Peripheral {
     Climate {
         climate: Climate,
         read_interval: Duration,
-        last_read: Option<Instant>,
+        next_read: Instant,
+        failures: u8,
     },
     Buzzer(Buzzer),
     IrReceiver(IrReceiver),
@@ -100,7 +101,8 @@ fn mount_one(
         } => Peripheral::Climate {
             climate: Climate::new(PinDriver::input_output_od(pin(), Pull::Floating)?)?,
             read_interval: Duration::from_secs((*read_interval_seconds).into()),
-            last_read: None,
+            next_read: Instant::now(),
+            failures: 0,
         },
         Driver::Buzzer => Peripheral::Buzzer(Buzzer::new(PinDriver::output(pin())?)?),
         Driver::IrReceiver => Peripheral::IrReceiver(IrReceiver::new(pin())?),

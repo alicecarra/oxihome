@@ -22,6 +22,10 @@ const TEMPERATURE_CHANNEL: u8 = 0;
 const HUMIDITY_CHANNEL: u8 = 1;
 /// Time for the `Ack` to leave before a restart.
 const RESTART_DELAY: Duration = Duration::from_secs(1);
+/// After a failed DHT11 read, the next try comes this soon instead of after the read interval.
+const CLIMATE_RETRY: Duration = Duration::from_secs(2);
+/// Failed reads in a row before the hub hears of it; the tries go back to the read interval.
+const CLIMATE_FAILURES_REPORTED: u8 = 5;
 
 /// The board's peripherals as `oxihome-node` sees them.
 pub struct Board {
@@ -120,13 +124,27 @@ impl<T: Transport> Node<T> {
                 Peripheral::Climate {
                     climate,
                     read_interval,
-                    last_read,
+                    next_read,
+                    failures,
                 } => {
-                    if last_read.is_none_or(|last| last.elapsed() >= *read_interval) {
-                        *last_read = Some(Instant::now());
-                        // A failed read sends nothing.
+                    if Instant::now() >= *next_read {
                         if climate.read().is_some() {
+                            *failures = 0;
+                            *next_read = Instant::now() + *read_interval;
                             outcomes.push(Outcome::State(id));
+                        } else {
+                            *failures = failures.saturating_add(1);
+                            let retry = if *failures < CLIMATE_FAILURES_REPORTED {
+                                CLIMATE_RETRY
+                            } else {
+                                *read_interval
+                            };
+                            *next_read = Instant::now() + retry;
+                            if *failures == CLIMATE_FAILURES_REPORTED {
+                                outcomes.push(Outcome::Error(format!(
+                                    "entity {id}: DHT11 not responding ({failures} reads failed)"
+                                )));
+                            }
                         }
                     }
                 }
@@ -169,6 +187,7 @@ impl<T: Transport> Node<T> {
                     self.send(message);
                 }
                 Outcome::State(entity) => self.send_state(entity),
+                Outcome::Error(detail) => self.send_error(ErrorCode::Internal, detail),
                 Outcome::Toggle(entity) => {
                     if let Some((pin, _)) = self.board.output(entity) {
                         match pin.toggle() {
@@ -245,6 +264,7 @@ enum Outcome {
     Event(u8, EventKind, Option<Value>),
     State(u8),
     Toggle(u8),
+    Error(String),
 }
 
 impl Board {
