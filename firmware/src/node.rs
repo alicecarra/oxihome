@@ -391,6 +391,9 @@ impl Device for Board {
                     .set(parameter, *value)
                     .map_err(|error| internal("NVS", &error))?;
                 log::info!("{:?} = {value}", parameter.channel);
+                if parameter == management::WIFI_POWER_SAVE {
+                    crate::wifi::set_power_save(*value);
+                }
                 Ok(())
             }
             (management::ENTITY, CommandOp::Invoke(Some(Value::Text(url))))

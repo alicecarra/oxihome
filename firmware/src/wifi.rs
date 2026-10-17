@@ -12,6 +12,7 @@ pub fn connect(
     nvs: EspDefaultNvsPartition,
     ssid: &str,
     password: &str,
+    power_save: i32,
 ) -> anyhow::Result<Wifi> {
     let mut wifi = BlockingWifi::wrap(
         EspWifi::new(modem, event_loop.clone(), Some(nvs))?,
@@ -29,6 +30,7 @@ pub fn connect(
     }))?;
 
     wifi.start()?;
+    set_power_save(power_save);
     match wifi.connect().and_then(|()| wifi.wait_netif_up()) {
         Ok(()) => {
             let ip = wifi.wifi().sta_netif().get_ip_info()?.ip;
@@ -50,6 +52,19 @@ pub fn ensure_connected(wifi: &mut Wifi) {
             }
         }
         Err(error) => log::warn!("Wi-Fi state unknown: {error}"),
+    }
+}
+
+/// The `WifiPowerSave` parameter: 0 off, 1 light, 2 maximum. A failure only leaves a warning.
+pub fn set_power_save(mode: i32) {
+    use esp_idf_svc::sys::*;
+    let mode = match mode {
+        0 => wifi_ps_type_t_WIFI_PS_NONE,
+        1 => wifi_ps_type_t_WIFI_PS_MIN_MODEM,
+        _ => wifi_ps_type_t_WIFI_PS_MAX_MODEM,
+    };
+    if let Err(error) = esp!(unsafe { esp_wifi_set_ps(mode) }) {
+        log::warn!("Wi-Fi power save not changed: {error}");
     }
 }
 

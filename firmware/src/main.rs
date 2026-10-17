@@ -20,7 +20,7 @@ use esp_idf_svc::hal::delay::FreeRtos;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::hal::task::watchdog::{TWDTConfig, TWDTDriver};
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
-use oxihome_protocol::management::{HEARTBEAT_INTERVAL, WIFI_CHECK_INTERVAL};
+use oxihome_protocol::management::{HEARTBEAT_INTERVAL, WIFI_CHECK_INTERVAL, WIFI_POWER_SAVE};
 
 use config::CONFIG;
 use node::{Board, Node};
@@ -76,6 +76,7 @@ fn run() -> anyhow::Result<()> {
         nvs,
         CONFIG.wifi_ssid,
         CONFIG.wifi_password,
+        settings.get(WIFI_POWER_SAVE),
     )?;
     let transport = MqttTransport::new(CONFIG.mqtt_url, &device_id, CONFIG.mqtt_password)?;
     let board = Board {
