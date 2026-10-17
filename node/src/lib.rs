@@ -16,6 +16,17 @@ use oxihome_protocol::{
 
 pub use validation::Rejection;
 
+/// Ctrl+C, or `SIGTERM` from `docker stop` or systemd.
+#[cfg(feature = "mqtt")]
+pub async fn shutdown_signal() {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("installing the SIGTERM handler");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = terminate.recv() => {}
+    }
+}
+
 /// The part each node writes: what it has and what it does.
 pub trait Device {
     /// Declared in the `Hello`; commands are checked against it before reaching [`Device::command`].
@@ -172,6 +183,15 @@ impl NodeCore {
             },
             None,
         )
+    }
+
+    /// The `Error` answering a message that could not be read, so it has no id to reply to.
+    pub fn invalid_message(&mut self, detail: String) -> Message {
+        let payload = Payload::Error {
+            code: ErrorCode::InvalidMessage.into(),
+            detail: Some(detail),
+        };
+        self.message(payload, None)
     }
 
     /// Numbers a payload as the next message from this node.

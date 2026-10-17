@@ -20,6 +20,10 @@ pub trait SoftwareNode: Send + 'static {
     /// The answers to a message from the hub.
     fn handle(&mut self, message: &Message) -> Vec<Message>;
 
+    /// The answer to a message that could not be read, usually
+    /// [`crate::NodeCore::invalid_message`].
+    fn invalid_message(&mut self, detail: String) -> Vec<Message>;
+
     /// Sent after every connection: the `Hello` and the states.
     fn announcement(&mut self) -> Vec<Message>;
 
@@ -131,13 +135,7 @@ async fn run<N: SoftwareNode>(
                         node.announcement()
                     }
                     Ok(Event::Incoming(Packet::Publish(publish))) => {
-                        match Message::from_json(&String::from_utf8_lossy(&publish.payload)) {
-                            Ok(message) => node.handle(&message),
-                            Err(error) => {
-                                println!("{device_id} invalid message: {error}");
-                                Vec::new()
-                            }
-                        }
+                        answer(&mut node, &publish.payload)
                     }
                     Ok(_) => Vec::new(),
                     Err(error) => {
@@ -169,6 +167,16 @@ async fn run<N: SoftwareNode>(
         };
         if !disconnected || !wait_for_connect(&mut node, &device_id, &mut controls).await {
             return;
+        }
+    }
+}
+
+fn answer<N: SoftwareNode>(node: &mut N, payload: &[u8]) -> Vec<Message> {
+    match Message::from_json(&String::from_utf8_lossy(payload)) {
+        Ok(message) => node.handle(&message),
+        Err(error) => {
+            println!("{} invalid message: {error}", node.device_id());
+            node.invalid_message(error.to_string())
         }
     }
 }
@@ -215,9 +223,10 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use oxihome_protocol::Payload;
+    use oxihome_protocol::{Build, ErrorCode, Payload};
 
     use super::*;
+    use crate::NodeCore;
 
     struct CountingNode {
         reports: Arc<AtomicUsize>,
@@ -229,6 +238,10 @@ mod tests {
         }
 
         fn handle(&mut self, _message: &Message) -> Vec<Message> {
+            Vec::new()
+        }
+
+        fn invalid_message(&mut self, _detail: String) -> Vec<Message> {
             Vec::new()
         }
 
@@ -263,5 +276,49 @@ mod tests {
         assert!(reports.load(Ordering::Relaxed) > 20);
         assert!(!handle.is_connected());
         assert!(handle.act(|_| Vec::new()).await);
+    }
+
+    struct EmptyNode {
+        core: NodeCore,
+    }
+
+    impl SoftwareNode for EmptyNode {
+        fn device_id(&self) -> &str {
+            self.core.device_id()
+        }
+
+        fn handle(&mut self, _message: &Message) -> Vec<Message> {
+            Vec::new()
+        }
+
+        fn invalid_message(&mut self, detail: String) -> Vec<Message> {
+            vec![self.core.invalid_message(detail)]
+        }
+
+        fn announcement(&mut self) -> Vec<Message> {
+            Vec::new()
+        }
+
+        fn report(&mut self) -> Vec<Message> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn answers_an_invalid_message_with_an_error() {
+        let mut node = EmptyNode {
+            core: NodeCore::new("empty", Build::new("test", "1.0.0", "test")),
+        };
+        let answers = answer(&mut node, b"not json");
+        let [message] = answers.as_slice() else {
+            panic!("expected one answer, got {answers:?}");
+        };
+        assert_eq!(message.src, "empty");
+        assert_eq!(message.dst, None);
+        assert_eq!(message.reply_to, None);
+        assert!(matches!(
+            &message.payload,
+            Payload::Error { code, detail: Some(_) } if *code == u16::from(ErrorCode::InvalidMessage)
+        ));
     }
 }
