@@ -117,6 +117,8 @@ pub struct RuleOverview {
     pub next_run: Option<String>,
     /// How long ago it ran and the errors of the actions that failed.
     pub last_run: Option<(Duration, Vec<String>)>,
+    /// Its actions have not finished, e.g. during a wait.
+    pub running: bool,
 }
 
 /// What the dashboard's `rules` block lists.
@@ -509,41 +511,45 @@ pub fn failing_rules(hub: &Hub) -> usize {
 pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
     let rules = hub.rules();
     let mut runs = hub.rule_runs();
+    // Before the snapshot: the stand-ins ask the hub for names, which locks what it holds.
+    let subjects: Vec<Subject> = rules
+        .iter()
+        .map(|rule| Subject::by_hand(&rule.when, hub))
+        .collect();
     let snapshot = hub.snapshot();
     let now = Timestamp::now();
     let local_now = Zoned::now().with_time_zone(hub.time_zone().clone());
     rules
         .into_iter()
-        .map(|rule| {
-            let subject = Subject::by_hand(&rule.when, hub);
-            RuleOverview {
-                trigger: trigger_description(&snapshot.nodes, &snapshot.registry, &rule.when),
-                next_run: rule
-                    .when
-                    .next_run(&local_now)
-                    .filter(|_| rule.enabled)
-                    .map(|run| next_run_description(&local_now, &run)),
-                conditions: rule
-                    .conditions
-                    .iter()
-                    .map(|condition| {
-                        condition_description(&snapshot.nodes, &snapshot.registry, condition)
-                    })
-                    .collect(),
-                actions: rule
-                    .then
-                    .iter()
-                    .map(|action| ActionOverview {
-                        text: action_description(&snapshot.nodes, &snapshot.registry, action),
-                        warning: action_warning(&snapshot.registry, action, &subject),
-                    })
-                    .collect(),
-                last_run: runs
-                    .remove(&rule.name)
-                    .map(|run| (elapsed(run.at, now), run.errors)),
-                name: rule.name,
-                enabled: rule.enabled,
-            }
+        .zip(subjects)
+        .map(|(rule, subject)| RuleOverview {
+            trigger: trigger_description(&snapshot.nodes, &snapshot.registry, &rule.when),
+            next_run: rule
+                .when
+                .next_run(&local_now)
+                .filter(|_| rule.enabled)
+                .map(|run| next_run_description(&local_now, &run)),
+            conditions: rule
+                .conditions
+                .iter()
+                .map(|condition| {
+                    condition_description(&snapshot.nodes, &snapshot.registry, condition)
+                })
+                .collect(),
+            actions: rule
+                .then
+                .iter()
+                .map(|action| ActionOverview {
+                    text: action_description(&snapshot.nodes, &snapshot.registry, action),
+                    warning: action_warning(&snapshot.registry, action, &subject),
+                })
+                .collect(),
+            last_run: runs
+                .remove(&rule.name)
+                .map(|run| (elapsed(run.at, now), run.errors)),
+            running: hub.running().includes(&rule.name),
+            name: rule.name,
+            enabled: rule.enabled,
         })
         .collect()
 }
@@ -807,6 +813,7 @@ fn action_description(nodes: &Nodes, registry: &Registry, action: &Action) -> St
             }
         }
         Action::Notify { title, message } => format!("Notify \"{title}\": {message}"),
+        Action::Wait(time) => format!("Wait {time}"),
     }
 }
 
@@ -886,6 +893,26 @@ pub fn channel_name(
 mod tests {
     use super::*;
     use oxihome_protocol::EventKind;
+
+    #[tokio::test]
+    async fn the_rules_page_does_not_lock_itself() {
+        let hub = Hub::for_tests(
+            "overview-rules",
+            r#"
+            [[rules]]
+            name = "Hot"
+            when = { device = "board", entity = 3, channel = 0, above = 28 }
+            then = [{ notify = { title = "{node}", message = "{channel} at {value}" } }]
+            "#,
+        )
+        .await;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || sender.send(rules(&hub).len()).unwrap());
+        assert_eq!(
+            receiver.recv_timeout(std::time::Duration::from_secs(5)),
+            Ok(1)
+        );
+    }
 
     const NAMES: &str = r#"
         [nodes."esp32-test"]

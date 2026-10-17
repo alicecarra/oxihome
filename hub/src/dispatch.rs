@@ -170,7 +170,7 @@ fn on_node_event(hub: &Arc<Hub>, node_event: &NodeEvent) {
 
 fn spawn_rules(hub: &Arc<Hub>, matched: Vec<Rule>, subject: Subject) {
     for rule in matched {
-        tokio::spawn(rules::run(hub.clone(), rule, subject.clone()));
+        rules::start(hub.clone(), rule, subject.clone());
     }
 }
 
@@ -181,29 +181,57 @@ mod tests {
     use oxihome_protocol::{Build, Value};
 
     use super::*;
-    use crate::config::HomeConfig;
     use crate::hub::CommandOrigin;
-    use crate::mqtt::Mqtt;
-    use crate::storage::{Restored, Storage};
 
-    async fn hub() -> Arc<Hub> {
-        let directory =
-            std::env::temp_dir().join(format!("oxihome-dispatch-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&directory);
-        std::fs::create_dir_all(&directory).unwrap();
-        let (storage, _) = Storage::open(&directory.join("hub.sqlite"), Duration::from_secs(3600))
-            .await
-            .unwrap();
-        Arc::new(Hub::new(
-            Mqtt::offline(),
-            3,
-            directory.clone(),
-            HomeConfig::load(&directory).unwrap(),
-            jiff::tz::TimeZone::UTC,
-            storage,
-            Restored::default(),
-            None,
-        ))
+    #[tokio::test]
+    async fn a_rule_waits_and_ignores_triggers_while_running() {
+        let hub = Hub::for_tests("waits", "").await;
+        let rule: Rule = toml::from_str(
+            r#"
+            name = "Waits"
+            when = { button = "Go" }
+            then = [
+                { notify = { title = "First", message = "" } },
+                { wait = "200ms" },
+                { notify = { title = "Second", message = "" } },
+            ]
+            "#,
+        )
+        .unwrap();
+        let titles = || -> Vec<String> {
+            hub.notifications_since(0)
+                .into_iter()
+                .map(|notification| notification.title)
+                .collect()
+        };
+        let rules::Start::Started(actions) =
+            rules::start(hub.clone(), rule.clone(), Subject::default())
+        else {
+            panic!("the rule starts");
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(titles(), ["First"]);
+        assert!(hub.running().includes("Waits"));
+        assert!(matches!(
+            rules::start(hub.clone(), rule.clone(), Subject::default()),
+            rules::Start::Busy
+        ));
+        let other_node = Subject {
+            node: Some("Other".into()),
+            ..Subject::default()
+        };
+        let rules::Start::Started(other) = rules::start(hub.clone(), rule.clone(), other_node)
+        else {
+            panic!("another node is another run");
+        };
+        actions.await.unwrap();
+        other.await.unwrap();
+        assert_eq!(titles(), ["First", "First", "Second", "Second"]);
+        assert!(!hub.running().includes("Waits"));
+        assert!(matches!(
+            rules::start(hub.clone(), rule, Subject::default()),
+            rules::Start::Started(_)
+        ));
     }
 
     fn hello(device_id: &str) -> Message {
@@ -223,7 +251,7 @@ mod tests {
 
     #[tokio::test]
     async fn answers_and_presence() {
-        let hub = hub().await;
+        let hub = Hub::for_tests("answers", "").await;
         on_message(&hub, &hello("lamp")).await.unwrap();
         on_message(&hub, &hello("other")).await.unwrap();
 

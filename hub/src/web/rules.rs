@@ -15,7 +15,7 @@ use crate::components::badge::{BadgeVariant, badge};
 use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::card::{card, card_content, card_header, card_title};
 use crate::components::switch::switch;
-use crate::config::rules::{Subject, run};
+use crate::config::rules::{Action, Start, Subject, start};
 use crate::hub::Hub;
 
 #[page("/rules")]
@@ -71,7 +71,7 @@ pub async fn rules(cx: &Cx) -> Result<impl View> {
 #[component]
 async fn rule_card(rule: RuleOverview) -> Result<impl View> {
     // The key is what the filter matches, in `data-status`.
-    let (variant, status, key) = if !rule.enabled {
+    let (mut variant, mut status, key) = if !rule.enabled {
         (BadgeVariant::Muted, "disabled".to_string(), "disabled")
     } else {
         match &rule.last_run {
@@ -88,6 +88,10 @@ async fn rule_card(rule: RuleOverview) -> Result<impl View> {
             ),
         }
     };
+    // The filter still goes by the last run.
+    if rule.running {
+        (variant, status) = (BadgeVariant::Primary, "running".to_string());
+    }
     let errors = rule.last_run.map(|(_, errors)| errors).unwrap_or_default();
     Ok(view! {
         card(
@@ -260,7 +264,7 @@ struct RunForm {
 }
 
 /// Runs the rule as its trigger would, conditions included, and answers with its card once the
-/// actions are done; a skip shows in `#status` out of band.
+/// actions are done, or right away for a rule that waits; a skip shows in `#status` out of band.
 #[route(POST "/rules/run")]
 pub async fn run_now(cx: &Cx, Form(form): Form<RunForm>) -> Result<ViewHandle> {
     let hub: &Arc<Hub> = app_context(cx);
@@ -273,20 +277,30 @@ pub async fn run_now(cx: &Cx, Form(form): Form<RunForm>) -> Result<ViewHandle> {
             "text-destructive",
             Some(format!("No enabled rule is named \"{}\"", form.name)),
         ),
-        Some(rule) => (
-            "text-muted-foreground",
-            {
-                let subject = Subject::by_hand(&rule.when, hub.as_ref());
-                run(hub.clone(), rule, subject).await
-            }
-            .map(|condition| {
-                format!(
+        Some(rule) => {
+            let waits = rule
+                .then
+                .iter()
+                .any(|action| matches!(action, Action::Wait(_)));
+            let subject = Subject::by_hand(&rule.when, hub.as_ref());
+            let message = match start(hub.clone(), rule, subject) {
+                Start::Started(actions) if !waits => {
+                    let _ = actions.await;
+                    None
+                }
+                Start::Started(_) => Some(format!(
+                    "{}: running; reload to see how it ended",
+                    form.name
+                )),
+                Start::Skipped(condition) => Some(format!(
                     "{}: skipped, \"{}\" does not hold",
                     form.name,
                     overview::condition(hub, &condition)
-                )
-            }),
-        ),
+                )),
+                Start::Busy => Some(format!("{}: still running", form.name)),
+            };
+            ("text-muted-foreground", message)
+        }
     };
     let rule = overview::rules(hub)
         .into_iter()

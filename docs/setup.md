@@ -406,6 +406,12 @@ previous configuration stays in use.
   options. "Run now" on `/rules` fills them with stand-ins ("any node", "a channel", "run by
   hand", the limit for `{value}`), or the node's name when the trigger names one; `/rules` checks
   an `invoke`'s text against the channel with those stand-ins.
+  `{ wait = "2s" }` between actions pauses the rule (`"500ms"`, `"1m 30s"`; more than zero, at
+  most 30 minutes), e.g. to give a receiver time to turn on before choosing its input; a hub
+  restart during the wait drops the rest. While a rule's actions run, the same rule firing again
+  about the same node and channel is ignored ("still running" in the log), so a double press
+  does not send the IR codes twice; another node, as with `offline = "*"`, still runs. "Run now"
+  on a rule with a wait answers right away and its card shows "running" until it ends.
   `enabled = false` turns a rule off. Triggers:
   - an event of a channel: `when = { device = "...", entity = 2, channel = 0, event = "Press" }`;
     `data = "NEC 00 52"` also requires the event's text to be exactly that (a held key's

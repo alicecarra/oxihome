@@ -16,7 +16,7 @@ use crate::commands::Commands;
 use crate::config::dashboard::{Dashboard, Dashboards};
 use crate::config::nodes::{NameTarget, NodeEdits, Nodes};
 use crate::config::remotes::Remotes;
-use crate::config::rules::{Rule, RuleRun, RuleUse, Rules};
+use crate::config::rules::{Rule, RuleRun, RuleUse, Rules, Running};
 use crate::config::{ConfigFile, FILES, HomeConfig, read_file, write_file};
 use crate::mqtt::Mqtt;
 use crate::node::events::{EventRecord, Events};
@@ -99,6 +99,7 @@ pub struct Hub {
     rules: Mutex<Rules>,
     /// Last run of each rule, by name.
     rule_runs: Mutex<HashMap<String, RuleRun>>,
+    running: Running,
     remotes: Mutex<Remotes>,
     dashboards: Mutex<Dashboards>,
     /// Newest first, without repeats of held keys.
@@ -167,6 +168,7 @@ impl Hub {
             nodes: Mutex::new(config.nodes),
             rules: Mutex::new(config.rules),
             rule_runs: Mutex::new(restored.rule_runs.into_iter().collect()),
+            running: Running::default(),
             remotes: Mutex::new(config.remotes),
             dashboards: Mutex::new(config.dashboards),
             recent_codes: Mutex::new(recent_codes),
@@ -433,6 +435,33 @@ impl Hub {
 
     /// Everything the web interface reads, locked together in one fixed order (the same as
     /// `handle`), so readers and the MQTT loop cannot deadlock.
+    /// A hub with no broker, its files in a fresh temporary directory named after `name`, and
+    /// `rules` as its rules.toml.
+    #[cfg(test)]
+    pub async fn for_tests(name: &str, rules: &str) -> Arc<Hub> {
+        let directory =
+            std::env::temp_dir().join(format!("oxihome-hub-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("rules.toml"), rules).unwrap();
+        let (storage, _) = crate::storage::Storage::open(
+            &directory.join("hub.sqlite"),
+            std::time::Duration::from_secs(3600),
+        )
+        .await
+        .unwrap();
+        Arc::new(Hub::new(
+            Mqtt::offline(),
+            3,
+            directory.clone(),
+            HomeConfig::load(&directory).unwrap(),
+            TimeZone::UTC,
+            storage,
+            crate::storage::Restored::default(),
+            None,
+        ))
+    }
+
     pub fn snapshot(&self) -> Snapshot<'_> {
         Snapshot {
             state: self.state.lock().unwrap(),
@@ -746,6 +775,10 @@ impl Hub {
             .write(Write::RuleRun(name.to_string(), run.clone()));
         self.rule_runs.lock().unwrap().insert(name.to_string(), run);
         self.announce(Change::Timeline);
+    }
+
+    pub fn running(&self) -> &Running {
+        &self.running
     }
 
     pub fn rule_runs(&self) -> HashMap<String, RuleRun> {

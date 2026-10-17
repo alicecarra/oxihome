@@ -1,10 +1,12 @@
+use std::collections::HashSet;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::bail;
-use jiff::Timestamp;
+use jiff::{SignedDuration, Timestamp};
 use oxihome_protocol::Value;
 use serde::Deserialize;
+use tokio::task::JoinHandle;
 
 use super::{
     Condition, EventTrigger, Limit, OfflineTrigger, Rule, RuleRun, ThresholdTrigger,
@@ -40,6 +42,37 @@ pub enum Action {
         title: String,
         message: String,
     },
+    /// Pauses before the next action.
+    Wait(WaitTime),
+}
+
+/// `wait = "2s"`, `"500ms"`, `"1m 30s"`: more than zero, at most 30 minutes.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(try_from = "String")]
+pub struct WaitTime(SignedDuration);
+
+const LONGEST_WAIT: SignedDuration = SignedDuration::from_mins(30);
+
+impl TryFrom<String> for WaitTime {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Self, String> {
+        let duration: SignedDuration = text
+            .parse()
+            .map_err(|error| format!("wait \"{text}\": {error}"))?;
+        if duration <= SignedDuration::ZERO || duration > LONGEST_WAIT {
+            return Err(format!(
+                "wait \"{text}\": must be more than zero and at most 30 minutes"
+            ));
+        }
+        Ok(Self(duration))
+    }
+}
+
+impl fmt::Display for WaitTime {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(formatter, "{:#}", self.0)
+    }
 }
 
 impl fmt::Display for Action {
@@ -69,6 +102,7 @@ impl fmt::Display for Action {
                 value: None,
             } => write!(formatter, "invoke {device} {entity}/{channel}"),
             Action::Notify { title, .. } => write!(formatter, "notify \"{title}\""),
+            Action::Wait(time) => write!(formatter, "wait {time}"),
         }
     }
 }
@@ -284,9 +318,28 @@ pub fn check_placeholders(text: &str, available: &[&str]) -> Result<(), String> 
     Ok(())
 }
 
-/// Runs the actions in order when every condition holds; a failed action does not stop the
-/// next ones. Returns the condition that did not hold when it skips the rule.
-pub async fn run(hub: Arc<Hub>, rule: Rule, subject: Subject) -> Option<Condition> {
+/// How starting a rule went.
+pub enum Start {
+    /// The actions run in the background; the handle ends with them.
+    Started(JoinHandle<()>),
+    /// This condition did not hold.
+    Skipped(Condition),
+    /// The rule is still running about the same node and channel.
+    Busy,
+}
+
+/// Starts the actions in order when every condition holds and the rule is not still running
+/// about the same node and channel; a failed action does not stop the next ones.
+pub fn start(hub: Arc<Hub>, rule: Rule, subject: Subject) -> Start {
+    let key = RunKey {
+        rule: rule.name.clone(),
+        node: subject.node.clone(),
+        channel: subject.channel.clone(),
+    };
+    let Some(guard) = hub.running().claim(key) else {
+        println!("rule \"{}\": still running, ignored", rule.name);
+        return Start::Busy;
+    };
     let at = Timestamp::now();
     let now = at.to_zoned(hub.time_zone().clone()).datetime();
     if let Some(condition) = rule
@@ -295,25 +348,68 @@ pub async fn run(hub: Arc<Hub>, rule: Rule, subject: Subject) -> Option<Conditio
         .find(|condition| !condition.holds(now, hub.as_ref()))
     {
         println!("rule \"{}\": skipped, {condition} does not hold", rule.name);
-        return Some(condition.clone());
+        return Start::Skipped(condition.clone());
     }
-    let mut errors = Vec::new();
-    for action in &rule.then {
-        match perform(&hub, action, &rule.name, &subject).await {
-            Ok(outcome) => println!("rule \"{}\": {action} -> {outcome}", rule.name),
-            Err(error) => {
-                println!("rule \"{}\": {action} failed: {error}", rule.name);
-                hub.notify(
-                    "Rule failed".into(),
-                    format!("{}: {action}: {error}", rule.name),
-                    rule.name.clone(),
-                );
-                errors.push(format!("{action}: {error}"));
+    Start::Started(tokio::spawn(async move {
+        let _guard = guard;
+        let mut errors = Vec::new();
+        for action in &rule.then {
+            match perform(&hub, action, &rule.name, &subject).await {
+                Ok(outcome) => println!("rule \"{}\": {action} -> {outcome}", rule.name),
+                Err(error) => {
+                    println!("rule \"{}\": {action} failed: {error}", rule.name);
+                    hub.notify(
+                        "Rule failed".into(),
+                        format!("{}: {action}: {error}", rule.name),
+                        rule.name.clone(),
+                    );
+                    errors.push(format!("{action}: {error}"));
+                }
             }
         }
+        hub.record_rule_run(&rule.name, RuleRun { at, errors });
+    }))
+}
+
+/// Rule runs that have not finished, by rule and what they run about.
+#[derive(Default, Clone)]
+pub struct Running(Arc<Mutex<HashSet<RunKey>>>);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RunKey {
+    rule: String,
+    node: Option<String>,
+    channel: Option<String>,
+}
+
+impl Running {
+    /// `None` while the same run has not finished.
+    fn claim(&self, key: RunKey) -> Option<RunningGuard> {
+        self.0
+            .lock()
+            .unwrap()
+            .insert(key.clone())
+            .then(|| RunningGuard {
+                running: self.clone(),
+                key,
+            })
     }
-    hub.record_rule_run(&rule.name, RuleRun { at, errors });
-    None
+
+    pub fn includes(&self, rule: &str) -> bool {
+        self.0.lock().unwrap().iter().any(|key| key.rule == rule)
+    }
+}
+
+/// Ends the run when dropped, also when its task panics.
+struct RunningGuard {
+    running: Running,
+    key: RunKey,
+}
+
+impl Drop for RunningGuard {
+    fn drop(&mut self) {
+        self.running.0.lock().unwrap().remove(&self.key);
+    }
 }
 
 /// Returns what happened, for the log.
@@ -324,6 +420,10 @@ async fn perform(
     subject: &Subject,
 ) -> anyhow::Result<String> {
     let (device, entity, channel, value) = match action {
+        Action::Wait(WaitTime(duration)) => {
+            tokio::time::sleep(duration.unsigned_abs()).await;
+            return Ok("done".into());
+        }
         Action::Notify { title, message } => {
             hub.notify(
                 subject.fill(title),
@@ -399,6 +499,42 @@ mod tests {
                 other => format!("{other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn wait_takes_a_short_friendly_duration() {
+        let wait = |text: &str| WaitTime::try_from(text.to_string());
+        assert_eq!(wait("2s").unwrap().to_string(), "2s");
+        assert_eq!(wait("500ms").unwrap().to_string(), "500ms");
+        assert_eq!(wait("1m 30s").unwrap().to_string(), "1m 30s");
+        assert!(wait("30m").is_ok());
+        assert!(wait("31m").unwrap_err().contains("at most 30 minutes"));
+        assert!(wait("0s").unwrap_err().contains("more than zero"));
+        assert!(wait("soon").unwrap_err().starts_with("wait \"soon\""));
+        let actions: Vec<Action> = toml::from_str::<toml::Table>(r#"then = [{ wait = "2s" }]"#)
+            .unwrap()
+            .remove("then")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        assert_eq!(actions[0].to_string(), "wait 2s");
+    }
+
+    #[test]
+    fn a_run_holds_its_rule_node_and_channel() {
+        let running = Running::default();
+        let key = |node: &str| RunKey {
+            rule: "R".into(),
+            node: Some(node.into()),
+            channel: None,
+        };
+        let first = running.claim(key("a")).unwrap();
+        assert!(running.claim(key("a")).is_none());
+        assert!(running.claim(key("b")).is_some());
+        assert!(running.includes("R"));
+        drop(first);
+        assert!(!running.includes("R"));
+        assert!(running.claim(key("a")).is_some());
     }
 
     #[test]

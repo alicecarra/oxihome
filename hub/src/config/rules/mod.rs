@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 pub use condition::{ChannelCondition, Condition, Expected, HomeState, ValueTest};
 pub use editing::with_rule_enabled;
-pub use run::{Action, Subject, has_placeholders, run};
+pub use run::{Action, Running, Start, Subject, has_placeholders, start};
 pub use trigger::{
     CronTrigger, Day, EventTrigger, Limit, OfflineTrigger, ScheduleTrigger, ThresholdTrigger,
     TrafficTrigger, Trigger,

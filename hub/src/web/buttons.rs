@@ -75,7 +75,7 @@ pub async fn press(cx: &Cx, Form(form): Form<PressForm>) -> Result<ViewHandle> {
     let none = rule.is_none();
     if let Some(rule) = rule {
         println!("button {}: rule {}", form.button, rule.name);
-        tokio::spawn(rules::run(hub.clone(), rule, rules::Subject::default()));
+        rules::start(hub.clone(), rule, rules::Subject::default());
     }
 
     view! { cx =>

@@ -33,6 +33,7 @@ when = { button = "Turn on TV" }
 then = [
     { invoke = { device = "esp32-14335c2e7270", entity = 3, channel = 0, value = "RC6 00 0C" } },
     { invoke = { device = "esp32-14335c2e7270", entity = 3, channel = 0, value = "SONY15 30 15" } },
+    { wait = "2s" },
     { invoke = { device = "esp32-14335c2e7270", entity = 3, channel = 0, value = "SONY15 30 6A" } },
 ]
 
@@ -202,6 +203,7 @@ name = "Sim: button toggles the bedroom lamp"
 when = { device = "sim-living-room", entity = 2, channel = 0, event = "Press" }
 then = [
     { toggle = { device = "sim-bedroom", entity = 1, channel = 0 } },
+    { wait = "5s" },
     { invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} › {channel} pressed" } },
 ]
 
