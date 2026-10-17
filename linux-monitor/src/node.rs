@@ -75,6 +75,10 @@ impl SoftwareNode for MonitorNode {
         self.core.handle(&mut self.device, message)
     }
 
+    fn invalid_message(&mut self, detail: String) -> Vec<Message> {
+        vec![self.core.invalid_message(detail)]
+    }
+
     /// Reads the machine first on the first connection, so the hub gets values with the `Hello`.
     fn announcement(&mut self) -> Vec<Message> {
         if self.device.sample.is_none() {

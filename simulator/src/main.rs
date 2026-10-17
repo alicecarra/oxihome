@@ -104,7 +104,13 @@ async fn main() -> anyhow::Result<()> {
 
     println!("{HELP}");
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
-    while let Some(line) = lines.next_line().await? {
+    let mut shutdown = std::pin::pin!(oxihome_node::shutdown_signal());
+    loop {
+        let line = tokio::select! {
+            line = lines.next_line() => line?,
+            () = &mut shutdown => break,
+        };
+        let Some(line) = line else { break };
         let words: Vec<&str> = line.split_whitespace().collect();
         let (device_id, control) = match words.as_slice() {
             [] => continue,

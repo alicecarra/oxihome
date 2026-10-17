@@ -66,7 +66,7 @@ async fn main() -> anyhow::Result<()> {
     loop {
         tokio::select! {
             _ = fetch.tick() => {}
-            _ = tokio::signal::ctrl_c() => return Ok(()),
+            () = oxihome_node::shutdown_signal() => return Ok(()),
         }
 
         match open_meteo::fetch(&client, config.location.latitude, config.location.longitude).await

@@ -114,6 +114,6 @@ async fn main() -> anyhow::Result<()> {
             queue_size: config.mqtt.queue_size.unwrap_or(mqtt::DEFAULT_QUEUE_SIZE),
         },
     );
-    tokio::signal::ctrl_c().await?;
+    oxihome_node::shutdown_signal().await;
     Ok(())
 }

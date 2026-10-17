@@ -1826,7 +1826,7 @@ dependencies = [
 
 [[package]]
 name = "oxihome-linux-monitor"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "jiff",
@@ -1841,7 +1841,7 @@ dependencies = [
 
 [[package]]
 name = "oxihome-network-devices"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "jiff",
@@ -1871,7 +1871,7 @@ dependencies = [
 
 [[package]]
 name = "oxihome-rss"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "feed-rs",
@@ -1888,7 +1888,7 @@ dependencies = [
 
 [[package]]
 name = "oxihome-simulator"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "oxihome-node",
@@ -1900,7 +1900,7 @@ dependencies = [
 
 [[package]]
 name = "oxihome-telegram"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "oxihome-node",
@@ -1913,7 +1913,7 @@ dependencies = [
 
 [[package]]
 name = "oxihome-weather"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "oxihome-node",

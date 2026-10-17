@@ -87,7 +87,7 @@ async fn main() -> anyhow::Result<()> {
     loop {
         tokio::select! {
             _ = scan.tick() => {}
-            _ = tokio::signal::ctrl_c() => return Ok(()),
+            () = oxihome_node::shutdown_signal() => return Ok(()),
         }
 
         if let Err(error) = scan::probe(subnet) {
@@ -96,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
         }
         tokio::select! {
             _ = tokio::time::sleep(SETTLE_TIME) => {}
-            _ = tokio::signal::ctrl_c() => return Ok(()),
+            () = oxihome_node::shutdown_signal() => return Ok(()),
         }
         let answered = match scan::answered(subnet) {
             Ok(answered) => answered,

@@ -110,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
     };
     tokio::select! {
         _ = bot::poll(bot, settings, handle) => {}
-        _ = tokio::signal::ctrl_c() => {}
+        () = oxihome_node::shutdown_signal() => {}
     }
     Ok(())
 }

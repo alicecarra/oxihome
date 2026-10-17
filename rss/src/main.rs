@@ -140,7 +140,7 @@ async fn main() -> anyhow::Result<()> {
             handle.clone(),
         ));
     }
-    tokio::signal::ctrl_c().await?;
+    oxihome_node::shutdown_signal().await;
     Ok(())
 }
 

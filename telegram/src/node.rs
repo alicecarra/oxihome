@@ -94,6 +94,10 @@ impl SoftwareNode for TelegramNode {
         self.core.handle(&mut self.device, message)
     }
 
+    fn invalid_message(&mut self, detail: String) -> Vec<Message> {
+        vec![self.core.invalid_message(detail)]
+    }
+
     fn announcement(&mut self) -> Vec<Message> {
         self.core.announcement(&self.device)
     }
