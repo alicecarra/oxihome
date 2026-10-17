@@ -198,7 +198,7 @@ impl Hub {
                 (&message.payload, &pending.op)
             {
                 updates.extend(state.assume(
-                    &message.src,
+                    &pending.device_id,
                     pending.entity,
                     pending.channel,
                     value.clone(),

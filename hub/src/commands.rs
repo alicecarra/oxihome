@@ -14,6 +14,7 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct PendingCommand {
     answer: oneshot::Sender<Payload>,
+    pub device_id: String,
     pub entity: u8,
     pub channel: u8,
     pub op: CommandOp,
@@ -25,17 +26,20 @@ impl PendingCommand {
     }
 }
 
-/// Commands waiting for their answer, by message id.
+/// Commands waiting for their answer, by device id and message id.
 #[derive(Default)]
 pub struct Commands {
-    pending: Mutex<HashMap<u32, PendingCommand>>,
+    pending: Mutex<HashMap<(String, u32), PendingCommand>>,
 }
 
 impl Commands {
-    /// The pending command `message` answers, if any.
+    /// The pending command `message` answers, if any; only the node the command went to answers it.
     pub fn answered_by(&self, message: &Message) -> Option<PendingCommand> {
         let reply_to = message.reply_to?;
-        self.pending.lock().unwrap().remove(&reply_to)
+        self.pending
+            .lock()
+            .unwrap()
+            .remove(&(message.src.clone(), reply_to))
     }
 
     /// Sends a command and waits for the node's answer.
@@ -49,10 +53,12 @@ impl Commands {
     ) -> anyhow::Result<()> {
         let message_id = mqtt.next_message_id();
         let (answer, receiver) = oneshot::channel();
+        let key = (device_id.to_string(), message_id);
         self.pending.lock().unwrap().insert(
-            message_id,
+            key.clone(),
             PendingCommand {
                 answer,
+                device_id: device_id.to_string(),
                 entity,
                 channel,
                 op: op.clone(),
@@ -65,7 +71,7 @@ impl Commands {
             op,
         };
         if let Err(error) = mqtt.publish(message_id, Some(device_id), payload).await {
-            self.pending.lock().unwrap().remove(&message_id);
+            self.pending.lock().unwrap().remove(&key);
             return Err(error);
         }
 
@@ -80,7 +86,7 @@ impl Commands {
             Ok(Ok(other)) => bail!("unexpected answer from {device_id}: {other:?}"),
             Ok(Err(_)) => bail!("command to {device_id} was dropped"),
             Err(_) => {
-                self.pending.lock().unwrap().remove(&message_id);
+                self.pending.lock().unwrap().remove(&key);
                 bail!("{device_id} did not answer within {} s", TIMEOUT.as_secs())
             }
         }
