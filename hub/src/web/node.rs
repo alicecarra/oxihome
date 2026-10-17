@@ -16,7 +16,7 @@ use topcoat::{
 use super::chart::{CHART_BUCKETS, Chart, ChartRange, chart, history_chart, series};
 use super::format::{
     ago_label, channel_label, duration_label, elapsed, entity_label, query_value, rule_anchor,
-    value_label,
+    unit_symbol, value_label,
 };
 use super::layout::layout;
 use super::nodes::{channel_controls, channel_value, presence_badge, protocol_badge};
@@ -725,17 +725,26 @@ async fn parameter_stat(row: ParameterOverview, editing: bool) -> Result<impl Vi
     let label = match key {
         "heartbeat_interval" => "Heartbeat",
         "wifi_check_interval" => "Wi-Fi check",
+        "wifi_power_save" => "Wi-Fi power save",
         other => other,
+    };
+    let unit = match row.parameter.unit {
+        Some(unit) => format!(" {}", unit_symbol(unit)),
+        None => String::new(),
+    };
+    let range = match key {
+        "wifi_power_save" => "0 off, 1 light, 2 maximum".to_string(),
+        _ => format!("{}–{}{unit}", row.parameter.min, row.parameter.max),
     };
     let pending = row.desired.is_some() && row.desired != row.current;
     let shown = row
         .desired
         .or(row.current)
-        .map_or_else(|| "—".to_string(), |value| format!("{value} s"));
+        .map_or_else(|| "—".to_string(), |value| format!("{value}{unit}"));
     let note = if pending {
         row.current.map_or_else(
             || "node: unknown".to_string(),
-            |value| format!("node: {value} s"),
+            |value| format!("node: {value}{unit}"),
         )
     } else if row.desired.is_none() {
         "node's value".to_string()
@@ -744,7 +753,7 @@ async fn parameter_stat(row: ParameterOverview, editing: bool) -> Result<impl Vi
     };
     Ok(view! {
         <div class="min-w-0">
-            <dt class="text-xs text-muted-foreground" title=(key)>(format!("{label} ({}–{} s)", row.parameter.min, row.parameter.max))</dt>
+            <dt class="text-xs text-muted-foreground" title=(key)>(format!("{label} ({range})"))</dt>
             <dd class="font-medium">
                 if editing {
                     input(attrs: attributes! {

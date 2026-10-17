@@ -1,9 +1,9 @@
 # Each node, by the id from its Hello: friendly names shown on the web interface and the desired
-# operation parameters (seconds), which the hub sets on nodes that report another value.
+# operation parameters, which the hub sets on nodes that report another value.
 # A name here wins over the one the node declares in its Hello; without either, a channel shows its
 # quantity (e.g. Temperature) or "channel N".
-# Parameter ranges: heartbeat_interval 5-300, wifi_check_interval 1-60; a missing one keeps the
-# node's value.
+# Parameter ranges: heartbeat_interval 5-300 s, wifi_check_interval 1-60 s, wifi_power_save 0-2
+# (0 off, 1 light, 2 maximum; boards only); a missing one keeps the node's value.
 # hardware: what is wired to each pin of a board, sent when the board mounts something else (it
 # restarts to apply it); without it the hub leaves the board's hardware alone. Drivers and options:
 # output (inverted = false), button (pull_up = true, toggles = <output entity>),

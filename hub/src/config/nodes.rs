@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use anyhow::{Context, bail};
 use oxihome_protocol::hardware::{Hardware, HardwareEntity};
-use oxihome_protocol::management::{HEARTBEAT_INTERVAL, Parameter, WIFI_CHECK_INTERVAL};
+use oxihome_protocol::management::{
+    HEARTBEAT_INTERVAL, Parameter, WIFI_CHECK_INTERVAL, WIFI_POWER_SAVE,
+};
 use serde::Deserialize;
 use toml_edit::{DocumentMut, InlineTable, Item, Table, TableLike, Value};
 
@@ -38,12 +40,13 @@ struct EntityConfig {
     channels: HashMap<String, String>,
 }
 
-/// In seconds; a missing one keeps the node's value.
+/// A missing one keeps the node's value.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Parameters {
     heartbeat_interval: Option<i32>,
     wifi_check_interval: Option<i32>,
+    wifi_power_save: Option<i32>,
 }
 
 /// An entity as `nodes.toml` names it, with its named channels by id.
@@ -62,9 +65,10 @@ pub enum NameTarget {
 }
 
 /// The `nodes.toml` key of each parameter.
-const PARAMETER_KEYS: [(Parameter, &str); 2] = [
+const PARAMETER_KEYS: [(Parameter, &str); 3] = [
     (HEARTBEAT_INTERVAL, "heartbeat_interval"),
     (WIFI_CHECK_INTERVAL, "wifi_check_interval"),
+    (WIFI_POWER_SAVE, "wifi_power_save"),
 ];
 
 pub fn parameter_key(parameter: Parameter) -> &'static str {
@@ -79,6 +83,7 @@ impl Parameters {
         [
             (HEARTBEAT_INTERVAL, self.heartbeat_interval),
             (WIFI_CHECK_INTERVAL, self.wifi_check_interval),
+            (WIFI_POWER_SAVE, self.wifi_power_save),
         ]
         .into_iter()
         .filter_map(|(parameter, value)| Some((parameter, value?)))
