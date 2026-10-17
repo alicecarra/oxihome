@@ -6,11 +6,13 @@ use serde::Deserialize;
 use topcoat::{
     Result,
     context::{Cx, app_context},
+    icon::icon,
     router::{content::Form, page, route},
     view::{View, ViewExt, ViewHandle, attributes, component, view},
 };
 
 use super::format::{ago_label, elapsed, entity_label};
+use super::icons;
 use super::layout::layout;
 use super::overview;
 use crate::components::badge::{BadgeVariant, badge};
@@ -184,13 +186,14 @@ async fn remotes_content(
             for remote in remotes {
                 card(
                     attrs: attributes! { class="h-full" },
-                    card_header(card_title((remote.name)))
+                    card_header(card_title((remote.name.clone())))
                     card_content(
-                        <dl class="grid grid-cols-[5rem_1fr_auto] items-center gap-x-3 gap-y-2 text-sm group-data-[codes=hidden]:grid-cols-[1fr_auto]">
+                        <dl class="grid grid-cols-[5rem_1fr_auto_auto] items-center gap-x-3 gap-y-2 text-sm group-data-[codes=hidden]:grid-cols-[1fr_auto_auto]">
                             for (key, code) in remote.keys {
-                                <dt class="font-medium">(key)</dt>
+                                <dt class="font-medium">(key.clone())</dt>
                                 <dd class="group-data-[codes=hidden]:hidden"><code class="font-mono text-muted-foreground">(code.clone())</code></dd>
                                 <dd>send_button(code: code, can_send: can_send)</dd>
+                                <dd>remove_button(remote: remote.name.clone(), key: key)</dd>
                             }
                         </dl>
                     )
@@ -318,6 +321,53 @@ pub async fn learn_key(cx: &Cx, Form(form): Form<KeyForm>) -> Result<ViewHandle>
     } else {
         hub.learn_key(remote, key, &form.code)
     };
+
+    view! { cx =>
+        if let Err(error) = result {
+            <pre class="text-sm whitespace-pre-wrap text-destructive">(format!("{error:#}"))</pre>
+        }
+    }
+    .single()
+    .await
+}
+
+#[component]
+async fn remove_button(remote: String, key: String) -> Result<impl View> {
+    Ok(view! {
+        <form
+            hx-post="/remotes/keys/remove"
+            hx-target="#status"
+            hx-confirm=(format!("Remove {key} from {remote}?"))
+            ("hx-on--after-request")="htmx.trigger('#remotes', 'refresh')"
+        >
+            <input type="hidden" name="remote" value=(remote.clone())>
+            <input type="hidden" name="key" value=(key.clone())>
+            button(
+                variant: ButtonVariant::Ghost,
+                size: ButtonSize::Icon,
+                attrs: attributes! {
+                    type="submit"
+                    title="Remove"
+                    aria-label=(format!("Remove {key}"))
+                    class="size-8 text-muted-foreground hover:text-destructive"
+                },
+                icon(data: icons::REMOVE, size: 16)
+            )
+        </form>
+    })
+}
+
+#[derive(Deserialize)]
+struct RemoveKeyForm {
+    remote: String,
+    key: String,
+}
+
+/// Answers with the content of `#status`: empty on success, the error otherwise.
+#[route(POST "/remotes/keys/remove")]
+pub async fn forget_key(cx: &Cx, Form(form): Form<RemoveKeyForm>) -> Result<ViewHandle> {
+    let hub: &Arc<Hub> = app_context(cx);
+    let result = hub.forget_key(&form.remote, &form.key);
 
     view! { cx =>
         if let Err(error) = result {

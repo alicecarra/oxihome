@@ -90,6 +90,7 @@ pub fn router(hub: Arc<Hub>, auth: Auth, listen_host: &str, allowed_hosts: &[Str
         .route(node::start_update)
         .route(home::invoke)
         .route(remotes::learn_key)
+        .route(remotes::forget_key)
         .route(remotes::send_code)
         .route(buttons::press)
         .route(settings::reload)

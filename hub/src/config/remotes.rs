@@ -130,6 +130,28 @@ pub fn with_key(text: &str, remote: &str, key: &str, code: &str) -> anyhow::Resu
     Ok(document.to_string())
 }
 
+/// `remotes.toml` without a key, keeping the file's comments and layout. A remote left with no
+/// keys goes too, so it does not stay as an empty card.
+pub fn without_key(text: &str, remote: &str, key: &str) -> anyhow::Result<String> {
+    let mut document: DocumentMut = text.parse()?;
+    let remotes = document
+        .get_mut("remotes")
+        .and_then(Item::as_table_like_mut)
+        .ok_or_else(|| anyhow::anyhow!("no remote \"{remote}\""))?;
+    let keys = remotes
+        .get_mut(remote)
+        .and_then(|remote| remote.get_mut("keys"))
+        .and_then(Item::as_table_like_mut)
+        .ok_or_else(|| anyhow::anyhow!("no remote \"{remote}\""))?;
+    if keys.remove(key).is_none() {
+        bail!("{remote} has no key \"{key}\"");
+    }
+    if keys.is_empty() {
+        remotes.remove(remote);
+    }
+    Ok(document.to_string())
+}
+
 /// A table that only shows through its subtables, so new remotes read as `[remotes."Name".keys]`.
 fn implicit_table() -> Item {
     let mut table = Table::new();
@@ -235,6 +257,27 @@ mod tests {
         assert_eq!(remotes.code("Kit remote", "up"), Some("NEC 00 18"));
         assert_eq!(remotes.code("TV", "power"), Some("NEC 04 08"));
         assert_eq!(remotes.code("Kit remote", "0"), Some("NEC 00 52"));
+    }
+
+    #[test]
+    fn removed_keys_keep_comments_and_empty_remotes_go() {
+        let text = with_key(EXAMPLE, "TV", "power", "NEC 04 08").unwrap();
+        let text = without_key(&text, "Kit remote", "OK").unwrap();
+        assert!(text.contains("# The kit's 17-key remote."), "{text}");
+        let remotes: Remotes = toml::from_str(&text).unwrap();
+        assert_eq!(remotes.code("Kit remote", "OK"), None);
+        assert_eq!(remotes.code("Kit remote", "0"), Some("NEC 00 52"));
+        let text = without_key(&text, "TV", "power").unwrap();
+        assert!(!text.contains("TV"), "{text}");
+        let remotes: Remotes = toml::from_str(&text).unwrap();
+        assert_eq!(remotes.code("Kit remote", "0"), Some("NEC 00 52"));
+    }
+
+    #[test]
+    fn removing_a_missing_key_is_an_error() {
+        assert!(without_key(EXAMPLE, "Kit remote", "9").is_err());
+        assert!(without_key(EXAMPLE, "TV", "0").is_err());
+        assert!(without_key("", "TV", "0").is_err());
     }
 
     #[test]

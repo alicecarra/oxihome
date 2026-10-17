@@ -669,6 +669,13 @@ impl Hub {
         })
     }
 
+    /// Fails when a rule still uses the key.
+    pub fn forget_key(&self, remote: &str, key: &str) -> anyhow::Result<()> {
+        self.edit_config_file("remotes.toml", |text| {
+            crate::config::remotes::without_key(text, remote, key)
+        })
+    }
+
     /// Turns a rule on or off in `rules.toml` (keeping its comments), validates and applies the
     /// configuration.
     pub fn set_rule_enabled(&self, name: &str, enabled: bool) -> anyhow::Result<()> {

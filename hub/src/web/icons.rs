@@ -32,3 +32,4 @@ pub const SORT_ASCENDING: IconData = iconify_icon!("tabler:chevron-up");
 pub const SORT_DESCENDING: IconData = iconify_icon!("tabler:chevron-down");
 pub const UP: IconData = iconify_icon!("tabler:arrow-up");
 pub const DOWN: IconData = iconify_icon!("tabler:arrow-down");
+pub const REMOVE: IconData = iconify_icon!("tabler:trash");
