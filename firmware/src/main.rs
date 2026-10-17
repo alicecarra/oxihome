@@ -65,6 +65,10 @@ fn run() -> anyhow::Result<()> {
 
     let device_id = device_id()?;
     log::info!("Oxihome node {device_id} started");
+    let restart_reason = restart_reason();
+    if let Some(reason) = &restart_reason {
+        log::warn!("{reason}");
+    }
 
     let mut wifi = wifi::connect(
         peripherals.modem,
@@ -82,6 +86,7 @@ fn run() -> anyhow::Result<()> {
         entities,
         pending_update: None,
         pending_restart: false,
+        restart_reason,
     };
     let mut node = Node::new(device_id, transport, board, Ota::new()?);
 
@@ -123,6 +128,23 @@ fn device_id() -> anyhow::Result<String> {
     })?;
     let hex: String = mac.iter().map(|byte| format!("{byte:02x}")).collect();
     Ok(format!("esp32-{hex}"))
+}
+
+/// Why the board restarted, when it was not a power-on or a restart of its own.
+fn restart_reason() -> Option<String> {
+    use esp_idf_svc::sys::*;
+    #[allow(non_upper_case_globals)]
+    let reason = match unsafe { esp_reset_reason() } {
+        esp_reset_reason_t_ESP_RST_TASK_WDT => "the task watchdog (the main loop stopped)",
+        esp_reset_reason_t_ESP_RST_INT_WDT | esp_reset_reason_t_ESP_RST_WDT => "a watchdog",
+        esp_reset_reason_t_ESP_RST_PANIC => "a panic",
+        esp_reset_reason_t_ESP_RST_BROWNOUT => "a brownout (the supply voltage dropped)",
+        esp_reset_reason_t_ESP_RST_PWR_GLITCH => "a power glitch",
+        esp_reset_reason_t_ESP_RST_CPU_LOCKUP => "a CPU lockup",
+        esp_reset_reason_t_ESP_RST_UNKNOWN => "an unknown cause",
+        _ => return None,
+    };
+    Some(format!("restarted by {reason}"))
 }
 
 fn uptime_seconds() -> u32 {

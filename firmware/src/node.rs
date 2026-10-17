@@ -37,6 +37,8 @@ pub struct Board {
     pub pending_update: Option<String>,
     /// Set by a new hardware, run by `Node::poll` once the `Ack` is out.
     pub pending_restart: bool,
+    /// Sent to the hub as `Error` on the first connection only.
+    pub restart_reason: Option<String>,
 }
 
 /// The protocol comes from `oxihome-node`; this ties it to the transport and the event sources.
@@ -75,7 +77,11 @@ impl<T: Transport> Node<T> {
                 if let Err(error) = self.board.settings.set_failed_boots(0) {
                     log::error!("Resetting the failed boots failed: {error:#}");
                 }
-                for problem in self.board.problems.clone() {
+                let restart_reason = self.board.restart_reason.take();
+                for problem in restart_reason
+                    .into_iter()
+                    .chain(self.board.problems.clone())
+                {
                     self.send_error(ErrorCode::Internal, problem);
                 }
             }
