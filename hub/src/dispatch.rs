@@ -50,9 +50,11 @@ pub async fn on_message(hub: &Arc<Hub>, message: &Message) -> anyhow::Result<()>
             ..
         }
     );
-    let came_back = node_events
-        .iter()
-        .any(|node_event| matches!(node_event, NodeEvent::Online(_)));
+    // After a `Hello` the reported state is stale; the `State` the node resends applies them.
+    let came_back = !matches!(message.payload, Payload::Hello { .. })
+        && node_events
+            .iter()
+            .any(|node_event| matches!(node_event, NodeEvent::Online(_)));
     if reports_parameters || came_back {
         tokio::spawn(parameters::apply(hub.clone(), message.src.clone()));
         tokio::spawn(hardware::apply(hub.clone(), message.src.clone()));
@@ -113,5 +115,93 @@ fn on_node_event(hub: &Arc<Hub>, node_event: &NodeEvent) {
         for rule in hub.offline_rules(device_id) {
             tokio::spawn(rules::run(hub.clone(), rule));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use oxihome_protocol::{Build, Value};
+
+    use super::*;
+    use crate::config::HomeConfig;
+    use crate::hub::CommandOrigin;
+    use crate::mqtt::Mqtt;
+    use crate::storage::{Restored, Storage};
+
+    async fn hub() -> Arc<Hub> {
+        let directory =
+            std::env::temp_dir().join(format!("oxihome-dispatch-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let (storage, _) = Storage::open(&directory.join("hub.sqlite"), Duration::from_secs(3600))
+            .await
+            .unwrap();
+        Arc::new(Hub::new(
+            Mqtt::offline(),
+            3,
+            directory.clone(),
+            HomeConfig::load(&directory).unwrap(),
+            jiff::tz::TimeZone::UTC,
+            storage,
+            Restored::default(),
+            None,
+        ))
+    }
+
+    fn hello(device_id: &str) -> Message {
+        Message::new(
+            device_id,
+            0,
+            Payload::Hello {
+                build: Build::new("firmware", "0.9.0", "esp32"),
+                entities: Vec::new(),
+            },
+        )
+    }
+
+    fn ack(device_id: &str, message_id: u32) -> Message {
+        Message::new(device_id, 1, Payload::Ack { ok: true }).replying_to(message_id)
+    }
+
+    #[tokio::test]
+    async fn answers_and_presence() {
+        let hub = hub().await;
+        on_message(&hub, &hello("lamp")).await.unwrap();
+        on_message(&hub, &hello("other")).await.unwrap();
+
+        let mut sent = hub.traffic().subscribe();
+        let command = tokio::spawn({
+            let hub = hub.clone();
+            async move {
+                hub.set("lamp", 1, 0, Value::Bool(true), CommandOrigin::Web)
+                    .await
+            }
+        });
+        let message_id = Message::from_json(&sent.recv().await.unwrap().text)
+            .unwrap()
+            .msg_id;
+
+        on_message(&hub, &ack("other", message_id)).await.unwrap();
+        tokio::task::yield_now().await;
+        assert!(!command.is_finished());
+        assert_eq!(hub.value("other", 1, 0), None);
+        assert_eq!(hub.value("lamp", 1, 0), None);
+
+        on_message(&hub, &ack("lamp", message_id)).await.unwrap();
+        command.await.unwrap().unwrap();
+        assert_eq!(hub.value("lamp", 1, 0), Some(Value::Bool(true)));
+
+        hub.check_presence(Instant::now() + Duration::from_secs(3600));
+        let before = hub.last_notification_id();
+        on_message(&hub, &hello("lamp")).await.unwrap();
+        let titles: Vec<String> = hub
+            .notifications_since(before)
+            .into_iter()
+            .map(|notification| notification.title)
+            .collect();
+        assert_eq!(titles, vec!["lamp back online"]);
+        assert!(hub.is_online("lamp"));
     }
 }

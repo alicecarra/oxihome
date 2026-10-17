@@ -96,6 +96,22 @@ impl Mqtt {
         )
     }
 
+    /// Never connects: publishes wait in the client's queue and still reach `traffic`.
+    #[cfg(test)]
+    pub fn offline() -> Self {
+        let (client, event_loop) =
+            AsyncClient::new(MqttOptions::new(SOURCE, "localhost", 1883), 64);
+        tokio::spawn(async move {
+            let _event_loop = event_loop;
+            std::future::pending::<()>().await;
+        });
+        Self {
+            client,
+            next_message_id: AtomicU32::new(0),
+            traffic: Arc::new(Traffic::default()),
+        }
+    }
+
     pub fn traffic(&self) -> &Traffic {
         &self.traffic
     }

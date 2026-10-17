@@ -26,6 +26,8 @@ pub struct Node {
     pub rssi: Option<i8>,
     /// From the node's `HeartbeatInterval`; the default until it reports one.
     heartbeat_interval: Duration,
+    /// From before the hub restarted and silent since: its `Hello` is not a return.
+    restored: bool,
 }
 
 impl Node {
@@ -248,6 +250,7 @@ impl Registry {
                 uptime_seconds: stored.uptime_seconds,
                 rssi: stored.rssi,
                 heartbeat_interval: stored.heartbeat_interval,
+                restored: true,
             },
         );
     }
@@ -256,9 +259,9 @@ impl Registry {
         if let Payload::Hello { build, entities } = &message.payload {
             // A rebooted node sends `Hello` before its first heartbeat: keep the last
             // uptime so that heartbeat can still reveal the reboot.
-            let (uptime_seconds, rssi, heartbeat_interval) = self
-                .nodes
-                .get(&message.src)
+            let previous = self.nodes.get(&message.src);
+            let came_back = previous.is_some_and(|node| !node.online && !node.restored);
+            let (uptime_seconds, rssi, heartbeat_interval) = previous
                 .map_or((None, None, default_heartbeat_interval()), |node| {
                     (node.uptime_seconds, node.rssi, node.heartbeat_interval)
                 });
@@ -274,14 +277,20 @@ impl Registry {
                     uptime_seconds,
                     rssi,
                     heartbeat_interval,
+                    restored: false,
                 },
             );
             self.asked_for_hello.remove(&message.src);
-            return vec![NodeEvent::Registered {
+            let mut events = Vec::new();
+            if came_back {
+                events.push(NodeEvent::Online(message.src.clone()));
+            }
+            events.push(NodeEvent::Registered {
                 device_id: message.src.clone(),
                 build: build.clone(),
                 entity_count: entities.len(),
-            }];
+            });
+            return events;
         }
 
         let Some(node) = self.nodes.get_mut(&message.src) else {
@@ -296,6 +305,7 @@ impl Registry {
         let mut events = Vec::new();
         node.last_seen = now;
         node.last_seen_at = Timestamp::now();
+        node.restored = false;
         if !node.online {
             node.online = true;
             events.push(NodeEvent::Online(message.src.clone()));
@@ -593,6 +603,44 @@ mod tests {
                 .handle(&heartbeat(40), start + OFFLINE_AFTER * 2)
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn offline_node_comes_back_with_its_hello() {
+        let mut registry = Registry::default();
+        let start = Instant::now();
+        registry.handle(&hello(), start);
+        registry.check_presence(start + OFFLINE_AFTER);
+
+        assert_eq!(
+            registry.handle(&hello(), start + OFFLINE_AFTER * 2),
+            vec![
+                NodeEvent::Online(DEVICE.into()),
+                NodeEvent::Registered {
+                    device_id: DEVICE.into(),
+                    build: Build::new("firmware", "0.3.1", "esp32"),
+                    entity_count: 0,
+                },
+            ]
+        );
+        assert_eq!(
+            registry.handle(&hello(), start + OFFLINE_AFTER * 2).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn hello_after_a_hub_restart_is_not_a_return() {
+        let mut source = Registry::default();
+        let start = Instant::now();
+        source.handle(&hello(), start);
+        let mut registry = Registry::default();
+        registry.restore(source.stored(DEVICE).unwrap(), start);
+
+        assert!(matches!(
+            registry.handle(&hello(), start).as_slice(),
+            [NodeEvent::Registered { .. }]
+        ));
     }
 
     #[test]
