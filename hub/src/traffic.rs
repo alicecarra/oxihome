@@ -6,13 +6,25 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use jiff::Timestamp;
-use oxihome_protocol::Payload;
+use oxihome_protocol::{Message, Payload};
 use tokio::sync::broadcast;
 
 use counters::Counters;
 pub use counters::{Highlight, NodeSummary};
 
 const KEPT: usize = 500;
+
+/// The MQTT buffer of the firmware, both ways.
+pub const BOARD_LIMIT: usize = 4096;
+/// The broker's `max_packet_size`.
+pub const BROKER_LIMIT: usize = 64 * 1024;
+/// Messages from this share of their limit up are large.
+const LARGE_SHARE: f64 = 0.75;
+
+/// `true` when `size` is close to `limit`.
+pub fn is_large(size: usize, limit: usize) -> bool {
+    size as f64 >= limit as f64 * LARGE_SHARE
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -81,13 +93,16 @@ pub enum Reading {
         entity: Option<u8>,
         /// Several for a `State` with more than one value.
         channels: Vec<u8>,
+        message_id: u32,
+        reply_to: Option<u32>,
     },
     /// Thrown away, with the reason.
     Dropped(String),
 }
 
 impl Reading {
-    pub fn of(payload: &Payload) -> Self {
+    pub fn of(message: &Message) -> Self {
+        let payload = &message.payload;
         let (entity, channels) = match payload {
             Payload::State { entity, values } => (
                 Some(*entity),
@@ -105,6 +120,8 @@ impl Reading {
             kind: MessageKind::of(payload),
             entity,
             channels,
+            message_id: message.msg_id,
+            reply_to: message.reply_to,
         }
     }
 }
@@ -195,6 +212,28 @@ impl Traffic {
         self.counters.lock().unwrap().started()
     }
 
+    /// The command an `Ack` or `Error` from `device_id` answers, while it is still kept.
+    pub fn answered(&self, device_id: &str, reply_to: u32) -> Option<Arc<TrafficEntry>> {
+        self.recent
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|entry| {
+                entry.direction == Direction::Down
+                    && entry.device_id.as_deref() == Some(device_id)
+                    && matches!(
+                        entry.reading,
+                        Reading::Read {
+                            kind: MessageKind::Command,
+                            message_id,
+                            ..
+                        } if message_id == reply_to
+                    )
+            })
+            .cloned()
+    }
+
     /// Oldest first.
     pub fn recent(&self) -> Vec<Arc<TrafficEntry>> {
         self.recent.lock().unwrap().iter().cloned().collect()
@@ -227,22 +266,28 @@ mod tests {
 
     #[test]
     fn state_reads_every_channel() {
-        let reading = Reading::of(&Payload::State {
-            entity: 3,
-            values: [0, 2]
-                .map(|channel| ChannelValue {
-                    channel,
-                    value: Value::Bool(true),
-                    confidence: Confidence::Confirmed,
-                })
-                .to_vec(),
-        });
+        let reading = Reading::of(&Message::new(
+            "a",
+            7,
+            Payload::State {
+                entity: 3,
+                values: [0, 2]
+                    .map(|channel| ChannelValue {
+                        channel,
+                        value: Value::Bool(true),
+                        confidence: Confidence::Confirmed,
+                    })
+                    .to_vec(),
+            },
+        ));
         assert_eq!(
             reading,
             Reading::Read {
                 kind: MessageKind::State,
                 entity: Some(3),
                 channels: vec![0, 2],
+                message_id: 7,
+                reply_to: None,
             }
         );
     }
@@ -275,11 +320,35 @@ mod tests {
                 kind: MessageKind::Event,
                 entity: Some(1),
                 channels: vec![2],
+                message_id: 0,
+                reply_to: None,
             },
         );
         let entry = &traffic.recent()[0];
         assert!(entry.touches(1, 2));
         assert!(!entry.touches(1, 0));
         assert!(!entry.touches(2, 2));
+    }
+
+    #[test]
+    fn finds_the_command_an_answer_is_for() {
+        let traffic = Traffic::default();
+        let command = |message_id| Reading::Read {
+            kind: MessageKind::Command,
+            entity: Some(1),
+            channels: vec![0],
+            message_id,
+            reply_to: None,
+        };
+        traffic.record(Direction::Down, "oxihome/a/down", "a 4", command(4));
+        traffic.record(Direction::Down, "oxihome/b/down", "b 5", command(5));
+        assert_eq!(traffic.answered("a", 4).unwrap().text, "a 4");
+        assert!(traffic.answered("a", 5).is_none());
+    }
+
+    #[test]
+    fn large_is_three_quarters_of_the_limit() {
+        assert!(!is_large(3071, BOARD_LIMIT));
+        assert!(is_large(3072, BOARD_LIMIT));
     }
 }

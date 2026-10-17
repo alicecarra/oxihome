@@ -139,7 +139,7 @@ impl Mqtt {
             Some(device_id) => format!("oxihome/{device_id}/down"),
             None => BROADCAST_TOPIC.into(),
         };
-        let reading = Reading::of(&message.payload);
+        let reading = Reading::of(&message);
         let text = message.to_json()?;
         self.client
             .publish(topic.as_str(), QoS::AtLeastOnce, false, text.as_str())
@@ -158,7 +158,7 @@ fn read(topic: &str, text: &str) -> (Option<Incoming>, Reading) {
             Reading::Dropped(format!("dropping message from {} on {topic}", message.src)),
         ),
         Ok(message) => {
-            let reading = Reading::of(&message.payload);
+            let reading = Reading::of(&message);
             (Some(Incoming::Message(message)), reading)
         }
         Err(ReadError::Unsupported { version, src }) if topic == format!("oxihome/{src}/up") => (
@@ -204,6 +204,8 @@ mod tests {
                 kind: MessageKind::Heartbeat,
                 entity: None,
                 channels: Vec::new(),
+                message_id: 1,
+                reply_to: None,
             }
         );
     }

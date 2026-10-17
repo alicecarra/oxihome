@@ -10,7 +10,7 @@ use tokio::sync::oneshot;
 
 use crate::mqtt::Mqtt;
 
-const TIMEOUT: Duration = Duration::from_secs(5);
+pub const TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct PendingCommand {
     answer: oneshot::Sender<Payload>,

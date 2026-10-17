@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use jiff::Timestamp;
+use oxihome_protocol::{ManagementChannel, Value, management};
 use topcoat::{
     Result,
     context::{Cx, app_context},
@@ -11,11 +12,11 @@ use topcoat::{
     view::{View, component, view},
 };
 
-use super::{Filter, parameters};
+use super::{Filter, latency_label, limit_for, parameters, size_label};
 use crate::components::badge::{BadgeVariant, badge};
 use crate::config::nodes::NameTarget;
 use crate::hub::Hub;
-use crate::traffic::{Highlight, MessageKind, NodeSummary};
+use crate::traffic::{Highlight, MessageKind, NodeSummary, is_large};
 use crate::web::format::{ago_label, duration_label, elapsed};
 use crate::web::overview::{self, channel_name};
 
@@ -37,6 +38,12 @@ struct NodeLine {
     last: String,
     bars: String,
     dropped: u32,
+    /// How fast it answers commands, and its Wi-Fi signal.
+    link_quality: Option<String>,
+    slow: bool,
+    unanswered: usize,
+    /// `3.2 KiB of 4.0 KiB`, when the largest message of the hour is close to its limit.
+    large: Option<String>,
     /// Channels that stand out, shown even when the node is not chosen.
     highlighted: Vec<ChannelLine>,
     /// Every channel, only for the chosen node.
@@ -52,6 +59,17 @@ struct ChannelLine {
     rhythm: Option<String>,
     bars: String,
     highlight: Option<Highlight>,
+}
+
+/// Power save slows the answers down, so it goes next to their times.
+fn power_save_label(value: &Value) -> Option<String> {
+    let mode = match value {
+        Value::Int(0) => "off",
+        Value::Int(1) => "light",
+        Value::Int(2) => "maximum",
+        _ => return None,
+    };
+    Some(format!("power save {mode}"))
 }
 
 fn rate_label(per_minute: f64) -> String {
@@ -115,7 +133,41 @@ fn map(hub: &Hub, filter: &Filter) -> Map {
                 dropped,
                 series,
                 channels,
+                answers,
+                unanswered,
+                largest,
             } = node;
+            let registered = device_id
+                .as_deref()
+                .and_then(|device_id| snapshot.registry.node(device_id));
+            let limit = limit_for(&snapshot.registry, device_id.as_deref());
+            let link_quality = [
+                answers.as_ref().map(|answers| {
+                    format!(
+                        "Answers in {}, worst {} · {} commands",
+                        latency_label(answers.median),
+                        latency_label(answers.worst),
+                        answers.count
+                    )
+                }),
+                registered
+                    .and_then(|node| node.rssi)
+                    .map(|rssi| format!("Wi-Fi {rssi} dBm")),
+                device_id
+                    .as_deref()
+                    .and_then(|device_id| {
+                        snapshot.state.value(
+                            device_id,
+                            management::ENTITY,
+                            ManagementChannel::WifiPowerSave.into(),
+                        )
+                    })
+                    .and_then(power_save_label),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ");
             let title = match &device_id {
                 Some(device_id) => overview::name(
                     &snapshot.nodes,
@@ -188,6 +240,11 @@ fn map(hub: &Hub, filter: &Filter) -> Map {
                 last: last_label(last_at, now),
                 bars: bars_path(&series),
                 dropped,
+                link_quality: (!link_quality.is_empty()).then_some(link_quality),
+                slow: answers.is_some_and(|answers| answers.slow),
+                unanswered,
+                large: is_large(largest, limit)
+                    .then(|| format!("{} of {}", size_label(largest), size_label(limit))),
                 highlighted: channels
                     .iter()
                     .filter(|channel| channel.highlight.is_some())
@@ -260,8 +317,20 @@ async fn node_line(node: NodeLine) -> Result<impl View> {
                         if node.dropped > 0 {
                             badge(variant: BadgeVariant::Destructive, (format!("{} dropped", node.dropped)))
                         }
+                        if node.unanswered > 0 {
+                            badge(variant: BadgeVariant::Destructive, (format!("{} unanswered", node.unanswered)))
+                        }
+                        if node.slow {
+                            badge(variant: BadgeVariant::Destructive, "Slow answers")
+                        }
+                        if let Some(large) = node.large {
+                            badge(variant: BadgeVariant::Destructive, (format!("Large message: {large}")))
+                        }
                     </div>
                     <p class="text-xs text-muted-foreground">(node.kinds)</p>
+                    if let Some(link_quality) = node.link_quality {
+                        <p class="text-xs text-muted-foreground">(link_quality)</p>
+                    }
                 </div>
                 bars(path: node.bars)
                 <div class="w-56 text-right text-xs tabular-nums text-muted-foreground">
@@ -353,6 +422,15 @@ mod tests {
     fn bars_fill_the_height_at_the_busiest_minute() {
         assert_eq!(bars_path(&[0, 0]), "");
         assert_eq!(bars_path(&[4, 0, 1]), "M0 24v-24h2v24zM6 24v-6h2v6z");
+    }
+
+    #[test]
+    fn power_save_reads_as_its_mode() {
+        assert_eq!(
+            power_save_label(&Value::Int(1)).as_deref(),
+            Some("power save light")
+        );
+        assert_eq!(power_save_label(&Value::Int(7)), None);
     }
 
     #[test]

@@ -1,13 +1,15 @@
 //! Messages per minute over the last hour, by node and by channel, and what stands out.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::time::Duration;
 
 use jiff::Timestamp;
 
 use super::{Direction, MessageKind, Reading, TrafficEntry};
+use crate::commands::TIMEOUT as ANSWER_TIMEOUT;
 
 const MINUTES: usize = 60;
+const HOUR: Duration = Duration::from_secs(60 * 60);
 /// What the rates on the page are averaged over.
 const RECENT: Duration = Duration::from_secs(5 * 60);
 /// `State` times kept per channel to find its rhythm.
@@ -23,6 +25,9 @@ const NOISY_MINUTES: usize = 3;
 const STOPPED_FACTOR: u32 = 3;
 const STOPPED_MINIMUM: Duration = Duration::from_secs(2 * 60);
 const STOPPED_MINIMUM_STATES: usize = 5;
+
+/// A node whose median answer takes this long is slow.
+const SLOW: Duration = Duration::from_secs(1);
 
 /// Dropped messages are counted after the message kinds.
 const KIND_SLOTS: usize = MessageKind::ALL.len() + 1;
@@ -75,6 +80,7 @@ struct NodeMinute {
     up: u32,
     down: u32,
     bytes: u64,
+    largest: usize,
     kinds: [u32; KIND_SLOTS],
 }
 
@@ -93,6 +99,32 @@ struct NodeCounters {
     /// The last message from the node itself.
     last_up_at: Option<Timestamp>,
     channels: BTreeMap<(u8, u8), ChannelCounters>,
+    /// Commands sent, by message id, until answered or given up on.
+    waiting: HashMap<u32, Timestamp>,
+    /// When each answer came and how long it took, over the last hour.
+    answers: VecDeque<(Timestamp, Duration)>,
+    /// When each command given up on was sent, over the last hour.
+    unanswered: VecDeque<Timestamp>,
+}
+
+impl NodeCounters {
+    /// Commands past the hub's wait count as unanswered; an answer after that is ignored, like
+    /// the hub does.
+    fn give_up(&mut self, now: Timestamp) {
+        let late: Vec<u32> = self
+            .waiting
+            .iter()
+            .filter(|(_, sent)| elapsed(**sent, now) > ANSWER_TIMEOUT)
+            .map(|(message_id, _)| *message_id)
+            .collect();
+        for message_id in late {
+            if let Some(sent) = self.waiting.remove(&message_id) {
+                self.unanswered.push_back(sent);
+            }
+        }
+        self.unanswered.retain(|sent| elapsed(*sent, now) <= HOUR);
+        self.answers.retain(|(at, _)| elapsed(*at, now) <= HOUR);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -115,6 +147,15 @@ pub struct ChannelSummary {
     pub highlight: Option<Highlight>,
 }
 
+/// How fast a node answered commands in the last hour.
+#[derive(Debug, PartialEq)]
+pub struct Answers {
+    pub count: usize,
+    pub median: Duration,
+    pub worst: Duration,
+    pub slow: bool,
+}
+
 #[derive(Debug)]
 pub struct NodeSummary {
     /// `None` for broadcasts.
@@ -129,6 +170,13 @@ pub struct NodeSummary {
     /// Messages per minute, both ways, oldest first.
     pub series: Vec<u32>,
     pub channels: Vec<ChannelSummary>,
+    /// `None` without answers in the last hour.
+    pub answers: Option<Answers>,
+    /// Commands without an answer in the last hour, the ones still waiting past the hub's
+    /// patience included.
+    pub unanswered: usize,
+    /// The largest message of the last hour, in bytes.
+    pub largest: usize,
 }
 
 pub struct Counters {
@@ -206,6 +254,7 @@ impl Counters {
         let minute = minute_of(entry.at);
         let node = self.nodes.entry(entry.device_id.clone()).or_default();
         node.last_at = Some(entry.at);
+        node.give_up(entry.at);
         let tally = node.minutes.at(minute);
         match entry.direction {
             Direction::Up => {
@@ -215,6 +264,7 @@ impl Counters {
             Direction::Down => tally.down += 1,
         }
         tally.bytes += entry.text.len() as u64;
+        tally.largest = tally.largest.max(entry.text.len());
         let slot = match entry.kind() {
             Some(kind) => MessageKind::ALL
                 .iter()
@@ -225,8 +275,28 @@ impl Counters {
         tally.kinds[slot] += 1;
         if let Reading::Read {
             kind,
+            message_id,
+            reply_to,
+            ..
+        } = &entry.reading
+        {
+            match (entry.direction, kind, reply_to) {
+                (Direction::Down, MessageKind::Command, _) => {
+                    node.waiting.insert(*message_id, entry.at);
+                }
+                (Direction::Up, MessageKind::Ack | MessageKind::Error, Some(reply_to)) => {
+                    if let Some(sent) = node.waiting.remove(reply_to) {
+                        node.answers.push_back((entry.at, elapsed(sent, entry.at)));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Reading::Read {
+            kind,
             entity: Some(entity),
             channels,
+            ..
         } = &entry.reading
         {
             for channel in channels {
@@ -278,6 +348,18 @@ impl Counters {
                         .collect(),
                     dropped: kinds[DROPPED_SLOT],
                     series: both.iter().map(|count| *count as u32).collect(),
+                    answers: answers(&node.answers, now),
+                    unanswered: node
+                        .unanswered
+                        .iter()
+                        .filter(|sent| elapsed(**sent, now) <= HOUR)
+                        .count()
+                        + node
+                            .waiting
+                            .values()
+                            .filter(|sent| elapsed(**sent, now) > ANSWER_TIMEOUT)
+                            .count(),
+                    largest: series.iter().map(|tally| tally.largest).max().unwrap_or(0),
                     channels: node
                         .channels
                         .iter()
@@ -347,6 +429,22 @@ fn channel_summary(
     }
 }
 
+fn answers(answers: &VecDeque<(Timestamp, Duration)>, now: Timestamp) -> Option<Answers> {
+    let mut took: Vec<Duration> = answers
+        .iter()
+        .filter(|(at, _)| elapsed(*at, now) <= HOUR)
+        .map(|(_, took)| *took)
+        .collect();
+    took.sort();
+    let median = *took.get(took.len() / 2)?;
+    Some(Answers {
+        count: took.len(),
+        median,
+        worst: *took.last()?,
+        slow: median >= SLOW,
+    })
+}
+
 /// The median time between `times`.
 fn typical_gap(times: &VecDeque<Timestamp>) -> Option<Duration> {
     let mut gaps: Vec<Duration> = times
@@ -381,6 +479,8 @@ mod tests {
                 kind,
                 entity: channel.map(|_| 1),
                 channels: channel.into_iter().collect(),
+                message_id: 0,
+                reply_to: None,
             },
             text: "0123456789".into(),
         }
@@ -508,5 +608,72 @@ mod tests {
             counters.record(&entry(press * 30, MessageKind::Event, Some(0)));
         }
         assert_eq!(only_channel(&counters, 3000).highlight, None);
+    }
+
+    fn command(millisecond: i64, message_id: u32) -> TrafficEntry {
+        TrafficEntry {
+            at: Timestamp::from_millisecond(START * 1000 + millisecond).unwrap(),
+            direction: Direction::Down,
+            topic: "oxihome/a/down".into(),
+            device_id: Some("a".into()),
+            reading: Reading::Read {
+                kind: MessageKind::Command,
+                entity: Some(1),
+                channels: vec![0],
+                message_id,
+                reply_to: None,
+            },
+            text: "x".repeat(3500),
+        }
+    }
+
+    fn ack(millisecond: i64, reply_to: u32) -> TrafficEntry {
+        TrafficEntry {
+            at: Timestamp::from_millisecond(START * 1000 + millisecond).unwrap(),
+            direction: Direction::Up,
+            topic: "oxihome/a/up".into(),
+            device_id: Some("a".into()),
+            reading: Reading::Read {
+                kind: MessageKind::Ack,
+                entity: None,
+                channels: Vec::new(),
+                message_id: 0,
+                reply_to: Some(reply_to),
+            },
+            text: "{}".into(),
+        }
+    }
+
+    #[test]
+    fn answers_are_timed() {
+        let mut counters = Counters::new(at(0));
+        for (sent, took, message_id) in [(0, 100, 1), (1000, 300, 2), (2000, 200, 3)] {
+            counters.record(&command(sent, message_id));
+            counters.record(&ack(sent + took, message_id));
+        }
+        let node = counters.summary(at(10)).pop().unwrap();
+        assert_eq!(
+            node.answers,
+            Some(Answers {
+                count: 3,
+                median: Duration::from_millis(200),
+                worst: Duration::from_millis(300),
+                slow: false,
+            })
+        );
+        assert_eq!(node.unanswered, 0);
+        assert_eq!(node.largest, 3500);
+    }
+
+    #[test]
+    fn a_late_answer_counts_as_none() {
+        let mut counters = Counters::new(at(0));
+        counters.record(&command(0, 1));
+        assert_eq!(counters.summary(at(1)).pop().unwrap().unanswered, 0);
+        assert_eq!(counters.summary(at(6)).pop().unwrap().unanswered, 1);
+        counters.record(&ack(7000, 1));
+        let node = counters.summary(at(8)).pop().unwrap();
+        assert_eq!(node.unanswered, 1);
+        assert_eq!(node.answers, None);
     }
 }

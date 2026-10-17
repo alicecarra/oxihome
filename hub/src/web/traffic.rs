@@ -2,6 +2,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
+
+use jiff::Timestamp;
 
 use futures_util::stream::{self, Stream};
 use tokio::sync::broadcast::error::RecvError;
@@ -23,7 +26,10 @@ use super::overview::{self, channel_description};
 use crate::components::badge::{BadgeVariant, badge};
 use crate::config::nodes::NameTarget;
 use crate::hub::Hub;
-use crate::traffic::{Direction, MessageKind, Reading, TrafficEntry};
+use crate::node::registry::Registry;
+use crate::traffic::{
+    BOARD_LIMIT, BROKER_LIMIT, Direction, MessageKind, Reading, TrafficEntry, is_large,
+};
 
 mod map;
 
@@ -153,7 +159,11 @@ struct Row {
     /// The message kind, or "Dropped".
     kind: &'static str,
     dropped: Option<String>,
+    /// For an `Ack` or `Error`: the command it answers and how long it took.
+    answer: Option<String>,
     size: String,
+    /// Close to the limit of the node or the broker.
+    large: bool,
     topic: String,
     /// On one line, as it came.
     text: String,
@@ -161,13 +171,58 @@ struct Row {
     pretty: String,
 }
 
+/// Boards have a small MQTT buffer; a broadcast reaches them too.
+fn limit_for(registry: &Registry, device_id: Option<&str>) -> usize {
+    let board = match device_id {
+        Some(device_id) => registry
+            .node(device_id)
+            .is_some_and(|node| node.build.name == "firmware"),
+        None => true,
+    };
+    if board { BOARD_LIMIT } else { BROKER_LIMIT }
+}
+
+/// `180 ms`, `1.2 s`.
+fn latency_label(latency: Duration) -> String {
+    if latency < Duration::from_secs(1) {
+        format!("{} ms", latency.as_millis())
+    } else {
+        format!("{:.1} s", latency.as_secs_f64())
+    }
+}
+
 fn rows(hub: &Hub, entries: &[Arc<TrafficEntry>]) -> Vec<Row> {
     let time_zone = hub.time_zone().clone();
+    let clock = |at: Timestamp| {
+        at.to_zoned(time_zone.clone())
+            .strftime("%H:%M:%S%.3f")
+            .to_string()
+    };
+    // Looked up before the snapshot, which `answered` does not need.
+    let commands: Vec<Option<Arc<TrafficEntry>>> = entries
+        .iter()
+        .map(|entry| match (&entry.device_id, &entry.reading) {
+            (
+                Some(device_id),
+                Reading::Read {
+                    kind: MessageKind::Ack | MessageKind::Error,
+                    reply_to: Some(reply_to),
+                    ..
+                },
+            ) => hub.traffic().answered(device_id, *reply_to),
+            _ => None,
+        })
+        .collect();
     let snapshot = hub.snapshot();
     entries
         .iter()
-        .map(|entry| {
-            let title = match (&entry.device_id, &entry.reading) {
+        .zip(commands)
+        .map(|(entry, command)| {
+            // An answer is about the channel of its command.
+            let about = command
+                .as_ref()
+                .map_or(&entry.reading, |command| &command.reading);
+            let title = match (&entry.device_id, about) {
                 (
                     Some(device_id),
                     Reading::Read {
@@ -211,12 +266,11 @@ fn rows(hub: &Hub, entries: &[Arc<TrafficEntry>]) -> Vec<Row> {
                 .ok()
                 .and_then(|json| serde_json::to_string_pretty(&json).ok())
                 .unwrap_or_else(|| entry.text.clone());
+            let size = entry.text.len();
+            let limit = limit_for(&snapshot.registry, entry.device_id.as_deref());
+            let large = is_large(size, limit);
             Row {
-                time: entry
-                    .at
-                    .to_zoned(time_zone.clone())
-                    .strftime("%H:%M:%S%.3f")
-                    .to_string(),
+                time: clock(entry.at),
                 direction: entry.direction,
                 title,
                 link: entry
@@ -225,7 +279,22 @@ fn rows(hub: &Hub, entries: &[Arc<TrafficEntry>]) -> Vec<Row> {
                     .map(|device_id| format!("/nodes/{device_id}")),
                 kind,
                 dropped,
-                size: size_label(entry.text.len()),
+                answer: command.map(|command| {
+                    format!(
+                        "Answer to the command at {}, {} later",
+                        clock(command.at),
+                        latency_label(
+                            Duration::try_from(entry.at.duration_since(command.at))
+                                .unwrap_or_default()
+                        )
+                    )
+                }),
+                size: if large {
+                    format!("{} of {}", size_label(size), size_label(limit))
+                } else {
+                    size_label(size)
+                },
+                large,
                 topic: entry.topic.clone(),
                 text: entry.text.clone(),
                 pretty,
@@ -432,12 +501,19 @@ async fn traffic_row(row: Row) -> Result<impl View> {
                             <span class="font-medium">(row.title)</span>
                             badge(variant: variant, (row.kind))
                         </div>
+                        if let Some(answer) = row.answer {
+                            <p class="text-xs text-muted-foreground">(answer)</p>
+                        }
                         match row.dropped {
                             Some(reason) => <p class="break-words text-destructive">(reason)</p>,
                             None => <p class="truncate font-mono text-xs text-muted-foreground group-open:hidden">(row.text)</p>,
                         }
                     </div>
-                    <span class="shrink-0 text-xs tabular-nums text-muted-foreground">(row.size)</span>
+                    if row.large {
+                        badge(variant: BadgeVariant::Destructive, (row.size))
+                    } else {
+                        <span class="shrink-0 text-xs tabular-nums text-muted-foreground">(row.size)</span>
+                    }
                 </summary>
                 <div class="space-y-2 border-t border-border bg-background/50 px-3 py-2">
                     <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -469,6 +545,8 @@ mod tests {
             kind,
             entity,
             channels,
+            message_id: 0,
+            reply_to: None,
         }
     }
 
@@ -512,6 +590,12 @@ mod tests {
         assert!(filter(&[("node", "a"), ("channel", "1.2")]).matches(&state));
         assert!(!filter(&[("node", "a"), ("channel", "1.1")]).matches(&state));
         assert!(filter(&[("channel", "1.1")]).channel.is_none());
+    }
+
+    #[test]
+    fn latency_switches_to_seconds() {
+        assert_eq!(latency_label(Duration::from_millis(180)), "180 ms");
+        assert_eq!(latency_label(Duration::from_millis(1250)), "1.2 s");
     }
 
     #[test]
