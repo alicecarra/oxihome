@@ -13,11 +13,12 @@ mod settings;
 mod transport;
 mod wifi;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::delay::FreeRtos;
 use esp_idf_svc::hal::peripherals::Peripherals;
+use esp_idf_svc::hal::task::watchdog::{TWDTConfig, TWDTDriver};
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use oxihome_protocol::management::{HEARTBEAT_INTERVAL, WIFI_CHECK_INTERVAL};
 
@@ -28,10 +29,22 @@ use settings::Settings;
 use transport::MqttTransport;
 
 const POLL_INTERVAL_MS: u32 = 10;
+/// Longer than the blocking parts of the loop, the over-the-air download included.
+const WATCHDOG_TIMEOUT: Duration = Duration::from_secs(120);
+/// Before restarting after a startup error, so a lasting error does not wear out the NVS.
+const RESTART_DELAY_MS: u32 = 10_000;
 
-fn main() -> anyhow::Result<()> {
+fn main() {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
+    if let Err(error) = run() {
+        log::error!("{error:#}; restarting");
+        FreeRtos::delay_ms(RESTART_DELAY_MS);
+        esp_idf_svc::hal::reset::restart();
+    }
+}
+
+fn run() -> anyhow::Result<()> {
     let started = Instant::now();
 
     let peripherals = Peripherals::take()?;
@@ -72,22 +85,32 @@ fn main() -> anyhow::Result<()> {
     };
     let mut node = Node::new(device_id, transport, board, Ota::new()?);
 
+    let mut watchdog = TWDTDriver::new(
+        peripherals.twdt,
+        &TWDTConfig {
+            duration: WATCHDOG_TIMEOUT,
+            panic_on_trigger: true,
+            ..Default::default()
+        },
+    )?;
+    let mut subscription = watchdog.watch_current_task()?;
     let mut last_wifi_check = Instant::now();
     let mut last_heartbeat = Instant::now();
     loop {
+        subscription.feed()?;
         if node.update_unverified() && started.elapsed() >= ota::VALIDATION_TIMEOUT {
             log::error!("New image did not reach the broker; restarting to roll back");
             esp_idf_svc::hal::reset::restart();
         }
         if last_wifi_check.elapsed() >= node.settings().interval(WIFI_CHECK_INTERVAL) {
-            wifi::ensure_connected(&mut wifi)?;
+            wifi::ensure_connected(&mut wifi);
             last_wifi_check = Instant::now();
         }
         if last_heartbeat.elapsed() >= node.settings().interval(HEARTBEAT_INTERVAL) {
-            node.send_heartbeat(uptime_seconds(), wifi::rssi())?;
+            node.send_heartbeat(uptime_seconds(), wifi::rssi());
             last_heartbeat = Instant::now();
         }
-        node.poll()?;
+        node.poll();
         FreeRtos::delay_ms(POLL_INTERVAL_MS);
     }
 }

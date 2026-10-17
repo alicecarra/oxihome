@@ -60,19 +60,23 @@ impl<T: Transport> Node<T> {
         }
     }
 
-    pub fn poll(&mut self) -> anyhow::Result<()> {
+    pub fn poll(&mut self) {
         while let Some(event) = self.transport.poll() {
             let connected = matches!(event, TransportEvent::Connected);
             let messages = match event {
                 TransportEvent::Connected => self.core.announcement(&self.board),
                 TransportEvent::Received(bytes) => self.handle_bytes(&bytes),
             };
-            self.send_all(messages)?;
+            self.send_all(messages);
             if connected {
-                self.ota.mark_valid()?;
-                self.board.settings.set_failed_boots(0)?;
+                if let Err(error) = self.ota.mark_valid() {
+                    log::error!("Marking the image valid failed: {error:#}");
+                }
+                if let Err(error) = self.board.settings.set_failed_boots(0) {
+                    log::error!("Resetting the failed boots failed: {error:#}");
+                }
                 for problem in self.board.problems.clone() {
-                    self.send_error(ErrorCode::Internal, problem)?;
+                    self.send_error(ErrorCode::Internal, problem);
                 }
             }
         }
@@ -86,14 +90,14 @@ impl<T: Transport> Node<T> {
                 Ok(()) => esp_idf_svc::hal::reset::restart(),
                 Err(error) => {
                     log::warn!("OTA: {error:#}");
-                    self.send_error(ErrorCode::Internal, format!("OTA: {error:#}"))?;
+                    self.send_error(ErrorCode::Internal, format!("OTA: {error:#}"));
                 }
             }
         }
-        self.poll_peripherals()
+        self.poll_peripherals();
     }
 
-    fn poll_peripherals(&mut self) -> anyhow::Result<()> {
+    fn poll_peripherals(&mut self) {
         let mut outcomes = Vec::new();
         for entity in &mut self.board.entities {
             let id = entity.id;
@@ -120,7 +124,11 @@ impl<T: Transport> Node<T> {
                         }
                     }
                 }
-                Peripheral::Buzzer(buzzer) => buzzer.poll()?,
+                Peripheral::Buzzer(buzzer) => {
+                    if let Err(error) = buzzer.poll() {
+                        log::error!("Entity {id}: buzzer failed: {error:#}");
+                    }
+                }
                 Peripheral::IrTransmitter(_) => {}
                 Peripheral::IrReceiver(receiver) => {
                     if let Some(code) = receiver.poll() {
@@ -138,8 +146,10 @@ impl<T: Transport> Node<T> {
                 } => {
                     if last_read.elapsed() >= POTENTIOMETER_READ_INTERVAL {
                         *last_read = Instant::now();
-                        if potentiometer.poll()? {
-                            outcomes.push(Outcome::State(id));
+                        match potentiometer.poll() {
+                            Ok(true) => outcomes.push(Outcome::State(id)),
+                            Ok(false) => {}
+                            Err(error) => log::error!("Entity {id}: reading failed: {error:#}"),
                         }
                     }
                 }
@@ -150,21 +160,22 @@ impl<T: Transport> Node<T> {
             match outcome {
                 Outcome::Event(entity, event, value) => {
                     let message = self.core.event(entity, MAIN_CHANNEL, event, value);
-                    self.send(message)?;
+                    self.send(message);
                 }
-                Outcome::State(entity) => self.send_state(entity)?,
+                Outcome::State(entity) => self.send_state(entity),
                 Outcome::Toggle(entity) => {
                     if let Some((pin, _)) = self.board.output(entity) {
-                        pin.toggle()?;
-                        self.send_state(entity)?;
+                        match pin.toggle() {
+                            Ok(()) => self.send_state(entity),
+                            Err(error) => log::error!("Entity {entity}: toggle failed: {error}"),
+                        }
                     }
                 }
             }
         }
-        Ok(())
     }
 
-    pub fn send_heartbeat(&mut self, uptime_seconds: u32, rssi: Option<i8>) -> anyhow::Result<()> {
+    pub fn send_heartbeat(&mut self, uptime_seconds: u32, rssi: Option<i8>) {
         let message = self.core.heartbeat(uptime_seconds, rssi, None);
         self.send(message)
     }
@@ -191,21 +202,19 @@ impl<T: Transport> Node<T> {
         }
     }
 
-    fn send_state(&mut self, entity: u8) -> anyhow::Result<()> {
-        match self.core.state(&self.board, entity) {
-            Some(message) => self.send(message),
-            None => Ok(()),
+    fn send_state(&mut self, entity: u8) {
+        if let Some(message) = self.core.state(&self.board, entity) {
+            self.send(message);
         }
     }
 
-    fn send_all(&mut self, messages: Vec<Message>) -> anyhow::Result<()> {
+    fn send_all(&mut self, messages: Vec<Message>) {
         for message in messages {
-            self.send(message)?;
+            self.send(message);
         }
-        Ok(())
     }
 
-    fn send_error(&mut self, code: ErrorCode, detail: String) -> anyhow::Result<()> {
+    fn send_error(&mut self, code: ErrorCode, detail: String) {
         let payload = Payload::Error {
             code: code.into(),
             detail: Some(detail),
@@ -214,8 +223,15 @@ impl<T: Transport> Node<T> {
         self.send(message)
     }
 
-    fn send(&mut self, message: Message) -> anyhow::Result<()> {
-        self.transport.send(message.to_json()?.as_bytes())
+    /// A message that cannot be queued is dropped: the hub asks for the state again on reconnecting.
+    fn send(&mut self, message: Message) {
+        let result = message
+            .to_json()
+            .map_err(anyhow::Error::from)
+            .and_then(|json| self.transport.send(json.as_bytes()));
+        if let Err(error) = result {
+            log::warn!("Message dropped: {error:#}");
+        }
     }
 }
 

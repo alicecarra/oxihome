@@ -29,23 +29,28 @@ pub fn connect(
     }))?;
 
     wifi.start()?;
-    wifi.connect()?;
-    wifi.wait_netif_up()?;
-
-    let ip = wifi.wifi().sta_netif().get_ip_info()?.ip;
-    log::info!("Wi-Fi connected to {ssid}, IP {ip}");
+    match wifi.connect().and_then(|()| wifi.wait_netif_up()) {
+        Ok(()) => {
+            let ip = wifi.wifi().sta_netif().get_ip_info()?.ip;
+            log::info!("Wi-Fi connected to {ssid}, IP {ip}");
+        }
+        Err(error) => log::warn!("Wi-Fi not connected to {ssid} ({error}), retrying"),
+    }
     Ok(wifi)
 }
 
-/// Blocks until reconnected; returns whether a reconnection was needed.
-pub fn ensure_connected(wifi: &mut Wifi) -> anyhow::Result<bool> {
-    if wifi.is_connected()? {
-        return Ok(false);
+/// Asks for a reconnection without waiting for it, so the loop keeps running without a network.
+pub fn ensure_connected(wifi: &mut Wifi) {
+    match wifi.is_connected() {
+        Ok(true) => {}
+        Ok(false) => {
+            log::warn!("Wi-Fi lost, reconnecting");
+            if let Err(error) = wifi.wifi_mut().connect() {
+                log::warn!("Wi-Fi reconnection failed: {error}");
+            }
+        }
+        Err(error) => log::warn!("Wi-Fi state unknown: {error}"),
     }
-    log::warn!("Wi-Fi lost, reconnecting");
-    wifi.connect()?;
-    wifi.wait_netif_up()?;
-    Ok(true)
 }
 
 pub fn rssi() -> Option<i8> {

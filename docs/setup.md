@@ -91,7 +91,13 @@ by `espflash` as the MAC address), so each board needs its own build. Empty conn
 `peripherals` lists what is wired to the board besides the onboard LED and BOOT button (`climate`,
 `external_led`, `buzzer`, `ir`, `potentiometer`); the firmware declares and drives only those, with
 the entity numbers of the table below. Without the line, all of them; `""` for none. An unknown
-name stops the board at boot with an error on the serial log.
+name is an error on the serial log at boot, and the board restarts 10 s later (as with any startup
+error).
+
+Without a network the board keeps running: the Wi-Fi reconnects in the background (every
+`WifiCheckInterval`, without blocking the loop, so the button still toggles its output), messages
+that cannot be queued are dropped and logged, and the hub asks for the state again when the board
+is back. A task watchdog restarts the board if its loop stops for 120 s.
 
 ## Over-the-air updates
 
