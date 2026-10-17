@@ -140,12 +140,14 @@ pub async fn settings_file(cx: &Cx) -> Result<impl View> {
                 text: content.text,
                 modified: modified_field(content.modified),
                 error: None,
+                unsaved: false,
             },
             Err(error) => Editor {
                 file: file.clone(),
                 text: String::new(),
                 modified: String::new(),
                 error: Some(format!("{error:#}")),
+                unsaved: false,
             },
         });
 
@@ -165,6 +167,7 @@ pub async fn settings_file(cx: &Cx) -> Result<impl View> {
                     ),
                 }
             </div>
+            <script src="/static/config-editor.js"></script>
         )
     })
 }
@@ -226,19 +229,31 @@ struct Editor {
     /// `modified_field` of the file when the text was read.
     modified: String,
     error: Option<String>,
+    /// The text differs from the file because saving it failed.
+    unsaved: bool,
 }
 
 /// One config file in a text box; saving replaces this form with a fresh one.
+/// `config-editor.js` adds the keyboard shortcuts and the warning about unsaved changes.
 #[component]
 async fn config_editor(editor: Editor) -> Result<impl View> {
     let invalid = editor.error.is_some();
     Ok(view! {
-        <form class="space-y-2" hx-post="/config/save" hx-target="this" hx-swap="outerHTML">
-            <div class="flex justify-end">
+        <form
+            id="config-editor"
+            class="space-y-2"
+            hx-post="/config/save"
+            hx-target="this"
+            hx-swap="outerHTML"
+            data-unsaved=(if editor.unsaved { "true" } else { "false" })
+        >
+            <div class="flex items-center justify-end gap-3">
+                <p class="hidden text-xs text-muted-foreground sm:block">"Ctrl+S saves · Tab indents · Esc then Tab leaves the box"</p>
                 button(variant: ButtonVariant::Secondary, size: ButtonSize::Sm, "Save")
             </div>
             textarea(
                 attrs: attributes! {
+                    id="config-text"
                     name="text"
                     class="min-h-96 font-mono text-sm"
                     spellcheck="false"
@@ -292,6 +307,7 @@ pub async fn save(cx: &Cx, Form(form): Form<SaveForm>) -> Result<ViewHandle> {
                 text,
                 modified,
                 error: None,
+                unsaved: false,
             }
         }
         Err(error) => Editor {
@@ -299,6 +315,7 @@ pub async fn save(cx: &Cx, Form(form): Form<SaveForm>) -> Result<ViewHandle> {
             text,
             modified: form.modified,
             error: Some(format!("{error:#}")),
+            unsaved: true,
         },
     };
 

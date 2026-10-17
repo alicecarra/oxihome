@@ -40,6 +40,7 @@ pub use auth::{Auth, hash_password};
 
 const HTMX: &str = include_str!("../../static/htmx.min.js");
 const HTMX_SSE: &str = include_str!("../../static/htmx-ext-sse.min.js");
+const CONFIG_EDITOR: &str = include_str!("../../static/config-editor.js");
 const FILTER: &str = include_str!("../../static/filter.js");
 const NODE_SORT: &str = include_str!("../../static/node-sort.js");
 const REMOTE_CODES: &str = include_str!("../../static/remote-codes.js");
@@ -121,6 +122,11 @@ async fn htmx_script() -> Result<Js<&'static str>> {
 #[route(GET "/static/htmx-ext-sse.min.js")]
 async fn htmx_sse_script() -> Result<Js<&'static str>> {
     Ok(Js(HTMX_SSE))
+}
+
+#[route(GET "/static/config-editor.js")]
+async fn config_editor_script() -> Result<Js<&'static str>> {
+    Ok(Js(CONFIG_EDITOR))
 }
 
 #[route(GET "/static/filter.js")]
