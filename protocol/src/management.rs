@@ -23,6 +23,8 @@ pub enum ManagementChannel {
     WifiCheckInterval = 6,
     /// `Text`: the `Hardware` JSON; a `Set` makes the node store it and reboot.
     Hardware = 7,
+    /// `Int`: Wi-Fi power save, 0 off, 1 light (the radio sleeps between beacons), 2 maximum.
+    WifiPowerSave = 8,
 }
 
 impl From<ManagementChannel> for u8 {
@@ -44,18 +46,20 @@ impl TryFrom<u8> for ManagementChannel {
             5 => Ok(Self::HeartbeatInterval),
             6 => Ok(Self::WifiCheckInterval),
             7 => Ok(Self::Hardware),
+            8 => Ok(Self::WifiPowerSave),
             unknown => Err(unknown),
         }
     }
 }
 
-/// Operation parameter: an `Int` channel in seconds that the node stores.
+/// Operation parameter: an `Int` channel that the node stores.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Parameter {
     pub channel: ManagementChannel,
     pub default: i32,
     pub min: i32,
     pub max: i32,
+    pub unit: Option<Unit>,
 }
 
 pub const HEARTBEAT_INTERVAL: Parameter = Parameter {
@@ -63,6 +67,7 @@ pub const HEARTBEAT_INTERVAL: Parameter = Parameter {
     default: 30,
     min: 5,
     max: 300,
+    unit: Some(Unit::Second),
 };
 
 pub const WIFI_CHECK_INTERVAL: Parameter = Parameter {
@@ -70,11 +75,21 @@ pub const WIFI_CHECK_INTERVAL: Parameter = Parameter {
     default: 5,
     min: 1,
     max: 60,
+    unit: Some(Unit::Second),
+};
+
+/// Off by default: the boards are on mains power, and power save delays commands.
+pub const WIFI_POWER_SAVE: Parameter = Parameter {
+    channel: ManagementChannel::WifiPowerSave,
+    default: 0,
+    min: 0,
+    max: 2,
+    unit: None,
 };
 
 pub const OTA_URL_MAX_LENGTH: u16 = 512;
 
-pub const PARAMETERS: [Parameter; 2] = [HEARTBEAT_INTERVAL, WIFI_CHECK_INTERVAL];
+pub const PARAMETERS: [Parameter; 3] = [HEARTBEAT_INTERVAL, WIFI_CHECK_INTERVAL, WIFI_POWER_SAVE];
 
 impl Parameter {
     pub fn accepts(&self, value: i32) -> bool {
@@ -92,7 +107,7 @@ impl Parameter {
                 step: 1,
             }),
             quantity: None,
-            unit: Some(Unit::Second),
+            unit: self.unit,
         }
     }
 }
@@ -154,11 +169,12 @@ mod tests {
             ManagementChannel::HeartbeatInterval,
             ManagementChannel::WifiCheckInterval,
             ManagementChannel::Hardware,
+            ManagementChannel::WifiPowerSave,
         ] {
             assert_eq!(ManagementChannel::try_from(u8::from(channel)), Ok(channel));
         }
         assert_eq!(ManagementChannel::try_from(4), Err(4));
-        assert_eq!(ManagementChannel::try_from(8), Err(8));
+        assert_eq!(ManagementChannel::try_from(9), Err(9));
     }
 
     #[test]
