@@ -289,23 +289,21 @@ async fn overview_section(
                         }
                     </dl>
                     if !editing {
-                        match update {
-                            Some(UpdateStatus::Available(version)) => {
-                                <div class="mt-4">
+                        <div class="mt-4 flex flex-wrap items-center gap-2">
+                            match update {
+                                Some(UpdateStatus::Available(version)) => {
                                     button(
                                         variant: ButtonVariant::Outline,
                                         size: ButtonSize::Sm,
                                         attrs: attributes! { type="button" hx-post="/nodes/update" hx-target="#status" },
                                         (format!("Update to {version}"))
                                     )
-                                </div>
-                            },
-                            Some(UpdateStatus::InProgress(version)) => {
-                                <p class="mt-4 text-sm text-muted-foreground">(format!("Updating to {version}…"))</p>
-                            },
-                            None => {},
-                        }
-                        <div class="mt-4">
+                                },
+                                Some(UpdateStatus::InProgress(version)) => {
+                                    <span class="text-sm text-muted-foreground">(format!("Updating to {version}…"))</span>
+                                },
+                                None => {},
+                            }
                             <a
                                 href=(format!("/nodes/{device_id}/entities.json"))
                                 download=""
@@ -313,9 +311,7 @@ async fn overview_section(
                             >
                                 "Download entities"
                             </a>
-                        </div>
-                        if node.presence == overview::Presence::Offline {
-                            <div class="mt-4">
+                            if node.presence == overview::Presence::Offline {
                                 button(
                                     variant: ButtonVariant::Destructive,
                                     size: ButtonSize::Sm,
@@ -327,8 +323,8 @@ async fn overview_section(
                                     },
                                     "Forget"
                                 )
-                            </div>
-                        }
+                            }
+                        </div>
                     }
                 )
             )

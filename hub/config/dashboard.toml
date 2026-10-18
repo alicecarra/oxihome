@@ -84,3 +84,9 @@ width = 2
 type = "feeds"
 device = "rss"
 width = 1
+
+[[dashboards.blocks]]
+type = "feeds"
+title = "YouTube"
+device = "youtube"
+width = 1
