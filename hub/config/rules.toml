@@ -10,12 +10,13 @@ then = [
 ]
 
 [[rules]]
-name = "Left home: lights off and Telegram"
+name = "Left home: lights and receiver off, Telegram"
 when = { device = "network-devices", entity = 1, channel = 1, event = "Received", data = "offline" }
 then = [
     { set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = false } },
     { set = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0, value = false } },
-    { invoke = { device = "telegram", entity = 1, channel = 0, value = "You left home, the lights are off" } },
+    { invoke = { device = "esp32-14335c2e7270", entity = 3, channel = 0, value = "SONY15 30 2F" } },
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "You left home, the lights and the receiver are off" } },
 ]
 
 [[rules]]
@@ -25,14 +26,14 @@ then = [
     { invoke = { device = "telegram", entity = 1, channel = 0, value = "The tablet left the network" } },
 ]
 
-# TV and receiver (IR emitter: RC6 is the Philips TV, SONY15 30 the receiver)
+# TV and receiver (IR emitter: RC6 is the Philips TV, SONY15 30 the receiver, keys in remotes.toml)
 
 [[rules]]
 name = "Turn on TV"
 when = { button = "Turn on TV" }
 then = [
     { invoke = { device = "esp32-14335c2e7270", entity = 3, channel = 0, value = "RC6 00 0C" } },
-    { invoke = { device = "esp32-14335c2e7270", entity = 3, channel = 0, value = "SONY15 30 15" } },
+    { invoke = { device = "esp32-14335c2e7270", entity = 3, channel = 0, value = "SONY15 30 2E" } },
     { wait = "2s" },
     { invoke = { device = "esp32-14335c2e7270", entity = 3, channel = 0, value = "SONY15 30 6A" } },
 ]
