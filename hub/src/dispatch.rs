@@ -14,16 +14,18 @@ use crate::schedule::Schedule;
 use crate::traffic::{Alert, AlertKind, RaisedAlert};
 
 /// (Re)connected to the broker: ask every node to introduce itself and report its state.
-pub async fn on_connected(hub: &Hub) -> anyhow::Result<()> {
-    let mqtt = hub.mqtt();
-    mqtt.broadcast(Payload::Query {
-        what: QueryKind::Hello,
-    })
-    .await?;
-    mqtt.broadcast(Payload::Query {
-        what: QueryKind::State { entity: None },
-    })
-    .await
+/// Publishing waits for room in the MQTT client's queue, which only the MQTT task empties; that
+/// task in turn waits for the main loop to take what it received. So the main loop never publishes
+/// itself.
+pub fn on_connected(hub: &Arc<Hub>) {
+    let hub = hub.clone();
+    tokio::spawn(async move {
+        for what in [QueryKind::Hello, QueryKind::State { entity: None }] {
+            if let Err(error) = hub.mqtt().broadcast(Payload::Query { what }).await {
+                println!("asking the nodes after connecting failed: {error:#}");
+            }
+        }
+    });
 }
 
 /// What an `Error` a node sent on its own says about its update, when it is about one. The board
@@ -41,7 +43,7 @@ fn update_failure(code: u16, detail: Option<&str>) -> Option<String> {
     }
 }
 
-pub async fn on_message(hub: &Arc<Hub>, message: &Message) -> anyhow::Result<()> {
+pub fn on_message(hub: &Arc<Hub>, message: &Message) {
     let (node_events, updates, event) = hub.handle(message, Instant::now());
     match &message.payload {
         Payload::Hello { build, .. } => {
@@ -87,15 +89,19 @@ pub async fn on_message(hub: &Arc<Hub>, message: &Message) -> anyhow::Result<()>
     for node_event in node_events {
         on_node_event(hub, &node_event);
         if let NodeEvent::Unknown(device_id) = node_event {
-            let mqtt = hub.mqtt();
-            mqtt.publish(
-                mqtt.next_message_id(),
-                Some(&device_id),
-                Payload::Query {
+            let hub = hub.clone();
+            tokio::spawn(async move {
+                let mqtt = hub.mqtt();
+                let query = Payload::Query {
                     what: QueryKind::Hello,
-                },
-            )
-            .await?;
+                };
+                if let Err(error) = mqtt
+                    .publish(mqtt.next_message_id(), Some(&device_id), query)
+                    .await
+                {
+                    println!("asking {device_id} for its Hello failed: {error:#}");
+                }
+            });
         }
     }
 
@@ -116,7 +122,6 @@ pub async fn on_message(hub: &Arc<Hub>, message: &Message) -> anyhow::Result<()>
             Subject::of_event(&event, hub.as_ref()),
         );
     }
-    Ok(())
 }
 
 /// A config file changed on disk: apply it if it is valid, keep the current one otherwise.
@@ -333,7 +338,7 @@ mod tests {
         if let Payload::Hello { entities, .. } = &mut lamp.payload {
             entities.push(management::descriptor());
         }
-        on_message(&hub, &lamp).await.unwrap();
+        on_message(&hub, &lamp);
 
         let mut sent = hub.traffic().subscribe();
         let modified = hub.config_file("nodes.toml").unwrap().modified;
@@ -379,7 +384,7 @@ mod tests {
     #[tokio::test]
     async fn only_update_errors_fail_an_update() {
         let hub = Hub::for_tests("update-fails", "").await;
-        on_message(&hub, &hello("board")).await.unwrap();
+        on_message(&hub, &hello("board"));
         hub.ota_for_tests()
             .start("board", "0.9.0".into(), "0.9.1".into(), "0.9.1.bin".into())
             .unwrap();
@@ -401,26 +406,40 @@ mod tests {
         };
 
         let before = hub.last_notification_id();
-        on_message(&hub, &error(ErrorCode::Internal, "DHT11: timeout"))
-            .await
-            .unwrap();
+        on_message(&hub, &error(ErrorCode::Internal, "DHT11: timeout"));
         assert!(hub.is_updating("board"));
 
         on_message(
             &hub,
             &error(ErrorCode::UpdateRejected, "ESP_ERR_OTA_VALIDATE_FAILED"),
-        )
-        .await
-        .unwrap();
+        );
         assert!(!hub.is_updating("board"));
         assert!(titles(before).contains(&"board update failed".to_string()));
     }
 
     #[tokio::test]
+    async fn a_full_mqtt_queue_does_not_stop_the_main_loop() {
+        let hub = Hub::for_tests("full-queue", "").await;
+        // The test client is never polled, so its queue of 64 publishes fills up.
+        for index in 0..100 {
+            let heartbeat = Message::new(
+                format!("unknown-{index}"),
+                0,
+                Payload::Heartbeat {
+                    uptime_s: 1,
+                    rssi: None,
+                    battery: None,
+                },
+            );
+            on_message(&hub, &heartbeat);
+        }
+    }
+
+    #[tokio::test]
     async fn answers_and_presence() {
         let hub = Hub::for_tests("answers", "").await;
-        on_message(&hub, &hello("lamp")).await.unwrap();
-        on_message(&hub, &hello("other")).await.unwrap();
+        on_message(&hub, &hello("lamp"));
+        on_message(&hub, &hello("other"));
 
         let mut sent = hub.traffic().subscribe();
         let command = tokio::spawn({
@@ -434,19 +453,19 @@ mod tests {
             .unwrap()
             .msg_id;
 
-        on_message(&hub, &ack("other", message_id)).await.unwrap();
+        on_message(&hub, &ack("other", message_id));
         tokio::task::yield_now().await;
         assert!(!command.is_finished());
         assert_eq!(hub.value("other", 1, 0), None);
         assert_eq!(hub.value("lamp", 1, 0), None);
 
-        on_message(&hub, &ack("lamp", message_id)).await.unwrap();
+        on_message(&hub, &ack("lamp", message_id));
         command.await.unwrap().unwrap();
         assert_eq!(hub.value("lamp", 1, 0), Some(Value::Bool(true)));
 
         hub.check_presence(Instant::now() + Duration::from_secs(3600));
         let before = hub.last_notification_id();
-        on_message(&hub, &hello("lamp")).await.unwrap();
+        on_message(&hub, &hello("lamp"));
         let titles: Vec<String> = hub
             .notifications_since(before)
             .into_iter()

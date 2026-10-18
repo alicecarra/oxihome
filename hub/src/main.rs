@@ -243,15 +243,9 @@ async fn main() -> anyhow::Result<()> {
             Some(event) = incoming.recv() => match event {
                 Incoming::Connected => {
                     println!("connected to {}:{}", config.mqtt.host, config.mqtt.port);
-                    if let Err(error) = dispatch::on_connected(&hub).await {
-                        println!("handling the connection failed: {error:#}");
-                    }
+                    dispatch::on_connected(&hub);
                 }
-                Incoming::Message(message) => {
-                    if let Err(error) = dispatch::on_message(&hub, &message).await {
-                        println!("handling a message from {} failed: {error:#}", message.src);
-                    }
-                }
+                Incoming::Message(message) => dispatch::on_message(&hub, &message),
                 Incoming::OtherProtocol { device_id, version } => {
                     hub.notify_other_protocol(&device_id, version);
                 }
