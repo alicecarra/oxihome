@@ -3,7 +3,7 @@
 mod node;
 mod open_meteo;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use oxihome_node::config::{BrokerConfig, read_config};
 use oxihome_node::mqtt;
@@ -62,11 +62,19 @@ async fn main() -> anyhow::Result<()> {
                     weather.precipitation,
                     weather.wind_speed
                 );
-                if !handle.act(move |node| node.update(weather)).await {
+                if !handle
+                    .act(move |node| node.update(weather, Instant::now()))
+                    .await
+                {
                     return Ok(());
                 }
             }
-            Err(error) => println!("fetching the weather failed: {error:#}"),
+            Err(error) => {
+                println!("fetching the weather failed: {error:#}");
+                if !handle.act(|node| node.failed(Instant::now())).await {
+                    return Ok(());
+                }
+            }
         }
     }
 }

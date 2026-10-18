@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use oxihome_node::mqtt::SoftwareNode;
 use oxihome_node::{Device, NodeCore, Rejection};
@@ -12,6 +12,9 @@ use crate::open_meteo::Weather;
 const NOW_ENTITY: u8 = 1;
 const TODAY_ENTITY: u8 = 2;
 const UPDATED_ENTITY: u8 = 3;
+const CONNECTION_ENTITY: u8 = 4;
+/// Fetches in a row that fail before Open-Meteo counts as unreachable (30 min at one per 10 min).
+const FAILURES_UNTIL_UNREACHABLE: u32 = 3;
 
 pub struct WeatherNode {
     core: NodeCore,
@@ -22,6 +25,12 @@ pub struct WeatherNode {
 struct WeatherDevice {
     /// `None` until the first fetch works.
     weather: Option<Weather>,
+    /// `None` until a fetch works or enough of them fail.
+    reachable: Option<bool>,
+    failures: u32,
+    fetched_at: Option<Instant>,
+    /// Since the last fetch that worked, as of the last attempt.
+    age: Option<Duration>,
 }
 
 impl WeatherNode {
@@ -31,14 +40,39 @@ impl WeatherNode {
                 device_id,
                 Build::native("weather", env!("CARGO_PKG_VERSION")),
             ),
-            device: WeatherDevice { weather: None },
+            device: WeatherDevice {
+                weather: None,
+                reachable: None,
+                failures: 0,
+                fetched_at: None,
+                age: None,
+            },
             started_at: Instant::now(),
         }
     }
 
-    pub fn update(&mut self, weather: Weather) -> Vec<Message> {
-        self.device.weather = Some(weather);
+    pub fn update(&mut self, weather: Weather, now: Instant) -> Vec<Message> {
+        let device = &mut self.device;
+        device.weather = Some(weather);
+        device.reachable = Some(true);
+        device.failures = 0;
+        device.fetched_at = Some(now);
+        device.age = Some(Duration::ZERO);
         self.core.states(&self.device)
+    }
+
+    /// The data keeps its last values; the connection entity tells how old they are.
+    pub fn failed(&mut self, now: Instant) -> Vec<Message> {
+        let device = &mut self.device;
+        device.failures += 1;
+        if device.failures >= FAILURES_UNTIL_UNREACHABLE {
+            device.reachable = Some(false);
+        }
+        device.age = device.fetched_at.map(|fetched_at| now - fetched_at);
+        self.core
+            .state(&self.device, CONNECTION_ENTITY)
+            .into_iter()
+            .collect()
     }
 }
 
@@ -118,10 +152,50 @@ impl Device for WeatherDevice {
                 ],
             }
             .named("Updated"),
+            EntityDescriptor {
+                id: CONNECTION_ENTITY,
+                name: None,
+                channels: vec![
+                    Channel {
+                        id: 0,
+                        name: None,
+                        access: Access::Read,
+                        value: Some(ValueType::Bool),
+                        quantity: None,
+                        unit: None,
+                    }
+                    .named("Reachable"),
+                    Channel {
+                        id: 1,
+                        name: None,
+                        access: Access::Read,
+                        value: Some(ValueType::Int {
+                            min: 0,
+                            max: i32::MAX,
+                            step: 1,
+                        }),
+                        quantity: None,
+                        unit: Some(Unit::Second),
+                    }
+                    .named("Data age"),
+                ],
+            }
+            .named("Connection"),
         ]
     }
 
     fn state(&self, entity: u8) -> Option<Vec<ChannelValue>> {
+        if entity == CONNECTION_ENTITY {
+            let mut values = Vec::new();
+            if let Some(reachable) = self.reachable {
+                values.push(confirmed(0, Value::Bool(reachable)));
+            }
+            if let Some(age) = self.age {
+                let seconds = i32::try_from(age.as_secs()).unwrap_or(i32::MAX);
+                values.push(confirmed(1, Value::Int(seconds)));
+            }
+            return (!values.is_empty()).then_some(values);
+        }
         let weather = self.weather.as_ref()?;
         let float = |channel, value: f32| confirmed(channel, Value::Float(value));
         Some(match entity {
@@ -204,13 +278,13 @@ mod tests {
     #[test]
     fn a_fetch_publishes_every_entity_and_rain_follows_precipitation() {
         let mut node = WeatherNode::new("weather".into());
-        let states = node.update(weather(0.2));
-        assert_eq!(states.len(), 3);
+        let states = node.update(weather(0.2), Instant::now());
+        assert_eq!(states.len(), 4);
         assert_eq!(
             node.device.state(NOW_ENTITY).unwrap()[4].value,
             Value::Bool(true)
         );
-        node.update(weather(0.0));
+        node.update(weather(0.0), Instant::now());
         assert_eq!(
             node.device.state(NOW_ENTITY).unwrap()[4].value,
             Value::Bool(false)
@@ -218,9 +292,41 @@ mod tests {
     }
 
     #[test]
+    fn failed_fetches_age_the_data_and_end_unreachable() {
+        let mut node = WeatherNode::new("weather".into());
+        let start = Instant::now();
+        let connection = |node: &WeatherNode| node.device.state(CONNECTION_ENTITY).unwrap();
+
+        assert_eq!(node.failed(start).len(), 0, "nothing known yet");
+        node.update(weather(0.0), start);
+        assert_eq!(
+            connection(&node),
+            vec![confirmed(0, Value::Bool(true)), confirmed(1, Value::Int(0))]
+        );
+
+        let minutes = |minutes: u64| start + Duration::from_secs(minutes * 60);
+        assert_eq!(node.failed(minutes(10)).len(), 1);
+        node.failed(minutes(20));
+        assert_eq!(connection(&node)[0].value, Value::Bool(true));
+        node.failed(minutes(30));
+        assert_eq!(
+            connection(&node),
+            vec![
+                confirmed(0, Value::Bool(false)),
+                confirmed(1, Value::Int(1800))
+            ]
+        );
+        assert_eq!(
+            node.device.state(NOW_ENTITY).unwrap()[0].value,
+            Value::Float(21.4),
+            "the last values stay"
+        );
+    }
+
+    #[test]
     fn readings_cannot_be_set() {
         let mut node = WeatherNode::new("weather".into());
-        node.update(weather(0.0));
+        node.update(weather(0.0), Instant::now());
         let set = Message::new(
             "oxihome-hub",
             1,
