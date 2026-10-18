@@ -865,8 +865,9 @@ cargo run -p oxihome-rss -- rss/rss.toml
 
 `rss/rss.toml` stays out of git because it holds the broker password. Each `[[feeds]]` has a fixed
 `entity` from 2 up (the hub keeps history, rules and its own names by number, so removing a feed
-must not renumber the others), a `name` (the entity's name on the hub, and in the log), the `url`, an `interval` in minutes (30 when missing, at least 15)
-and an optional `filter`, a regular expression on the title that ignores case. GitHub releases are
+must not renumber the others), a `name` (the entity's name on the hub, and in the log), the `url`, an `interval` in minutes (30 when missing, at least 15),
+an optional `filter`, a regular expression on the title that ignores case, and an optional
+`exclude`, one on the title and the link whose matching items are skipped. GitHub releases are
 at `<repository>/releases.atom`, crates.io versions at
 `https://static.crates.io/rss/crates/<crate>.xml`, a YouTube channel at
 `https://www.youtube.com/feeds/videos.xml?channel_id=<id>`, a subreddit at
@@ -891,7 +892,7 @@ On the hub, the dashboard's `feeds` block (see "Hub", `dashboard.toml`) reads th
 items from every feed in one list, with "Mark all read".
 
 The first fetch of a feed (and of a feed whose URL changed) only marks its items as seen, so
-nothing floods in. Afterwards, new items that pass the filter count as unread and become events,
+nothing floods in. Afterwards, new items that pass the filters count as unread and become events,
 oldest first, at most 10 per fetch (the rest only count). Opening a link does not mark anything as
 read; only the two `Trigger`s do. `rss/rss-state.json`, next to the configuration, keeps the seen
 ids (the last fetch's plus up to 500 older ones), the unread counts and the newest title and link;

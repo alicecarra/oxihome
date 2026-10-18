@@ -43,6 +43,8 @@ pub struct Feed {
     pub url: String,
     /// On the title.
     pub filter: Option<Regex>,
+    /// On the title and the link.
+    pub exclude: Option<Regex>,
 }
 
 /// What survives a restart, in the state file.
@@ -131,6 +133,9 @@ impl RssNode {
                     .filter
                     .as_ref()
                     .is_none_or(|filter| filter.is_match(&item.title))
+                    && !feed.feed.exclude.as_ref().is_some_and(|exclude| {
+                        exclude.is_match(&item.title) || exclude.is_match(&item.link)
+                    })
             })
             .collect();
         let new_items: Vec<&Item> = match &feed.saved {
@@ -468,6 +473,7 @@ mod tests {
             name: format!("feed {entity}"),
             url: format!("https://example.com/{entity}.atom"),
             filter: filter.map(|filter| Regex::new(filter).unwrap()),
+            exclude: None,
         }
     }
 
@@ -612,6 +618,32 @@ mod tests {
         assert_eq!(
             events(&messages),
             [&Value::Text("v1.1 — https://example.com/3".into())]
+        );
+        assert_eq!(unread(&node, RELEASES), Value::Int(1));
+    }
+
+    #[test]
+    fn excluded_items_are_skipped_by_title_or_link() {
+        let mut excluding = feed(RELEASES, None);
+        excluding.exclude = Some(Regex::new("(?i)/shorts/|^live:").unwrap());
+        let mut node = node(vec![excluding]);
+        node.fetched(RELEASES, vec![item(1, "first")]);
+        let short = Item {
+            link: "https://www.youtube.com/shorts/2".into(),
+            ..item(2, "a short")
+        };
+        let messages = node.fetched(
+            RELEASES,
+            vec![
+                item(1, "first"),
+                short,
+                item(3, "LIVE: tonight"),
+                item(4, "a video"),
+            ],
+        );
+        assert_eq!(
+            events(&messages),
+            [&Value::Text("a video — https://example.com/4".into())]
         );
         assert_eq!(unread(&node, RELEASES), Value::Int(1));
     }

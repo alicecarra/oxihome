@@ -16,6 +16,8 @@ id = "rss"
 # name: the entity's name on the hub.
 # interval: minutes between fetches, 30 when missing, at least 15.
 # filter: a regular expression on the title, ignoring case; other items are skipped.
+# exclude: a regular expression on the title and the link, ignoring case; matching items are
+# skipped, e.g. "/shorts/" for YouTube Shorts.
 
 [[feeds]]
 entity = 2

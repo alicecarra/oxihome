@@ -47,6 +47,8 @@ struct FeedConfig {
     interval: Option<u64>,
     /// A regular expression on the title, ignoring case.
     filter: Option<String>,
+    /// A regular expression on the title and the link, ignoring case: matching items are skipped.
+    exclude: Option<String>,
 }
 
 #[tokio::main]
@@ -79,11 +81,14 @@ async fn main() -> anyhow::Result<()> {
                 feed.name
             );
         }
-        let filter = feed
-            .filter
-            .map(|filter| RegexBuilder::new(&filter).case_insensitive(true).build())
-            .transpose()
-            .with_context(|| format!("{path}: feed \"{}\": filter", feed.name))?;
+        let pattern = |pattern: Option<String>, field: &str| {
+            pattern
+                .map(|pattern| RegexBuilder::new(&pattern).case_insensitive(true).build())
+                .transpose()
+                .with_context(|| format!("{path}: feed \"{}\": {field}", feed.name))
+        };
+        let filter = pattern(feed.filter, "filter")?;
+        let exclude = pattern(feed.exclude, "exclude")?;
         schedules.push((
             feed.entity,
             feed.name.clone(),
@@ -95,6 +100,7 @@ async fn main() -> anyhow::Result<()> {
             name: feed.name,
             url: feed.url,
             filter,
+            exclude,
         });
     }
 
