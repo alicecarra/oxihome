@@ -1,0 +1,93 @@
+[
+  {
+    "id": 0,
+    "channels": [
+      {
+        "id": 5,
+        "access": "ReadWrite",
+        "value": {
+          "Int": {
+            "min": 5,
+            "max": 300,
+            "step": 1
+          }
+        },
+        "unit": "Second"
+      },
+      {
+        "id": 6,
+        "access": "ReadWrite",
+        "value": {
+          "Int": {
+            "min": 1,
+            "max": 60,
+            "step": 1
+          }
+        },
+        "unit": "Second"
+      },
+      {
+        "id": 8,
+        "access": "ReadWrite",
+        "value": {
+          "Int": {
+            "min": 0,
+            "max": 2,
+            "step": 1
+          }
+        }
+      },
+      {
+        "id": 1,
+        "access": "Trigger",
+        "value": {
+          "Text": {
+            "max_length": 512
+          }
+        }
+      },
+      {
+        "id": 7,
+        "access": "ReadWrite",
+        "value": {
+          "Text": {
+            "max_length": 2048
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": 1,
+    "channels": [
+      {
+        "id": 0,
+        "access": "ReadWrite",
+        "value": "Bool"
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "channels": [
+      {
+        "id": 0,
+        "access": "Event"
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "channels": [
+      {
+        "id": 0,
+        "access": "Trigger",
+        "value": {
+          "Text": {
+            "max_length": 1024
+          }
+        }
+      }
+    ]
+  }
+]

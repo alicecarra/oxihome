@@ -1,0 +1,167 @@
+[
+  {
+    "id": 0,
+    "channels": [
+      {
+        "id": 5,
+        "access": "ReadWrite",
+        "value": {
+          "Int": {
+            "min": 5,
+            "max": 300,
+            "step": 1
+          }
+        },
+        "unit": "Second"
+      },
+      {
+        "id": 6,
+        "access": "ReadWrite",
+        "value": {
+          "Int": {
+            "min": 1,
+            "max": 60,
+            "step": 1
+          }
+        },
+        "unit": "Second"
+      },
+      {
+        "id": 8,
+        "access": "ReadWrite",
+        "value": {
+          "Int": {
+            "min": 0,
+            "max": 2,
+            "step": 1
+          }
+        }
+      },
+      {
+        "id": 1,
+        "access": "Trigger",
+        "value": {
+          "Text": {
+            "max_length": 512
+          }
+        }
+      },
+      {
+        "id": 7,
+        "access": "ReadWrite",
+        "value": {
+          "Text": {
+            "max_length": 2048
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": 1,
+    "channels": [
+      {
+        "id": 0,
+        "access": "ReadWrite",
+        "value": "Bool"
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "channels": [
+      {
+        "id": 0,
+        "access": "Event"
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "channels": [
+      {
+        "id": 0,
+        "access": "Read",
+        "value": {
+          "Float": {
+            "min": 0.0,
+            "max": 50.0,
+            "step": 1.0
+          }
+        },
+        "quantity": "Temperature",
+        "unit": "Celsius"
+      },
+      {
+        "id": 1,
+        "access": "Read",
+        "value": {
+          "Float": {
+            "min": 20.0,
+            "max": 90.0,
+            "step": 1.0
+          }
+        },
+        "quantity": "Humidity",
+        "unit": "Percent"
+      }
+    ]
+  },
+  {
+    "id": 4,
+    "channels": [
+      {
+        "id": 0,
+        "access": "ReadWrite",
+        "value": "Bool"
+      }
+    ]
+  },
+  {
+    "id": 5,
+    "channels": [
+      {
+        "id": 0,
+        "access": "Trigger",
+        "value": {
+          "Enum": [
+            "Short",
+            "Long",
+            "Alarm"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": 6,
+    "channels": [
+      {
+        "id": 0,
+        "access": "Event",
+        "value": {
+          "Text": {
+            "max_length": 1024
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": 7,
+    "channels": [
+      {
+        "id": 0,
+        "access": "Read",
+        "value": {
+          "Int": {
+            "min": 0,
+            "max": 100,
+            "step": 1
+          }
+        },
+        "unit": "Percent"
+      }
+    ]
+  }
+]

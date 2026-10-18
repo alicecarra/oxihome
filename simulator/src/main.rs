@@ -7,6 +7,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use anyhow::Context;
+
 use oxihome_node::config::{BrokerConfig, parse_file, read_config};
 use oxihome_node::mqtt::{self, Handle, SoftwareNode};
 use oxihome_protocol::{Access, EntityDescriptor, Value};
@@ -40,7 +42,30 @@ struct Secrets {
 #[derive(Deserialize)]
 struct NodeConfig {
     id: String,
+    /// Numbered from 1 in this order.
+    #[serde(default)]
     entities: Vec<Profile>,
+    /// The entities another node declared, downloaded from its page in the hub.
+    clone: Option<PathBuf>,
+}
+
+impl NodeConfig {
+    fn descriptors(&self) -> anyhow::Result<Vec<EntityDescriptor>> {
+        match (&self.clone, self.entities.is_empty()) {
+            (Some(path), true) => {
+                let text = std::fs::read_to_string(path)
+                    .with_context(|| format!("reading {}", path.display()))?;
+                serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
+            }
+            (None, false) => Ok(self
+                .entities
+                .iter()
+                .zip(1..)
+                .map(|(profile, id)| profile.descriptor(id))
+                .collect()),
+            _ => anyhow::bail!("node {}: either entities or clone", self.id),
+        }
+    }
 }
 
 #[tokio::main]
@@ -54,12 +79,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut nodes = HashMap::new();
     for node_config in &config.nodes {
-        let entities: Vec<EntityDescriptor> = node_config
-            .entities
-            .iter()
-            .zip(1..)
-            .map(|(profile, id)| profile.descriptor(id))
-            .collect();
+        let entities = node_config.descriptors()?;
         let node = SimulatedNode::new(node_config.id.clone(), entities.clone(), Instant::now());
         let broker = BrokerConfig {
             password: passwords.remove(&node_config.id),
