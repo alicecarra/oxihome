@@ -870,7 +870,10 @@ and an optional `filter`, a regular expression on the title that ignores case. G
 at `<repository>/releases.atom`, crates.io versions at
 `https://static.crates.io/rss/crates/<crate>.xml`, a YouTube channel at
 `https://www.youtube.com/feeds/videos.xml?channel_id=<id>`, a subreddit at
-`https://www.reddit.com/r/<name>/.rss`.
+`https://www.reddit.com/r/<name>/.rss`. The `url` may also be a page that links its feed with
+`<link rel="alternate">` (RSS, Atom or JSON Feed), such as a YouTube channel
+(`https://www.youtube.com/@<handle>`) or a blog's home: when it is not a feed, the node follows the
+first feed it links, looked up again at each start.
 
 Entities: 1 all feeds, 0 "mark all as read" (`Trigger` without value), 1 the total unread
 (`Int`). Each feed: 0 the newest item's title (`Text`), 1 its link (`Text`), 2 unread (`Int`), 3
