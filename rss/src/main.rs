@@ -9,7 +9,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
-use oxihome_node::mqtt::{self, Broker, Handle};
+use oxihome_node::config::{BrokerConfig, read_config};
+use oxihome_node::mqtt::{self, Handle};
 use oxihome_protocol::NAME_MAX_LENGTH;
 use regex::RegexBuilder;
 use serde::Deserialize;
@@ -17,7 +18,6 @@ use serde::Deserialize;
 use fetch::{Fetched, Fetcher};
 use node::{ALL_FEEDS_ENTITY, Feed, RssNode};
 
-const REPORT_INTERVAL: Duration = Duration::from_secs(30);
 const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_INTERVAL_MINUTES: u64 = 30;
 const MINIMUM_INTERVAL_MINUTES: u64 = 15;
@@ -28,19 +28,9 @@ const STATE_FILE: &str = "rss-state.json";
 
 #[derive(Deserialize)]
 struct Config {
-    mqtt: MqttConfig,
+    mqtt: BrokerConfig,
     node: NodeConfig,
     feeds: Vec<FeedConfig>,
-}
-
-#[derive(Deserialize)]
-struct MqttConfig {
-    host: String,
-    port: u16,
-    /// The node's password on the broker; anonymous when missing.
-    password: Option<String>,
-    /// Outgoing messages waiting for the connection; `mqtt::DEFAULT_QUEUE_SIZE` when missing.
-    queue_size: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -61,11 +51,7 @@ struct FeedConfig {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let path = std::env::args()
-        .nth(1)
-        .context("usage: oxihome-rss <rss.toml>")?;
-    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
-    let config: Config = toml::from_str(&text).with_context(|| format!("parsing {path}"))?;
+    let (path, config): (String, Config) = read_config("oxihome-rss <rss.toml>")?;
 
     let mut entities = HashSet::new();
     let mut feeds = Vec::new();
@@ -116,13 +102,7 @@ async fn main() -> anyhow::Result<()> {
     let saved = node::read_state(&state_path);
     let handle = mqtt::spawn(
         RssNode::new(config.node.id, feeds, saved, Some(state_path)),
-        Broker {
-            host: config.mqtt.host,
-            port: config.mqtt.port,
-            password: config.mqtt.password,
-            report_interval: REPORT_INTERVAL,
-            queue_size: config.mqtt.queue_size.unwrap_or(mqtt::DEFAULT_QUEUE_SIZE),
-        },
+        config.mqtt.broker(),
     );
     let client = reqwest::Client::builder()
         .timeout(FETCH_TIMEOUT)

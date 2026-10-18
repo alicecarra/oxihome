@@ -5,36 +5,23 @@ mod node;
 mod sample;
 
 use std::path::PathBuf;
-use std::time::Duration;
 
-use anyhow::{Context, ensure};
-use oxihome_node::mqtt::{self, Broker};
+use anyhow::ensure;
+use oxihome_node::config::{BrokerConfig, read_config};
+use oxihome_node::mqtt;
 use serde::Deserialize;
 
 use docker::Docker;
 use node::{MAXIMUM_PER_RANGE, MonitorNode};
 use sample::Sampler;
 
-/// Matches the default `HeartbeatInterval`, so the hub's offline timeout fits.
-const REPORT_INTERVAL: Duration = Duration::from_secs(30);
-
 #[derive(Deserialize)]
 struct Config {
-    mqtt: MqttConfig,
+    mqtt: BrokerConfig,
     #[serde(default)]
     node: NodeConfig,
     #[serde(default)]
     monitor: MonitorConfig,
-}
-
-#[derive(Deserialize)]
-struct MqttConfig {
-    host: String,
-    port: u16,
-    /// The node's password on the broker; anonymous when missing.
-    password: Option<String>,
-    /// Outgoing messages waiting for the connection; `mqtt::DEFAULT_QUEUE_SIZE` when missing.
-    queue_size: Option<usize>,
 }
 
 #[derive(Deserialize, Default)]
@@ -69,11 +56,7 @@ impl Default for MonitorConfig {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let path = std::env::args()
-        .nth(1)
-        .context("usage: oxihome-linux-monitor <linux-monitor.toml>")?;
-    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
-    let config: Config = toml::from_str(&text).with_context(|| format!("parsing {path}"))?;
+    let (_, config): (String, Config) = read_config("oxihome-linux-monitor <linux-monitor.toml>")?;
     let monitor = config.monitor;
     ensure!(
         [&monitor.disks, &monitor.interfaces, &monitor.containers]
@@ -106,13 +89,7 @@ async fn main() -> anyhow::Result<()> {
             monitor.interfaces,
             monitor.containers,
         ),
-        Broker {
-            host: config.mqtt.host,
-            port: config.mqtt.port,
-            password: config.mqtt.password,
-            report_interval: REPORT_INTERVAL,
-            queue_size: config.mqtt.queue_size.unwrap_or(mqtt::DEFAULT_QUEUE_SIZE),
-        },
+        config.mqtt.broker(),
     );
     oxihome_node::shutdown_signal().await;
     Ok(())

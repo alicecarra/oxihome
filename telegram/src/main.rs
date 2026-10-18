@@ -7,8 +7,9 @@ mod node;
 use std::collections::HashSet;
 use std::time::Duration;
 
-use anyhow::{Context, bail};
-use oxihome_node::mqtt::{self, Broker};
+use anyhow::bail;
+use oxihome_node::config::{BrokerConfig, read_config};
+use oxihome_node::mqtt;
 use serde::Deserialize;
 use teloxide_core::Bot;
 use teloxide_core::types::{ChatId, UserId};
@@ -16,7 +17,6 @@ use tokio::sync::mpsc;
 
 use node::TelegramNode;
 
-const REPORT_INTERVAL: Duration = Duration::from_secs(30);
 /// Longer than the long polling timeout.
 const HTTP_TIMEOUT: Duration = Duration::from_secs(70);
 const OUTGOING_QUEUE: usize = 64;
@@ -24,20 +24,10 @@ const DEFAULT_MAX_AGE_S: u64 = 60;
 
 #[derive(Deserialize)]
 struct Config {
-    mqtt: MqttConfig,
+    mqtt: BrokerConfig,
     node: NodeConfig,
     telegram: TelegramConfig,
     commands: Vec<bot::Command>,
-}
-
-#[derive(Deserialize)]
-struct MqttConfig {
-    host: String,
-    port: u16,
-    /// The node's password on the broker; anonymous when missing.
-    password: Option<String>,
-    /// Outgoing messages waiting for the connection; `mqtt::DEFAULT_QUEUE_SIZE` when missing.
-    queue_size: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -56,11 +46,7 @@ struct TelegramConfig {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let path = std::env::args()
-        .nth(1)
-        .context("usage: oxihome-telegram <telegram.toml>")?;
-    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
-    let config: Config = toml::from_str(&text).with_context(|| format!("parsing {path}"))?;
+    let (path, config): (String, Config) = read_config("oxihome-telegram <telegram.toml>")?;
     if config.commands.is_empty() {
         bail!("{path}: declare at least one [[commands]]");
     }
@@ -85,13 +71,7 @@ async fn main() -> anyhow::Result<()> {
         .collect();
     let handle = mqtt::spawn(
         TelegramNode::new(config.node.id, command_names, outgoing_sender),
-        Broker {
-            host: config.mqtt.host,
-            port: config.mqtt.port,
-            password: config.mqtt.password,
-            report_interval: REPORT_INTERVAL,
-            queue_size: config.mqtt.queue_size.unwrap_or(mqtt::DEFAULT_QUEUE_SIZE),
-        },
+        config.mqtt.broker(),
     );
     let client = teloxide_core::net::default_reqwest_settings()
         .timeout(HTTP_TIMEOUT)

@@ -6,35 +6,25 @@ mod scan;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, ensure};
-use oxihome_node::mqtt::{self, Broker};
+use anyhow::ensure;
+use oxihome_node::config::{BrokerConfig, read_config};
+use oxihome_node::mqtt;
 use oxihome_protocol::NAME_MAX_LENGTH;
 use serde::Deserialize;
 
 use node::{NETWORK_ENTITY, NetworkDevicesNode, Scan, WatchedDevice};
 use scan::{Mac, Subnet};
 
-const REPORT_INTERVAL: Duration = Duration::from_secs(30);
 const SCAN_INTERVAL: Duration = Duration::from_secs(30);
 /// Longer than the kernel takes to fail a silent address: 5 s of delay plus 3 probes of 1 s.
 const SETTLE_TIME: Duration = Duration::from_secs(10);
 
 #[derive(Deserialize)]
 struct Config {
-    mqtt: MqttConfig,
+    mqtt: BrokerConfig,
     node: NodeConfig,
     network: NetworkConfig,
     devices: Vec<DeviceConfig>,
-}
-
-#[derive(Deserialize)]
-struct MqttConfig {
-    host: String,
-    port: u16,
-    /// The node's password on the broker; anonymous when missing.
-    password: Option<String>,
-    /// Outgoing messages waiting for the connection; `mqtt::DEFAULT_QUEUE_SIZE` when missing.
-    queue_size: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -60,11 +50,8 @@ struct DeviceConfig {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let path = std::env::args()
-        .nth(1)
-        .context("usage: oxihome-network-devices <network-devices.toml>")?;
-    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
-    let config: Config = toml::from_str(&text).with_context(|| format!("parsing {path}"))?;
+    let (_, config): (String, Config) =
+        read_config("oxihome-network-devices <network-devices.toml>")?;
     let watched = watched_devices(&config)?;
     let subnet = config.network.subnet;
     println!(
@@ -75,13 +62,7 @@ async fn main() -> anyhow::Result<()> {
 
     let handle = mqtt::spawn(
         NetworkDevicesNode::new(config.node.id, watched, Instant::now()),
-        Broker {
-            host: config.mqtt.host,
-            port: config.mqtt.port,
-            password: config.mqtt.password,
-            report_interval: REPORT_INTERVAL,
-            queue_size: config.mqtt.queue_size.unwrap_or(mqtt::DEFAULT_QUEUE_SIZE),
-        },
+        config.mqtt.broker(),
     );
     let mut scan = tokio::time::interval(SCAN_INTERVAL);
     loop {

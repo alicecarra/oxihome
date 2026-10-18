@@ -5,31 +5,20 @@ mod open_meteo;
 
 use std::time::Duration;
 
-use anyhow::Context;
-use oxihome_node::mqtt::{self, Broker};
+use oxihome_node::config::{BrokerConfig, read_config};
+use oxihome_node::mqtt;
 use serde::Deserialize;
 
 use node::WeatherNode;
 
-const REPORT_INTERVAL: Duration = Duration::from_secs(30);
 const FETCH_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Deserialize)]
 struct Config {
-    mqtt: MqttConfig,
+    mqtt: BrokerConfig,
     node: NodeConfig,
     location: Location,
-}
-
-#[derive(Deserialize)]
-struct MqttConfig {
-    host: String,
-    port: u16,
-    /// The node's password on the broker; anonymous when missing.
-    password: Option<String>,
-    /// Outgoing messages waiting for the connection; `mqtt::DEFAULT_QUEUE_SIZE` when missing.
-    queue_size: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -45,21 +34,11 @@ struct Location {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let path = std::env::args()
-        .nth(1)
-        .context("usage: oxihome-weather <weather.toml>")?;
-    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
-    let config: Config = toml::from_str(&text).with_context(|| format!("parsing {path}"))?;
+    let (_, config): (String, Config) = read_config("oxihome-weather <weather.toml>")?;
 
     let handle = mqtt::spawn(
         WeatherNode::new(config.node.id.clone()),
-        Broker {
-            host: config.mqtt.host,
-            port: config.mqtt.port,
-            password: config.mqtt.password,
-            report_interval: REPORT_INTERVAL,
-            queue_size: config.mqtt.queue_size.unwrap_or(mqtt::DEFAULT_QUEUE_SIZE),
-        },
+        config.mqtt.broker(),
     );
     let client = reqwest::Client::builder()
         .timeout(FETCH_TIMEOUT)

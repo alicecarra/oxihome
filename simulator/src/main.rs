@@ -4,16 +4,14 @@ mod node;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use anyhow::Context;
-use oxihome_node::mqtt::{self, Broker, Handle, SoftwareNode};
+use oxihome_node::config::{BrokerConfig, parse_file, read_config};
+use oxihome_node::mqtt::{self, Handle, SoftwareNode};
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use node::{Profile, SimulatedNode};
-
-const REPORT_INTERVAL: Duration = Duration::from_secs(30);
 
 const HELP: &str = "\
 commands:
@@ -35,13 +33,12 @@ struct Config {
 
 #[derive(Deserialize)]
 struct MqttConfig {
-    host: String,
-    port: u16,
+    /// Its `password` is ignored: each node takes its own from `secrets`.
+    #[serde(flatten)]
+    broker: BrokerConfig,
     /// A TOML file out of git with a `[passwords]` table (device id = password); anonymous when
     /// missing.
     secrets: Option<PathBuf>,
-    /// Outgoing messages waiting for the connection, per node; `mqtt::DEFAULT_QUEUE_SIZE` when missing.
-    queue_size: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -68,20 +65,10 @@ enum Control {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let path = std::env::args()
-        .nth(1)
-        .context("usage: oxihome-simulator <config.toml>")?;
-    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
-    let config: Config = toml::from_str(&text).with_context(|| format!("parsing {path}"))?;
+    let (_, config): (String, Config) = read_config("oxihome-simulator <config.toml>")?;
 
     let mut passwords = match &config.mqtt.secrets {
-        Some(secrets_path) => {
-            let text = std::fs::read_to_string(secrets_path)
-                .with_context(|| format!("reading {}", secrets_path.display()))?;
-            let secrets: Secrets = toml::from_str(&text)
-                .with_context(|| format!("parsing {}", secrets_path.display()))?;
-            secrets.passwords
-        }
+        Some(secrets_path) => parse_file::<Secrets>(secrets_path)?.passwords,
         None => HashMap::new(),
     };
 
@@ -92,13 +79,11 @@ async fn main() -> anyhow::Result<()> {
             &node_config.entities,
             Instant::now(),
         );
-        let broker = Broker {
-            host: config.mqtt.host.clone(),
-            port: config.mqtt.port,
+        let broker = BrokerConfig {
             password: passwords.remove(&node_config.id),
-            report_interval: REPORT_INTERVAL,
-            queue_size: config.mqtt.queue_size.unwrap_or(mqtt::DEFAULT_QUEUE_SIZE),
-        };
+            ..config.mqtt.broker.clone()
+        }
+        .broker();
         handles.insert(node_config.id.clone(), mqtt::spawn(node, broker));
     }
 
