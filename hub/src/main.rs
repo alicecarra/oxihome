@@ -26,7 +26,7 @@ use tokio::net::TcpListener;
 use topcoat::router::RouterService;
 
 use config::HomeConfig;
-use hub::Hub;
+use hub::{Hub, HubSetup};
 use mqtt::{Incoming, Mqtt};
 use node::registry::DEFAULT_MISSED_HEARTBEATS;
 use ota::{Ota, OtaConfig};
@@ -201,16 +201,16 @@ async fn main() -> anyhow::Result<()> {
     let auth = web::Auth::new(password_hash, storage.sessions())
         .context("[http] password_hash in the secrets file")?;
     let (mqtt, mut incoming) = Mqtt::connect(&config.mqtt.host, config.mqtt.port, password);
-    let hub = Arc::new(Hub::new(
+    let hub = Arc::new(Hub::new(HubSetup {
         mqtt,
-        config.presence.missed_heartbeats,
-        config.config.dir.clone(),
-        home_config,
+        missed_heartbeats: config.presence.missed_heartbeats,
+        config_directory: config.config.dir.clone(),
+        config: home_config,
         time_zone,
         storage,
         restored,
         ota,
-    ));
+    }));
 
     let listener = TcpListener::bind((config.http.host.as_str(), config.http.port)).await?;
     println!(

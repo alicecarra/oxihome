@@ -124,17 +124,30 @@ pub struct Hub {
     shutting_down: watch::Sender<bool>,
 }
 
+/// What `Hub::new` starts from.
+pub struct HubSetup {
+    pub mqtt: Mqtt,
+    pub missed_heartbeats: u32,
+    pub config_directory: PathBuf,
+    pub config: HomeConfig,
+    pub time_zone: TimeZone,
+    pub storage: Storage,
+    pub restored: Restored,
+    pub ota: Option<Arc<Ota>>,
+}
+
 impl Hub {
-    pub fn new(
-        mqtt: Mqtt,
-        missed_heartbeats: u32,
-        config_directory: PathBuf,
-        config: HomeConfig,
-        time_zone: TimeZone,
-        storage: Storage,
-        restored: Restored,
-        ota: Option<Arc<Ota>>,
-    ) -> Self {
+    pub fn new(setup: HubSetup) -> Self {
+        let HubSetup {
+            mqtt,
+            missed_heartbeats,
+            config_directory,
+            config,
+            time_zone,
+            storage,
+            restored,
+            ota,
+        } = setup;
         let now = Instant::now();
         let mut registry = Registry::new(missed_heartbeats);
         for node in restored.nodes {
@@ -456,16 +469,16 @@ impl Hub {
         )
         .await
         .unwrap();
-        Arc::new(Hub::new(
-            Mqtt::offline(),
-            3,
-            directory.clone(),
-            HomeConfig::load(&directory).unwrap(),
-            TimeZone::UTC,
+        Arc::new(Hub::new(HubSetup {
+            mqtt: Mqtt::offline(),
+            missed_heartbeats: 3,
+            config_directory: directory.clone(),
+            config: HomeConfig::load(&directory).unwrap(),
+            time_zone: TimeZone::UTC,
             storage,
-            crate::storage::Restored::default(),
-            None,
-        ))
+            restored: crate::storage::Restored::default(),
+            ota: None,
+        }))
     }
 
     pub fn snapshot(&self) -> Snapshot<'_> {
