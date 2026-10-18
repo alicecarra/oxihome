@@ -82,6 +82,17 @@ services:
       # Writable: the node keeps youtube-state.json next to youtube.toml.
       - ./youtube:/data
 
+  printer:
+    image: oxihome-printer:current
+    container_name: oxihome-printer
+    restart: unless-stopped
+    <<: *logging
+    user: "1000:1000"
+    command: ["printer.toml"]
+    depends_on: [mosquitto]
+    volumes:
+      - ./printer:/data:ro
+
   network-devices:
     image: oxihome-network-devices:current
     container_name: oxihome-network-devices

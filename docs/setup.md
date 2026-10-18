@@ -239,7 +239,7 @@ access:
 docker compose -f infra/compose.yaml up -d
 ```
 
-Each node logs in with its device id as the user name (`esp32-<mac>`, `weather`, `network-devices`, `telegram`, `rss`, `youtube`, `notebook`...);
+Each node logs in with its device id as the user name (`esp32-<mac>`, `weather`, `network-devices`, `telegram`, `rss`, `youtube`, `printer`, `notebook`...);
 the hub is `oxihome-hub` and `observer` only reads. The ACL in `infra/mosquitto/acl` (in git: it has
 no secrets) lets a node publish only on `oxihome/<its id>/up` and read only its own `down` and the
 broadcast; only the hub publishes on `down`. The client id is forced to the user name, so a login
@@ -668,7 +668,7 @@ current state. (Until 2026-10-13 a full queue of 32 blocked the loop for good: a
 the broker for a few minutes stopped reconnecting, though its service still showed as running.)
 
 `NodeCore::new` takes the node's `Build`, sent in its `Hello`: a short `name` that says what the
-program is (`firmware`, `weather`, `linux-monitor`, `network-devices`, `telegram`, `rss`, `simulator`), its `version`
+program is (`firmware`, `weather`, `linux-monitor`, `network-devices`, `telegram`, `rss`, `printer`, `simulator`), its `version`
 (`major.minor.patch`, from its `Cargo.toml`: raise it when the node changes) and its `target`
 (`esp32` for the firmware, from `MCU`; `Build::native` gives `<os>-<architecture>`, e.g.
 `linux-x86_64`, for the software nodes). The hub shows it as **Software**, e.g.
@@ -919,6 +919,35 @@ with `/shorts/`, so `exclude = "/shorts/"` skips them. A live stream enters the 
 scheduled, not when it starts. The server sends no `ETag` or `Last-Modified` and caches the feed
 for 15 minutes.
 
+## Printer node
+
+`printer/` (`oxihome-printer`) is a software node with the state of a Creality K1 family 3D printer
+(the K1C at `192.168.15.70`), on its stock firmware: no root, no Moonraker. It follows the websocket
+the printer's own web page uses (port 9999, no password), which sends the whole status when it
+connects and then only the fields that change, a few times a second while printing. Like that page,
+the node sends `{"ModeCode": "heart_beat"}` every 5 s; 30 s without a message counts as the
+printer gone, and it tries again every 10 s (the failure is logged once, not every attempt).
+
+```sh
+cp printer/printer.toml.example printer/printer.toml   # then set the broker password
+chmod 600 printer/printer.toml
+cargo run -p oxihome-printer -- printer/printer.toml
+```
+
+`printer/printer.toml` stays out of git because it holds the broker password (user `printer` or the
+`[node] id`). Entities, all read only: 1 temperatures (nozzle, nozzle target, bed, bed target,
+chamber, °C), 2 job (state, progress %, layer, layers, elapsed and left s, the file name without
+folder and `.gcode`, and a change event), 3 printer (light on, error code; 0 is no error), 4
+connection (reachable). While disconnected the readings keep their last values.
+
+The job state follows the printer's `state` field, read from its web page: 0 `idle`, 1 `printing`,
+2 `finished`, 3 `failed`, 4 `cancelled`, 5 `paused`. Each change publishes the new name as an
+event on the job's change channel (not on the first status after connecting), so a rule with
+`data = "finished"` catches the end of a print. To keep the traffic down, between reports the node
+publishes only changes of 0.5 °C or more and of 60 s or more in the times; the report every 30 s
+sends whatever else changed. The camera (`http://192.168.15.70:8080/?action=snapshot`) is not used
+yet.
+
 ## Simulator
 
 Simulated nodes that talk to the broker like real boards, to work on the hub without hardware. Each
@@ -1123,7 +1152,7 @@ production `[http] password_hash`, see "Login") and
 on the host's network to read its ARP table) and `~/oxihome/telegram/telegram.toml` (the production
 bot's token, `host = "mosquitto"`) and `~/oxihome/rss/rss.toml` (`host = "mosquitto"`; the node
 writes `rss-state.json` there, so that volume is not read only) and `~/oxihome/youtube/youtube.toml`
-(the same for the YouTube instance). The web interface is
+(the same for the YouTube instance) and `~/oxihome/printer/printer.toml` (`host = "mosquitto"` under `[mqtt]` only; the printer keeps its address). The web interface is
 at <https://oxihome.alicecarra.com>, through Caddy (see "HTTPS"); the hub publishes 8090 only on
 the server's localhost. The containers run as uid 1000, the owner of `~/oxihome`.
 
@@ -1146,6 +1175,10 @@ ssh docker-host 'mkdir -p ~/oxihome/youtube && chmod 700 ~/oxihome/youtube'
 ssh docker-host oxihome/mosquitto/set-password.sh youtube   # the password for [mqtt] password
 sed 's/^host = .*/host = "mosquitto"/' rss/youtube.toml | ssh docker-host 'umask 077; cat > ~/oxihome/youtube/youtube.toml'
 infra/production/deploy.sh youtube   # the rss image; deploy.sh rss does not restart this one
+ssh docker-host 'mkdir -p ~/oxihome/printer && chmod 700 ~/oxihome/printer'
+ssh docker-host oxihome/mosquitto/set-password.sh printer   # the password for [mqtt] password
+sed '0,/^host = /s/^host = .*/host = "mosquitto"/' printer/printer.toml | ssh docker-host 'umask 077; cat > ~/oxihome/printer/printer.toml'
+infra/production/deploy.sh printer
 ```
 
 The first hub deploy took the notebook's configuration and database by faking a dev session

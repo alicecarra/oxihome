@@ -1941,6 +1941,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxihome-printer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "oxihome-node",
+ "oxihome-protocol",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+]
+
+[[package]]
 name = "oxihome-protocol"
 version = "0.10.0"
 dependencies = [

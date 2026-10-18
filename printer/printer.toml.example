@@ -1,0 +1,16 @@
+# Copy to printer.toml (kept out of git: it holds the broker password).
+
+[mqtt]
+host = "localhost"
+port = 1883
+password = "the node's broker password"
+# Outgoing messages waiting to be sent; new ones are dropped while it is full.
+# queue_size = 4096
+
+[node]
+id = "printer"
+
+# A Creality K1 family printer on its stock firmware: the websocket its web page uses.
+[printer]
+host = "192.168.15.70"
+# port = 9999

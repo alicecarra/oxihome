@@ -5,6 +5,7 @@
 /logos
 /weather/weather.toml
 /telegram/telegram.toml
+/printer/printer.toml
 /rss/rss.toml
 /rss/youtube.toml
 /rss/*-state.json
