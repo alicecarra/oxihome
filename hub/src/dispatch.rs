@@ -1,4 +1,4 @@
-//! What the hub does with each thing that happens: a broker connection, a message, a presence check, a clock tick.
+//! What the hub does with each thing that happens: a broker connection, a message, a config change, a presence check, a clock tick.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -107,6 +107,33 @@ pub async fn on_message(hub: &Arc<Hub>, message: &Message) -> anyhow::Result<()>
     Ok(())
 }
 
+/// A config file changed on disk: apply it if it is valid, keep the current one otherwise.
+pub fn on_config_changed(hub: &Arc<Hub>) {
+    match hub.reload_config_if_changed() {
+        None => {}
+        Some(Ok(rule_count)) => {
+            println!("config reloaded from disk ({rule_count} rules)");
+            for device_id in hub.device_ids() {
+                tokio::spawn(parameters::apply(hub.clone(), device_id.clone()));
+                tokio::spawn(hardware::apply(hub.clone(), device_id));
+            }
+            hub.notify(
+                "Config reloaded from disk".into(),
+                format!("{rule_count} rules"),
+                "settings".into(),
+            );
+        }
+        Some(Err(error)) => {
+            println!("config not reloaded: {error:#}");
+            hub.notify(
+                "Config not reloaded".into(),
+                format!("{error:#}"),
+                "settings".into(),
+            );
+        }
+    }
+}
+
 /// Marks nodes that went quiet as offline.
 pub fn on_presence_check(hub: &Arc<Hub>) {
     hub.check_updates(Instant::now());
@@ -182,6 +209,46 @@ mod tests {
 
     use super::*;
     use crate::hub::CommandOrigin;
+
+    #[tokio::test]
+    async fn config_changed_on_disk_is_applied_once_and_only_if_valid() {
+        let hub = Hub::for_tests("config-changed", "").await;
+        let path = hub.config_directory().join("rules.toml");
+        let rule = |name: &str| {
+            format!(
+                "[[rules]]\nname = \"{name}\"\nwhen = {{ device = \"sim\", entity = 1, channel = 0, event = \"Press\" }}\nthen = []\n"
+            )
+        };
+        let titles = || -> Vec<String> {
+            hub.notifications_since(0)
+                .into_iter()
+                .map(|notification| notification.title)
+                .collect()
+        };
+
+        std::fs::write(&path, rule("First")).unwrap();
+        on_config_changed(&hub);
+        on_config_changed(&hub);
+        assert_eq!(hub.rules().len(), 1);
+        assert_eq!(titles(), ["Config reloaded from disk"]);
+
+        std::fs::write(&path, "[[rules]]\nname = 3\n").unwrap();
+        on_config_changed(&hub);
+        on_config_changed(&hub);
+        assert_eq!(hub.rules()[0].name, "First");
+        assert_eq!(
+            titles(),
+            ["Config reloaded from disk", "Config not reloaded"]
+        );
+
+        let modified = hub.config_file("rules.toml").unwrap().modified;
+        let two_rules = format!("{}{}", rule("First"), rule("Second"));
+        hub.save_config_file("rules.toml", &two_rules, modified)
+            .unwrap();
+        on_config_changed(&hub);
+        assert_eq!(hub.rules().len(), 2);
+        assert_eq!(titles().len(), 2, "the hub's own write was reloaded again");
+    }
 
     #[tokio::test]
     async fn a_rule_waits_and_ignores_triggers_while_running() {

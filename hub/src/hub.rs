@@ -17,7 +17,9 @@ use crate::config::dashboard::{Dashboard, Dashboards};
 use crate::config::nodes::{NameTarget, NodeEdits, Nodes};
 use crate::config::remotes::Remotes;
 use crate::config::rules::{Rule, RuleRun, RuleUse, Rules, Running};
-use crate::config::{ConfigFile, FILES, HomeConfig, read_file, write_file};
+use crate::config::{
+    ConfigFile, ConfigTexts, FILES, HomeConfig, read_file, read_texts, write_file,
+};
 use crate::mqtt::Mqtt;
 use crate::node::events::{EventRecord, Events};
 use crate::node::hardware::{HardwareState, HardwareStatus, HardwareSync};
@@ -95,6 +97,8 @@ pub struct Hub {
     /// Held across each read, check and write of the config files, so concurrent edits do not
     /// undo one another.
     config_writes: Mutex<()>,
+    /// The config files as last applied or rejected; a reread with the same texts does nothing.
+    config_seen: Mutex<ConfigTexts>,
     nodes: Mutex<Nodes>,
     rules: Mutex<Rules>,
     /// Last run of each rule, by name.
@@ -165,6 +169,7 @@ impl Hub {
             events: Mutex::new(events),
             config_directory,
             config_writes: Mutex::default(),
+            config_seen: Mutex::new(config.texts),
             nodes: Mutex::new(config.nodes),
             rules: Mutex::new(config.rules),
             rule_runs: Mutex::new(restored.rule_runs.into_iter().collect()),
@@ -479,6 +484,26 @@ impl Hub {
         Ok(self.apply_config(config))
     }
 
+    /// Like `reload_config`, for the file watcher: `None` when the files are as last seen,
+    /// which includes the hub's own writes.
+    pub fn reload_config_if_changed(&self) -> Option<anyhow::Result<usize>> {
+        let _writing = self.config_writes.lock().unwrap();
+        let texts = match read_texts(&self.config_directory) {
+            Ok(texts) => texts,
+            Err(error) => return Some(Err(error)),
+        };
+        let mut seen = self.config_seen.lock().unwrap();
+        if *seen == texts {
+            return None;
+        }
+        *seen = texts.clone();
+        drop(seen);
+        Some(
+            HomeConfig::from_texts(&self.config_directory, texts)
+                .map(|config| self.apply_config(config)),
+        )
+    }
+
     pub fn config_file(&self, file: &str) -> anyhow::Result<ConfigFile> {
         read_file(&self.config_directory.join(file))
     }
@@ -530,6 +555,7 @@ impl Hub {
     /// Returns the number of rules.
     fn apply_config(&self, config: HomeConfig) -> usize {
         let rule_count = config.rules.len();
+        *self.config_seen.lock().unwrap() = config.texts;
         *self.nodes.lock().unwrap() = config.nodes;
         self.hardware.lock().unwrap().refused.clear();
         *self.rules.lock().unwrap() = config.rules;

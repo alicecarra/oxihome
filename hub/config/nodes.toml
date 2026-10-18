@@ -31,7 +31,7 @@ hardware = [
 ]
 
 [nodes."esp32-14335c2e7270"]
-name = "IR emitter"
+name = "living room remote"
 entities.1 = { name = "LED", channels.0 = "Power" }
 entities.2 = { name = "BOOT button", channels.0 = "Press" }
 entities.3 = { name = "IR transmitter", channels.0 = "Code" }

@@ -56,7 +56,7 @@ pub async fn settings(cx: &Cx) -> Result<impl View> {
                             </form>
                         </div>
                         card_description(
-                            (format!("Nodes (names, parameters and hardware), rules, remotes and the dashboard live in TOML files in {directory}. Edit them here, or in an editor and then reload. Each node's page also edits its names and parameters."))
+                            (format!("Nodes (names, parameters and hardware), rules, remotes and the dashboard live in TOML files in {directory}. Edit them here, or in an editor: the hub reloads them when a file is saved, if the whole configuration is valid. Each node's page also edits its names and parameters."))
                         )
                     )
                     card_content(

@@ -2,6 +2,7 @@ pub mod dashboard;
 pub mod nodes;
 pub mod remotes;
 pub mod rules;
+pub mod watch;
 
 use std::path::Path;
 use std::time::SystemTime;
@@ -20,10 +21,15 @@ pub struct HomeConfig {
     pub rules: Rules,
     pub remotes: Remotes,
     pub dashboards: Dashboards,
+    /// What was validated, so a later read can tell whether the files changed.
+    pub texts: ConfigTexts,
 }
 
 /// The files the web interface can edit.
 pub const FILES: [&str; 4] = ["nodes.toml", "rules.toml", "remotes.toml", "dashboard.toml"];
+
+/// The text of each of `FILES`, in that order.
+pub type ConfigTexts = [String; 4];
 
 /// A config file's text and when it was last modified (`None` if it does not exist).
 pub struct ConfigFile {
@@ -39,24 +45,30 @@ impl HomeConfig {
 
     /// Like `load`, with one file's text replaced: validates an edit before saving it.
     pub fn load_with(directory: &Path, replacement: Option<(&str, &str)>) -> anyhow::Result<Self> {
-        let text = |file: &str| -> anyhow::Result<String> {
-            match replacement {
-                Some((replaced, text)) if replaced == file => Ok(text.to_string()),
-                _ => Ok(read_file(&directory.join(file))?.text),
-            }
-        };
+        let mut texts = read_texts(directory)?;
+        if let Some((file, text)) = replacement
+            && let Some(index) = FILES.iter().position(|name| *name == file)
+        {
+            texts[index] = text.to_string();
+        }
+        Self::from_texts(directory, texts)
+    }
+
+    /// Validates the texts as one configuration; `directory` only names the files in errors.
+    pub fn from_texts(directory: &Path, texts: ConfigTexts) -> anyhow::Result<Self> {
+        let text = |file: &str| &texts[FILES.iter().position(|name| *name == file).unwrap()];
         let path = directory.join("nodes.toml");
-        let nodes: Nodes = parse(&path, &text("nodes.toml")?)?;
+        let nodes: Nodes = parse(&path, text("nodes.toml"))?;
         nodes
             .validate()
             .with_context(|| format!("{}", path.display()))?;
         let path = directory.join("remotes.toml");
-        let remotes: Remotes = parse(&path, &text("remotes.toml")?)?;
+        let remotes: Remotes = parse(&path, text("remotes.toml"))?;
         remotes
             .validate()
             .with_context(|| format!("{}", path.display()))?;
         let path = directory.join("rules.toml");
-        let rules: Rules = parse(&path, &text("rules.toml")?)?;
+        let rules: Rules = parse(&path, text("rules.toml"))?;
         rules
             .check_names()
             .and_then(|()| rules.check_remote_keys(&remotes))
@@ -64,7 +76,7 @@ impl HomeConfig {
             .and_then(|()| rules.check_placeholders())
             .with_context(|| format!("{}", path.display()))?;
         let path = directory.join("dashboard.toml");
-        let dashboards: Dashboards = parse(&path, &text("dashboard.toml")?)?;
+        let dashboards: Dashboards = parse(&path, text("dashboard.toml"))?;
         dashboards
             .validate(&rules)
             .with_context(|| format!("{}", path.display()))?;
@@ -73,8 +85,18 @@ impl HomeConfig {
             rules,
             remotes,
             dashboards,
+            texts,
         })
     }
+}
+
+/// A missing file reads as empty.
+pub fn read_texts(directory: &Path) -> anyhow::Result<ConfigTexts> {
+    let mut texts = ConfigTexts::default();
+    for (text, file) in texts.iter_mut().zip(FILES) {
+        *text = read_file(&directory.join(file))?.text;
+    }
+    Ok(texts)
 }
 
 /// A missing file reads as empty.

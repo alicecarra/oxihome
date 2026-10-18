@@ -227,6 +227,14 @@ async fn main() -> anyhow::Result<()> {
     let mut web_server = tokio::spawn(topcoat::serve_until(listener, service, hub.shutdown()));
     let mut signal = std::pin::pin!(shutdown_signal());
 
+    let (_config_watcher, mut config_changes) =
+        match config::watch::watch(&config.config.dir, config::watch::QUIET) {
+            Ok((watcher, changes)) => (Some(watcher), changes),
+            Err(error) => {
+                println!("config files not watched, reload them by hand: {error:#}");
+                (None, tokio::sync::mpsc::channel(1).1)
+            }
+        };
     let mut presence_check = tokio::time::interval(PRESENCE_CHECK_INTERVAL);
     let mut clock = tokio::time::interval(CLOCK_INTERVAL);
     let mut schedule = Schedule::new(hub.time_zone(), Timestamp::now());
@@ -242,6 +250,7 @@ async fn main() -> anyhow::Result<()> {
                     hub.notify_other_protocol(&device_id, version);
                 }
             },
+            Some(()) = config_changes.recv() => dispatch::on_config_changed(&hub),
             _ = presence_check.tick() => dispatch::on_presence_check(&hub),
             _ = clock.tick() => dispatch::on_clock_tick(&hub, &mut schedule),
             result = &mut web_server => {
