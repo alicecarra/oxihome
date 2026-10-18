@@ -137,8 +137,9 @@ gets past firewalld the same way (`docker run --rm -d --name ota-relay --add-hos
 host.docker.internal:host-gateway -p 8082:8082 alpine/socat TCP-LISTEN:8082,fork,reuseaddr
 TCP:host.docker.internal:8081`, with `public_url` on port 8082).
 
-That server is separate from the web interface, which stays on `127.0.0.1`, and answers only
-`GET /ota/<token>`: a random link that works once and for 5 minutes. When an online node that
+That server is separate from the web interface, which stays private (`127.0.0.1` on the notebook;
+in production `0.0.0.0` inside the container, published only on docker-host's localhost for
+Caddy), and answers only `GET /ota/<token>`: a random link that works once and for 5 minutes. When an online node that
 declares the `Ota` channel has an image newer than its firmware, its page shows **Update to x.y.z**.
 The hub sends the link in an `Ota` command over MQTT; the board answers, downloads the image into
 its other app slot and reboots into it. The new image is on trial until it reaches the broker and
@@ -590,6 +591,9 @@ request from the command line:
 curl -X POST -d "device_id=esp32-08d1f9ca41e4&entity=1&channel=0&value=true" localhost:8080/set
 curl -X POST -d "device_id=esp32-08d1f9ca41e4&entity=5&channel=0&value=Short" localhost:8080/invoke
 ```
+
+These `curl` lines, and the `/events` one above, work as they are only on a hub without
+`[http] password_hash`; with the login on, add the session cookie copied from the browser (`-b`).
 
 Styles use Tailwind CSS 4. `hub/build.rs` runs Topcoat's Tailwind integration: on the first build it
 downloads the standalone Tailwind CLI (pinned by Topcoat, cached in `target/topcoat/cache/tailwind/`,
