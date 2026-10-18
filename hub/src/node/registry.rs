@@ -8,6 +8,7 @@ use oxihome_protocol::{
     Access, Build, Channel, EntityDescriptor, Message, NAME_MAX_LENGTH, Payload, Value, ValueType,
 };
 
+use super::network::NetworkHistory;
 use crate::config::nodes::NameTarget;
 
 pub const DEFAULT_MISSED_HEARTBEATS: u32 = 3;
@@ -24,6 +25,9 @@ pub struct Node {
     pub last_seen_at: Timestamp,
     pub uptime_seconds: Option<u32>,
     pub rssi: Option<i8>,
+    /// From its last `Hello`.
+    pub ip: Option<String>,
+    pub network: NetworkHistory,
     /// From the node's `HeartbeatInterval`; the default until it reports one.
     heartbeat_interval: Duration,
     /// From before the hub restarted and silent since: its `Hello` is not a return.
@@ -249,6 +253,8 @@ impl Registry {
                 last_seen_at: stored.last_seen,
                 uptime_seconds: stored.uptime_seconds,
                 rssi: stored.rssi,
+                ip: None,
+                network: NetworkHistory::default(),
                 heartbeat_interval: stored.heartbeat_interval,
                 restored: true,
             },
@@ -257,17 +263,40 @@ impl Registry {
 
     pub fn handle(&mut self, message: &Message, now: Instant) -> Vec<NodeEvent> {
         if let Payload::Hello {
-            build, entities, ..
+            build,
+            ip,
+            entities,
         } = &message.payload
         {
             // A rebooted node sends `Hello` before its first heartbeat: keep the last
             // uptime so that heartbeat can still reveal the reboot.
             let previous = self.nodes.get(&message.src);
             let came_back = previous.is_some_and(|node| !node.online && !node.restored);
-            let (uptime_seconds, rssi, heartbeat_interval) = previous
-                .map_or((None, None, default_heartbeat_interval()), |node| {
-                    (node.uptime_seconds, node.rssi, node.heartbeat_interval)
-                });
+            let (uptime_seconds, rssi, heartbeat_interval, mut network) = previous.map_or(
+                (
+                    None,
+                    None,
+                    default_heartbeat_interval(),
+                    NetworkHistory::default(),
+                ),
+                |node| {
+                    (
+                        node.uptime_seconds,
+                        node.rssi,
+                        node.heartbeat_interval,
+                        node.network.clone(),
+                    )
+                },
+            );
+            // A node sends `Hello` on its own on every connection; one answering the hub's
+            // question was already connected.
+            if message.reply_to.is_some() {
+                network.seen(now);
+            } else if previous.is_some() {
+                network.reconnected(now);
+            } else {
+                network.connected(now);
+            }
             self.nodes.insert(
                 message.src.clone(),
                 Node {
@@ -279,6 +308,8 @@ impl Registry {
                     last_seen_at: Timestamp::now(),
                     uptime_seconds,
                     rssi,
+                    ip: ip.clone(),
+                    network,
                     heartbeat_interval,
                     restored: false,
                 },
@@ -309,6 +340,7 @@ impl Registry {
         node.last_seen = now;
         node.last_seen_at = Timestamp::now();
         node.restored = false;
+        node.network.seen(now);
         if !node.online {
             node.online = true;
             events.push(NodeEvent::Online(message.src.clone()));
@@ -335,8 +367,12 @@ impl Registry {
 
         if let Payload::Heartbeat { uptime_s, rssi, .. } = &message.payload {
             node.rssi = *rssi;
+            if let Some(rssi) = rssi {
+                node.network.signal_sample(*rssi, now);
+            }
             let previous = node.uptime_seconds.replace(*uptime_s);
             if let Some(previous) = previous.filter(|previous| uptime_s < previous) {
+                node.network.rebooted(now);
                 events.push(NodeEvent::Rebooted {
                     device_id: message.src.clone(),
                     previous_uptime: previous,
@@ -355,6 +391,7 @@ impl Registry {
             })
             .map(|(device_id, node)| {
                 node.online = false;
+                node.network.disconnected();
                 NodeEvent::Offline(device_id.clone())
             })
             .collect()
@@ -735,6 +772,44 @@ mod tests {
             vec![NodeEvent::Unknown(DEVICE.into())]
         );
         assert!(registry.handle(&heartbeat(40), now).is_empty());
+    }
+
+    #[test]
+    fn hello_keeps_the_address_and_counts_the_connection() {
+        let mut registry = Registry::default();
+        let start = Instant::now();
+        registry.handle(
+            &message(Payload::Hello {
+                build: Build::new("firmware", "0.18.0", "esp32"),
+                ip: Some("192.168.15.42".into()),
+                entities: vec![],
+            }),
+            start,
+        );
+        registry.handle(&heartbeat(100), start);
+        let later = start + Duration::from_secs(60);
+        registry.handle(&hello(), later);
+        registry.handle(&hello().replying_to(1), later + Duration::from_secs(1));
+
+        let node = registry.node(DEVICE).unwrap();
+        assert_eq!(node.ip, None);
+        assert_eq!(node.network.reconnections(later), 1);
+        assert_eq!(node.network.connection.unwrap().since, later);
+        assert_eq!(node.network.signal(later), vec![-50]);
+    }
+
+    #[test]
+    fn offline_node_has_no_connection() {
+        let mut registry = Registry::default();
+        let start = Instant::now();
+        registry.handle(&hello(), start);
+        registry.check_presence(start + OFFLINE_AFTER);
+        assert_eq!(registry.node(DEVICE).unwrap().network.connection, None);
+
+        let back = start + OFFLINE_AFTER + Duration::from_secs(1);
+        registry.handle(&heartbeat(200), back);
+        let connection = registry.node(DEVICE).unwrap().network.connection.unwrap();
+        assert_eq!((connection.since, connection.exact), (back, false));
     }
 
     #[test]

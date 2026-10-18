@@ -1,4 +1,4 @@
-//! `/lab`: a page left out of the menu for trying out components and styles side by side.
+//! `/lab`: a page under Tools for trying out components and styles side by side.
 
 use topcoat::{
     Result,
@@ -14,10 +14,10 @@ pub async fn lab() -> Result<impl View> {
         layout(
             title: "Oxihome lab",
             <div class="space-y-8">
-                <a href="/settings" class="text-sm text-muted-foreground hover:underline">"← Settings"</a>
+                <a href="/tools" class="text-sm text-muted-foreground hover:underline">"← Tools"</a>
                 <div>
                     <h1 class="text-2xl font-semibold">"Lab"</h1>
-                    <p class="text-sm text-muted-foreground">"A page outside the menu for trying things out."</p>
+                    <p class="text-sm text-muted-foreground">"A page for trying things out."</p>
                 </div>
             </div>
         )

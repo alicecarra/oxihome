@@ -11,6 +11,7 @@ mod icons;
 mod install;
 mod lab;
 mod layout;
+mod network;
 mod node;
 mod nodes;
 mod overview;
@@ -19,6 +20,7 @@ mod rules;
 mod settings;
 mod timeline;
 mod toasts;
+mod tools;
 mod traffic;
 
 use std::sync::Arc;
@@ -79,6 +81,9 @@ pub fn router(hub: Arc<Hub>, auth: Auth, listen_host: &str, allowed_hosts: &[Str
         .page(settings::settings)
         .page(settings::settings_file)
         .page(lab::lab)
+        .page(tools::tools)
+        .page(network::network_page)
+        .page(network::network_fragment)
         .page(traffic::traffic_page)
         .page(traffic::traffic_map_fragment)
         .route(auth::login)

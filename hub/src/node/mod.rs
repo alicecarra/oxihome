@@ -2,6 +2,7 @@
 
 pub mod events;
 pub mod hardware;
+pub mod network;
 pub mod parameters;
 pub mod registry;
 pub mod state;

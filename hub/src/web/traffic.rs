@@ -374,7 +374,7 @@ pub async fn traffic_page(cx: &Cx) -> Result<impl View> {
         layout(
             title: "Oxihome traffic",
             <div class="space-y-4">
-                <a href="/settings" class="text-sm text-muted-foreground hover:underline">"← Settings"</a>
+                <a href="/tools" class="text-sm text-muted-foreground hover:underline">"← Tools"</a>
                 <div>
                     <h1 class="text-2xl font-semibold">"Traffic"</h1>
                     <p class="text-sm text-muted-foreground">

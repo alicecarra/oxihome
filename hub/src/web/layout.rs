@@ -13,14 +13,16 @@ use super::install::install_links;
 use super::overview;
 use super::rules::rules_indicator;
 use super::toasts::toast_poller;
+use super::tools::TOOLS;
 use crate::hub::Hub;
 
-pub(super) const MENU: [(&str, &str, IconData); 6] = [
+pub(super) const MENU: [(&str, &str, IconData); 7] = [
     ("/", "Dashboard", icons::DASHBOARD),
     ("/nodes", "Nodes", icons::NODES),
     ("/rules", "Rules", icons::RULES),
     ("/timeline", "Timeline", icons::TIMELINE),
     ("/remotes", "Remotes", icons::REMOTES),
+    ("/tools", "Tools", icons::TOOLS),
     ("/settings", "Settings", icons::SETTINGS),
 ];
 
@@ -31,12 +33,16 @@ pub async fn layout(cx: &Cx, title: &str, #[default] child: Child<'_>) -> Result
     let since = hub.last_notification_id();
     let failing_rules = overview::failing_rules(hub);
     let path = uri(cx).path().to_string();
-    // A section's own pages, like `/nodes/<id>`, light up its item too.
+    // A section's own pages, like `/nodes/<id>` or each tool, light up its item too.
     let current =
         |href: &str| path == href || (href != "/" && path.starts_with(&format!("{href}/")));
     let menu: Vec<(&str, &str, IconData, bool)> = MENU
         .into_iter()
-        .map(|(href, label, data)| (href, label, data, current(href)))
+        .map(|(href, label, data)| {
+            let active =
+                current(href) || (href == "/tools" && TOOLS.iter().any(|(tool, ..)| current(tool)));
+            (href, label, data, active)
+        })
         .collect();
     Ok(view! {
         <!DOCTYPE html>
