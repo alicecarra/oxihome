@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use jiff::Timestamp;
-use oxihome_protocol::{Message, Payload, QueryKind, management};
+use oxihome_protocol::{ErrorCode, Message, Payload, QueryKind, management};
 
 use crate::config::rules::{self, Rule, Subject};
 use crate::hub::Hub;
@@ -26,6 +26,21 @@ pub async fn on_connected(hub: &Hub) -> anyhow::Result<()> {
     .await
 }
 
+/// What an `Error` a node sent on its own says about its update, when it is about one. The board
+/// acknowledges the `Ota` command before downloading, so the failure comes later. Firmware before
+/// 0.19.0 sends `Internal` with an "OTA:" detail.
+fn update_failure(code: u16, detail: Option<&str>) -> Option<String> {
+    let detail = detail.unwrap_or("no detail");
+    match ErrorCode::try_from(code) {
+        Ok(ErrorCode::UpdateDownloadFailed) => Some(format!(
+            "download failed ({detail}); check [ota] public_url and that the board reaches its port"
+        )),
+        Ok(ErrorCode::UpdateRejected) => Some(format!("image rejected ({detail})")),
+        Ok(ErrorCode::Internal) if detail.starts_with("OTA:") => Some(detail.to_string()),
+        _ => None,
+    }
+}
+
 pub async fn on_message(hub: &Arc<Hub>, message: &Message) -> anyhow::Result<()> {
     let (node_events, updates, event) = hub.handle(message, Instant::now());
     match &message.payload {
@@ -33,24 +48,21 @@ pub async fn on_message(hub: &Arc<Hub>, message: &Message) -> anyhow::Result<()>
             hub.settle_update(&message.src, &build.version);
             hub.hardware_restarted(&message.src);
         }
-        Payload::Error {
-            detail: Some(detail),
-            ..
-        } if detail.starts_with("OTA:") => hub.fail_update(&message.src, detail),
-        Payload::Error {
-            detail: Some(detail),
-            ..
-        } if message.reply_to.is_none() => {
-            hub.record_node_report(&message.src, detail);
-            let report = RaisedAlert {
-                alert: Alert {
-                    kind: AlertKind::Reported,
-                    device_id: message.src.clone(),
-                    channel: None,
-                },
-                detail: detail.clone(),
-            };
-            on_alert(hub, &report);
+        Payload::Error { code, detail } if message.reply_to.is_none() => {
+            if let Some(failure) = update_failure(*code, detail.as_deref()) {
+                hub.fail_update(&message.src, &failure);
+            } else if let Some(detail) = detail {
+                hub.record_node_report(&message.src, detail);
+                let report = RaisedAlert {
+                    alert: Alert {
+                        kind: AlertKind::Reported,
+                        device_id: message.src.clone(),
+                        channel: None,
+                    },
+                    detail: detail.clone(),
+                };
+                on_alert(hub, &report);
+            }
         }
         _ => {}
     }
@@ -344,6 +356,64 @@ mod tests {
                 op: CommandOp::Set(Value::Int(60)),
             }
         );
+    }
+
+    #[test]
+    fn update_failures_by_code() {
+        let download = update_failure(ErrorCode::UpdateDownloadFailed.into(), Some("HTTP 404"));
+        assert!(download.unwrap().starts_with("download failed (HTTP 404)"));
+        assert_eq!(
+            update_failure(ErrorCode::UpdateRejected.into(), None).as_deref(),
+            Some("image rejected (no detail)")
+        );
+        assert_eq!(
+            update_failure(ErrorCode::Internal.into(), Some("OTA: ESP_FAIL")).as_deref(),
+            Some("OTA: ESP_FAIL")
+        );
+        assert_eq!(
+            update_failure(ErrorCode::Internal.into(), Some("DHT11: timeout")),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn only_update_errors_fail_an_update() {
+        let hub = Hub::for_tests("update-fails", "").await;
+        on_message(&hub, &hello("board")).await.unwrap();
+        hub.ota_for_tests()
+            .start("board", "0.9.0".into(), "0.9.1".into(), "0.9.1.bin".into())
+            .unwrap();
+        let error = |code: ErrorCode, detail: &str| {
+            Message::new(
+                "board",
+                1,
+                Payload::Error {
+                    code: code.into(),
+                    detail: Some(detail.into()),
+                },
+            )
+        };
+        let titles = |since| -> Vec<String> {
+            hub.notifications_since(since)
+                .into_iter()
+                .map(|notification| notification.title)
+                .collect()
+        };
+
+        let before = hub.last_notification_id();
+        on_message(&hub, &error(ErrorCode::Internal, "DHT11: timeout"))
+            .await
+            .unwrap();
+        assert!(hub.is_updating("board"));
+
+        on_message(
+            &hub,
+            &error(ErrorCode::UpdateRejected, "ESP_ERR_OTA_VALIDATE_FAILED"),
+        )
+        .await
+        .unwrap();
+        assert!(!hub.is_updating("board"));
+        assert!(titles(before).contains(&"board update failed".to_string()));
     }
 
     #[tokio::test]

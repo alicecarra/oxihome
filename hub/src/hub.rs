@@ -478,8 +478,17 @@ impl Hub {
             time_zone: TimeZone::UTC,
             storage,
             restored: crate::storage::Restored::default(),
-            ota: None,
+            ota: Some(Arc::new(Ota::new(&crate::ota::OtaConfig {
+                listen: "127.0.0.1:0".into(),
+                public_url: "http://localhost".into(),
+                images: directory.join("images"),
+            }))),
         }))
+    }
+
+    #[cfg(test)]
+    pub fn ota_for_tests(&self) -> &Ota {
+        self.ota.as_deref().unwrap()
     }
 
     pub fn snapshot(&self) -> Snapshot<'_> {
