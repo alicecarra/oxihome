@@ -9,3 +9,6 @@ oxihome-node = { path = "../node", features = ["mqtt"] }
 oxihome-protocol = { path = "../protocol" }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["io-std", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
+
+[dev-dependencies]
+serde_json = "1"

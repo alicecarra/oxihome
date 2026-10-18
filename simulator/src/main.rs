@@ -1,5 +1,6 @@
 //! Simulated nodes that talk to the hub over MQTT like real boards.
 
+mod console;
 mod node;
 
 use std::collections::HashMap;
@@ -8,22 +9,12 @@ use std::time::Instant;
 
 use oxihome_node::config::{BrokerConfig, parse_file, read_config};
 use oxihome_node::mqtt::{self, Handle, SoftwareNode};
+use oxihome_protocol::{Access, EntityDescriptor, Value};
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
+use console::{Command, HELP};
 use node::{Profile, SimulatedNode};
-
-const HELP: &str = "\
-commands:
-  list
-  press <node> <entity>
-  offline <node>
-  online <node>
-  reboot <node>
-  climate <node> <temperature> [humidity]   fixed readings, sent right away
-  climate <node> auto                       back to the slow wave
-  help
-  quit";
 
 #[derive(Deserialize)]
 struct Config {
@@ -52,17 +43,6 @@ struct NodeConfig {
     entities: Vec<Profile>,
 }
 
-enum Control {
-    Press(u8),
-    Offline,
-    Online,
-    Reboot,
-    Climate {
-        temperature: Option<f32>,
-        humidity: Option<f32>,
-    },
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let (_, config): (String, Config) = read_config("oxihome-simulator <config.toml>")?;
@@ -72,19 +52,24 @@ async fn main() -> anyhow::Result<()> {
         None => HashMap::new(),
     };
 
-    let mut handles = HashMap::new();
+    let mut nodes = HashMap::new();
     for node_config in &config.nodes {
-        let node = SimulatedNode::new(
-            node_config.id.clone(),
-            &node_config.entities,
-            Instant::now(),
-        );
+        let entities: Vec<EntityDescriptor> = node_config
+            .entities
+            .iter()
+            .zip(1..)
+            .map(|(profile, id)| profile.descriptor(id))
+            .collect();
+        let node = SimulatedNode::new(node_config.id.clone(), entities.clone(), Instant::now());
         let broker = BrokerConfig {
             password: passwords.remove(&node_config.id),
             ..config.mqtt.broker.clone()
         }
         .broker();
-        handles.insert(node_config.id.clone(), mqtt::spawn(node, broker));
+        nodes.insert(
+            node_config.id.clone(),
+            (entities, mqtt::spawn(node, broker)),
+        );
     }
 
     println!("{HELP}");
@@ -96,110 +81,143 @@ async fn main() -> anyhow::Result<()> {
             () = &mut shutdown => break,
         };
         let Some(line) = line else { break };
-        let words: Vec<&str> = line.split_whitespace().collect();
-        let (device_id, control) = match words.as_slice() {
-            [] => continue,
-            ["quit"] => break,
-            ["help"] => {
-                println!("{HELP}");
-                continue;
-            }
-            ["list"] => {
-                for node_config in &config.nodes {
-                    let entities: Vec<String> = node_config
-                        .entities
-                        .iter()
-                        .enumerate()
-                        .map(|(index, profile)| format!("{}={profile:?}", index + 1))
-                        .collect();
-                    println!("{} {}", node_config.id, entities.join(" "));
-                }
-                continue;
-            }
-            ["press", device_id, entity] => match entity.parse() {
-                Ok(entity) => (*device_id, Control::Press(entity)),
-                Err(_) => {
-                    println!("entity must be a number");
-                    continue;
-                }
-            },
-            ["offline", device_id] => (*device_id, Control::Offline),
-            ["online", device_id] => (*device_id, Control::Online),
-            ["reboot", device_id] => (*device_id, Control::Reboot),
-            ["climate", device_id, "auto"] => (
-                *device_id,
-                Control::Climate {
-                    temperature: None,
-                    humidity: None,
-                },
-            ),
-            ["climate", device_id, temperature, rest @ ..] if rest.len() <= 1 => {
-                let temperature = temperature.parse::<f32>();
-                let humidity = rest.first().map(|humidity| humidity.parse::<f32>());
-                match (temperature, humidity.transpose()) {
-                    (Ok(temperature), Ok(humidity)) => (
-                        *device_id,
-                        Control::Climate {
-                            temperature: Some(temperature),
-                            humidity,
-                        },
-                    ),
-                    _ => {
-                        println!("temperature and humidity must be numbers");
-                        continue;
-                    }
-                }
-            }
-            _ => {
-                println!("unknown command, type `help`");
+        let command = match console::parse(&line) {
+            Ok(Some(command)) => command,
+            Ok(None) => continue,
+            Err(error) => {
+                println!("{error}");
                 continue;
             }
         };
-        match handles.get(device_id) {
-            Some(handle) => apply(handle, control).await,
-            None => println!("unknown node {device_id}"),
+        let device_id = match &command {
+            Command::Quit => break,
+            Command::Help => {
+                println!("{HELP}");
+                continue;
+            }
+            Command::List => {
+                for node_config in &config.nodes {
+                    println!("{}", node_config.id);
+                    for line in console::describe(&nodes[&node_config.id].0) {
+                        println!("{line}");
+                    }
+                }
+                continue;
+            }
+            Command::Offline(device_id)
+            | Command::Online(device_id)
+            | Command::Reboot(device_id)
+            | Command::Set {
+                node: device_id, ..
+            }
+            | Command::Auto {
+                node: device_id, ..
+            }
+            | Command::Event {
+                node: device_id, ..
+            } => device_id.clone(),
+        };
+        let Some((entities, handle)) = nodes.get(&device_id) else {
+            println!("unknown node {device_id}");
+            continue;
+        };
+        if let Err(error) = apply(entities, handle, command).await {
+            println!("{device_id}: {error}");
         }
     }
     Ok(())
 }
 
-async fn apply(handle: &Handle<SimulatedNode>, control: Control) {
-    match control {
-        Control::Press(entity) => {
+async fn apply(
+    entities: &[EntityDescriptor],
+    handle: &Handle<SimulatedNode>,
+    command: Command,
+) -> Result<(), String> {
+    match command {
+        Command::Set {
+            entity,
+            channel,
+            value,
+            ..
+        } => {
+            let value = typed(entities, entity, Some(channel), None, &value)?;
             handle
-                .act(move |node| match node.press(entity) {
-                    Some(event) => vec![event],
-                    None => {
-                        println!("{} entity {entity} is not a button", node.device_id());
+                .act(move |node| {
+                    node.set(entity, channel, value).unwrap_or_else(|error| {
+                        println!("{} {error}", node.device_id());
+                        Vec::new()
+                    })
+                })
+                .await;
+        }
+        Command::Auto { channel, .. } => {
+            handle.act(move |node| node.release(channel)).await;
+        }
+        Command::Event {
+            entity,
+            channel,
+            value,
+            ..
+        } => {
+            let value = value
+                .map(|value| typed(entities, entity, channel, Some(Access::Event), &value))
+                .transpose()?;
+            handle
+                .act(move |node| match node.event(entity, channel, value) {
+                    Ok(event) => vec![event],
+                    Err(error) => {
+                        println!("{} {error}", node.device_id());
                         Vec::new()
                     }
                 })
-                .await
+                .await;
         }
-        Control::Reboot => {
+        Command::Reboot(_) => {
             handle
                 .act(|node| {
                     println!("{} rebooting", node.device_id());
                     node.reboot(Instant::now());
                     node.announcement()
                 })
-                .await
+                .await;
         }
-        Control::Climate {
-            temperature,
-            humidity,
-        } => {
-            handle
-                .act(move |node| {
-                    let states = node.set_climate(temperature, humidity);
-                    if states.is_empty() {
-                        println!("{} has no climate sensor", node.device_id());
-                    }
-                    states
-                })
-                .await
+        Command::Offline(_) => {
+            handle.disconnect().await;
         }
-        Control::Offline => handle.disconnect().await,
-        Control::Online => handle.connect().await,
-    };
+        Command::Online(_) => {
+            handle.connect().await;
+        }
+        Command::List | Command::Help | Command::Quit => {}
+    }
+    Ok(())
+}
+
+/// `text` read as the type of `channel`, or of the entity's first channel with `access`.
+fn typed(
+    entities: &[EntityDescriptor],
+    entity: u8,
+    channel: Option<u8>,
+    access: Option<Access>,
+    text: &str,
+) -> Result<Value, String> {
+    let declared = entities
+        .iter()
+        .find(|declared| declared.id == entity)
+        .ok_or_else(|| format!("no entity {entity}"))?
+        .channels
+        .iter()
+        .find(|declared| {
+            channel.is_none_or(|channel| declared.id == channel)
+                && access.is_none_or(|access| declared.access == access)
+        })
+        .ok_or_else(|| match channel {
+            Some(channel) => format!("no channel {entity}.{channel}"),
+            None => format!("entity {entity} has no event channel"),
+        })?;
+    let value_type = declared
+        .value
+        .as_ref()
+        .ok_or_else(|| format!("{entity}.{} takes no value", declared.id))?;
+    console::parse_value(value_type, text)
+        .map_err(|error| format!("{entity}.{}: {error}", declared.id))
 }

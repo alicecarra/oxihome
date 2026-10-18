@@ -1972,6 +1972,7 @@ dependencies = [
  "oxihome-node",
  "oxihome-protocol",
  "serde",
+ "serde_json",
  "tokio",
 ]
 
