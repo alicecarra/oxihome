@@ -105,6 +105,7 @@ pub fn router(hub: Arc<Hub>, auth: Auth, listen_host: &str, allowed_hosts: &[Str
         .route(traffic::traffic_events)
         .route(htmx_script)
         .route(htmx_sse_script)
+        .route(config_editor_script)
         .route(filter_script)
         .route(node_sort_script)
         .route(remote_codes_script)
