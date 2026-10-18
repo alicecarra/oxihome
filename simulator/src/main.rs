@@ -2,6 +2,7 @@
 
 mod action;
 mod console;
+mod control;
 mod node;
 
 use std::collections::HashMap;
@@ -17,12 +18,21 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 use action::Action;
 use console::{Command, HELP};
+use control::ControlNode;
 use node::{Profile, SimulatedNode};
 
 #[derive(Deserialize)]
 struct Config {
     mqtt: MqttConfig,
     nodes: Vec<NodeConfig>,
+    /// Without it, the nodes are controlled from the console only.
+    control: Option<ControlConfig>,
+}
+
+#[derive(Deserialize)]
+struct ControlConfig {
+    /// The control node's device id, which logs in to the broker like the others.
+    id: String,
 }
 
 #[derive(Deserialize)]
@@ -93,12 +103,39 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    let (actions, mut requested) = tokio::sync::mpsc::unbounded_channel();
+    let control = config.control.as_ref().map(|control_config| {
+        let simulated: Vec<(String, Vec<EntityDescriptor>)> = config
+            .nodes
+            .iter()
+            .map(|node_config| (node_config.id.clone(), nodes[&node_config.id].0.clone()))
+            .collect();
+        let control = ControlNode::new(control_config.id.clone(), &simulated, actions);
+        let entities = control.entities().to_vec();
+        let broker = BrokerConfig {
+            password: passwords.remove(&control_config.id),
+            ..config.mqtt.broker.clone()
+        }
+        .broker();
+        (
+            control_config.id.clone(),
+            entities,
+            mqtt::spawn(control, broker),
+        )
+    });
+
     println!("{HELP}");
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     let mut shutdown = std::pin::pin!(oxihome_node::shutdown_signal());
     loop {
         let line = tokio::select! {
             line = lines.next_line() => line?,
+            Some((device_id, action)) = requested.recv() => {
+                if let Some((_, handle)) = nodes.get(&device_id) {
+                    action::apply(handle, action).await;
+                }
+                continue;
+            }
             () = &mut shutdown => break,
         };
         let Some(line) = line else { break };
@@ -123,6 +160,12 @@ async fn main() -> anyhow::Result<()> {
                         println!("{line}");
                     }
                 }
+                if let Some((device_id, entities, _)) = &control {
+                    println!("{device_id} (controls)");
+                    for line in console::describe(entities) {
+                        println!("{line}");
+                    }
+                }
                 continue;
             }
             Command::Offline(device_id)
@@ -143,7 +186,19 @@ async fn main() -> anyhow::Result<()> {
             continue;
         };
         match typed_action(entities, command) {
-            Ok(action) => action::apply(handle, action).await,
+            Ok(action) => {
+                let online = match action {
+                    Action::Online => Some(true),
+                    Action::Offline => Some(false),
+                    _ => None,
+                };
+                action::apply(handle, action).await;
+                if let (Some(online), Some((_, _, control_handle))) = (online, &control) {
+                    control_handle
+                        .act(move |control| control.reflect(&device_id, online))
+                        .await;
+                }
+            }
             Err(error) => println!("{device_id}: {error}"),
         }
     }
