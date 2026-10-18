@@ -377,6 +377,10 @@ impl Device for Board {
         }
     }
 
+    fn ip(&self) -> Option<String> {
+        crate::wifi::ip().map(|ip| ip.to_string())
+    }
+
     /// Commands arrive checked against `entities`: right channel, operation and value.
     fn command(&mut self, entity: u8, channel: u8, op: &CommandOp) -> Result<(), Rejection> {
         let internal = |what: &str, error: &dyn std::fmt::Display| {

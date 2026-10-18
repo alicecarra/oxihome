@@ -73,3 +73,17 @@ pub fn rssi() -> Option<i8> {
     let result = unsafe { esp_idf_svc::sys::esp_wifi_sta_get_ap_info(&mut record) };
     (result == esp_idf_svc::sys::ESP_OK).then_some(record.rssi)
 }
+
+/// `None` while the station has no address.
+pub fn ip() -> Option<std::net::Ipv4Addr> {
+    use esp_idf_svc::sys::*;
+    let netif = unsafe { esp_netif_get_handle_from_ifkey(c"WIFI_STA_DEF".as_ptr()) };
+    if netif.is_null() {
+        return None;
+    }
+    let mut info = esp_netif_ip_info_t::default();
+    esp!(unsafe { esp_netif_get_ip_info(netif, &mut info) }).ok()?;
+    // Stored in network byte order.
+    let ip = std::net::Ipv4Addr::from(info.ip.addr.to_le_bytes());
+    (!ip.is_unspecified()).then_some(ip)
+}
