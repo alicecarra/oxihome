@@ -4,6 +4,8 @@
 //! feature adds a runtime for nodes that run on a computer.
 
 #[cfg(feature = "mqtt")]
+pub mod config;
+#[cfg(feature = "mqtt")]
 pub mod mqtt;
 mod validation;
 

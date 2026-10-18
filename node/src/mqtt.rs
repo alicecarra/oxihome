@@ -12,6 +12,8 @@ const BROADCAST_TOPIC: &str = "oxihome/broadcast/down";
 
 /// Messages waiting for the connection; a computer can hold far more than a board.
 pub const DEFAULT_QUEUE_SIZE: usize = 4096;
+/// Matches the default `HeartbeatInterval`.
+pub const REPORT_INTERVAL: Duration = Duration::from_secs(30);
 
 /// A node that runs on a computer: the protocol side usually comes from a [`crate::NodeCore`].
 pub trait SoftwareNode: Send + 'static {
