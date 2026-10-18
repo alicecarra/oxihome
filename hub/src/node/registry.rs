@@ -356,7 +356,11 @@ impl Registry {
                     management::parameter(channel_value.channel),
                     &channel_value.value,
                 ) {
-                    (Some(HEARTBEAT_INTERVAL), Value::Int(seconds)) => u64::try_from(*seconds).ok(),
+                    (Some(HEARTBEAT_INTERVAL), Value::Int(seconds))
+                        if HEARTBEAT_INTERVAL.accepts(*seconds) =>
+                    {
+                        Some(u64::from(seconds.unsigned_abs()))
+                    }
                     _ => None,
                 }
             });
@@ -561,6 +565,20 @@ mod tests {
         assert_eq!(
             registry.check_presence(start + Duration::from_secs(30)),
             vec![NodeEvent::Offline(DEVICE.into())]
+        );
+    }
+
+    #[test]
+    fn heartbeat_interval_out_of_range_is_ignored() {
+        let mut registry = Registry::default();
+        let start = Instant::now();
+        registry.handle(&hello(), start);
+        registry.handle(&heartbeat_interval(0), start);
+
+        assert!(
+            registry
+                .check_presence(start + Duration::from_secs(1))
+                .is_empty()
         );
     }
 
