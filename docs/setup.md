@@ -129,7 +129,7 @@ sudo firewall-cmd --zone=public --add-rich-rule='rule family="ipv4" source addre
 ```
 
 Add `--permanent` and run `sudo firewall-cmd --reload` to keep it. Without the rule, the board
-reports `OTA: ESP_ERR_HTTP_CONNECT` after about 18 s and stays on its version.
+reports `UpdateDownloadFailed` (`ESP_ERR_HTTP_CONNECT`) after about 18 s and stays on its version.
 
 The production hub on docker-host serves the images itself (`public_url` on 192.168.15.100) and
 needs none of this: Docker publishes 8081 there. Without sudo on the notebook, a relay in Docker
@@ -139,14 +139,18 @@ TCP:host.docker.internal:8081`, with `public_url` on port 8082).
 
 That server is separate from the web interface, which stays private (`127.0.0.1` on the notebook;
 in production `0.0.0.0` inside the container, published only on docker-host's localhost for
-Caddy), and answers only `GET /ota/<token>`: a random link that works once and for 5 minutes. When an online node that
-declares the `Ota` channel has an image newer than its firmware, its page shows **Update to x.y.z**.
+Caddy), and answers only `GET /ota/<token>`: a random link that works once and for 5 minutes.
+When an online node that declares the `Ota` channel has an image newer than its firmware, its page
+shows **Update to x.y.z**.
 The hub sends the link in an `Ota` command over MQTT; the board answers, downloads the image into
 its other app slot and reboots into it. The new image is on trial until it reaches the broker and
 sends its `Hello`; if it does not within 60 s, the board restarts and the bootloader goes back to
 the previous one. The hub notifies the outcome: updated (the `Hello` has the new version), rolled
-back (it has the old one), failed (the board reported an error, e.g. a broken download) or no
-answer within 5 minutes.
+back (it has the old one), failed or no answer within 5 minutes. A failure comes as an `Error` of
+its own after the command's `Ack`: `UpdateDownloadFailed` (8) when the image could not be
+downloaded (no connection, HTTP status, transfer cut), `UpdateRejected` (9) when it failed the
+final check (corrupt, or for another chip), `Internal` for a flash write error. Firmware before
+0.19.0 sends `Internal` with an "OTA:" detail, which the hub also takes as a failed update.
 
 Each finished update is also stored in the `updates` table, which is never pruned: the node page's
 **History** section (between the fields and the rules, refreshed live) lists the last 10
