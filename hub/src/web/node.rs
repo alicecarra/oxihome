@@ -16,7 +16,7 @@ use super::format::{duration_label, unit_symbol};
 use super::layout::layout;
 use super::nodes::{presence_badge, protocol_badge};
 use super::overview::{self, NodeOverview, ParameterOverview};
-use crate::components::button::{ButtonSize, ButtonVariant, button};
+use crate::components::button::{ButtonSize, ButtonVariant, button, button_variants};
 use crate::components::card::{card, card_content, card_description, card_header, card_title};
 use crate::components::input::input;
 use crate::config::nodes::parameter_key;
@@ -24,6 +24,7 @@ use crate::config::rules::RuleUse;
 use crate::hub::{Hub, UpdateStatus};
 use crate::storage::{StoredNotification, StoredUpdate};
 
+mod download;
 mod fields;
 mod forms;
 mod hardware;
@@ -33,6 +34,7 @@ use fields::{fields_section, rules_section};
 use hardware::{hardware_rows, hardware_section};
 use history::{history, history_section};
 
+pub use download::entities_download;
 pub use forms::{edit, forget, start_update};
 pub use hardware::hardware_fragment;
 pub use history::history_fragment;
@@ -303,6 +305,15 @@ async fn overview_section(
                             },
                             None => {},
                         }
+                        <div class="mt-4">
+                            <a
+                                href=(format!("/nodes/{device_id}/entities.json"))
+                                download=""
+                                class=(button_variants(ButtonVariant::Outline, ButtonSize::Sm))
+                            >
+                                "Download entities"
+                            </a>
+                        </div>
                         if node.presence == overview::Presence::Offline {
                             <div class="mt-4">
                                 button(

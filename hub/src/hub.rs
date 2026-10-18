@@ -7,7 +7,7 @@ use anyhow::ensure;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use oxihome_protocol::management::{self};
-use oxihome_protocol::{CommandOp, Message, PROTOCOL_VERSION, Payload, Value};
+use oxihome_protocol::{CommandOp, EntityDescriptor, Message, PROTOCOL_VERSION, Payload, Value};
 use tokio::sync::{broadcast, watch};
 
 use crate::commands::Commands;
@@ -420,6 +420,15 @@ impl Hub {
             .into_iter()
             .map(|(device_id, _)| device_id.clone())
             .collect()
+    }
+
+    /// What the node declared in its last `Hello`.
+    pub fn entities(&self, device_id: &str) -> Option<Vec<EntityDescriptor>> {
+        self.registry
+            .lock()
+            .unwrap()
+            .node(device_id)
+            .map(|node| node.entities.clone())
     }
 
     pub fn time_zone(&self) -> &TimeZone {
