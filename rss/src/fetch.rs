@@ -48,7 +48,7 @@ impl Fetcher {
         if response.status() == StatusCode::NOT_MODIFIED {
             return Ok(Fetched::NotModified);
         }
-        let response = response.error_for_status()?;
+        let mut response = response.error_for_status()?;
         if response
             .content_length()
             .is_some_and(|length| length > MAX_SIZE as u64)
@@ -64,9 +64,12 @@ impl Fetcher {
         };
         let etag = header(ETAG);
         let last_modified = header(LAST_MODIFIED);
-        let body = response.bytes().await?;
-        if body.len() > MAX_SIZE {
-            bail!("larger than {MAX_SIZE} bytes");
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if body.len() + chunk.len() > MAX_SIZE {
+                bail!("larger than {MAX_SIZE} bytes");
+            }
+            body.extend_from_slice(&chunk);
         }
         let items = parse(&body)?;
         self.etag = etag;
