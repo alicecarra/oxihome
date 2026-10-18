@@ -33,6 +33,21 @@ pub enum Write {
     Flush(oneshot::Sender<()>),
 }
 
+impl Write {
+    fn kind(&self) -> &'static str {
+        match self {
+            Write::Node(_) => "node",
+            Write::Value(..) => "value",
+            Write::Event(..) => "event",
+            Write::RuleRun(..) => "rule run",
+            Write::Notification(_) => "notification",
+            Write::Update(_) => "update",
+            Write::Command(_) => "command",
+            Write::Flush(_) => "flush",
+        }
+    }
+}
+
 /// What the hub knew when it stopped.
 #[derive(Default)]
 pub struct Restored {
@@ -614,9 +629,7 @@ async fn write_loop(
                 while let Ok(write) = receiver.try_recv() {
                     batch.push(write);
                 }
-                if let Err(error) = write_batch(&pool, batch).await {
-                    println!("storage: {error:#}");
-                }
+                write_batch(&pool, batch).await;
             }
             _ = prune.tick() => {
                 if let Err(error) = prune_older(&pool, retention).await {
@@ -627,86 +640,117 @@ async fn write_loop(
     }
 }
 
-/// One transaction for everything queued together.
-async fn write_batch(pool: &SqlitePool, batch: Vec<Write>) -> anyhow::Result<()> {
+/// One transaction for everything queued together. When it fails, each write is retried on its
+/// own, so a bad one does not take the others down with it.
+async fn write_batch(pool: &SqlitePool, batch: Vec<Write>) {
     let mut flushed = Vec::new();
-    let mut transaction = pool.begin().await?;
+    let mut writes = Vec::new();
     for write in batch {
         match write {
-            Write::Node(node) => write_node(&mut transaction, &node).await?,
-            Write::Value(update, at) => write_value(&mut transaction, &update, at).await?,
-            Write::Event(event, at) => write_event(&mut transaction, &event, at).await?,
-            Write::RuleRun(name, run) => {
-                sqlx::query(
-                    "INSERT INTO rule_runs (name, at, errors) VALUES (?, ?, ?)
-                     ON CONFLICT (name) DO UPDATE SET at = excluded.at, errors = excluded.errors",
-                )
-                .bind(&name)
-                .bind(run.at.as_millisecond())
-                .bind(serde_json::to_string(&run.errors)?)
-                .execute(&mut *transaction)
-                .await?;
-                sqlx::query("INSERT INTO rule_executions (name, at, errors) VALUES (?, ?, ?)")
-                    .bind(name)
-                    .bind(run.at.as_millisecond())
-                    .bind(serde_json::to_string(&run.errors)?)
-                    .execute(&mut *transaction)
-                    .await?;
-            }
-            Write::Command(command) => {
-                sqlx::query(
-                    "INSERT INTO commands (device_id, entity, channel, at, operation, value, rule,
-                     error) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                )
-                .bind(command.device_id)
-                .bind(command.entity)
-                .bind(command.channel)
-                .bind(command.at.as_millisecond())
-                .bind(command.operation.key())
-                .bind(
-                    command
-                        .value
-                        .as_ref()
-                        .map(serde_json::to_string)
-                        .transpose()?,
-                )
-                .bind(command.rule)
-                .bind(command.error)
-                .execute(&mut *transaction)
-                .await?;
-            }
-            Write::Notification(notification) => {
-                sqlx::query(
-                    "INSERT INTO notifications (at, title, message, source) VALUES (?, ?, ?, ?)",
-                )
-                .bind(notification.at.as_millisecond())
-                .bind(notification.title)
-                .bind(notification.message)
-                .bind(notification.source)
-                .execute(&mut *transaction)
-                .await?;
-            }
-            Write::Update(update) => {
-                sqlx::query(
-                    "INSERT INTO updates (device_id, started_at, finished_at, from_version,
-                     to_version, outcome, detail) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                )
-                .bind(update.device_id)
-                .bind(update.started_at.as_millisecond())
-                .bind(update.finished_at.as_millisecond())
-                .bind(update.from_version)
-                .bind(update.to_version)
-                .bind(update.outcome.key())
-                .bind(update.detail)
-                .execute(&mut *transaction)
-                .await?;
-            }
             Write::Flush(sender) => flushed.push(sender),
+            write => writes.push(write),
         }
     }
-    transaction.commit().await?;
+    if let Err(error) = write_all(pool, &writes).await {
+        if writes.len() == 1 {
+            println!("storage: {} dropped: {error:#}", writes[0].kind());
+        } else {
+            println!(
+                "storage: {} writes failed together ({error:#}); writing them one by one",
+                writes.len()
+            );
+            for write in &writes {
+                if let Err(error) = write_all(pool, std::slice::from_ref(write)).await {
+                    println!("storage: {} dropped: {error:#}", write.kind());
+                }
+            }
+        }
+    }
     for sender in flushed {
         let _ = sender.send(());
+    }
+}
+
+async fn write_all(pool: &SqlitePool, writes: &[Write]) -> anyhow::Result<()> {
+    let mut transaction = pool.begin().await?;
+    for write in writes {
+        write_one(&mut transaction, write).await?;
+    }
+    transaction.commit().await?;
+    Ok(())
+}
+
+async fn write_one(transaction: &mut Transaction<'_, Sqlite>, write: &Write) -> anyhow::Result<()> {
+    match write {
+        Write::Node(node) => write_node(transaction, node).await?,
+        Write::Value(update, at) => write_value(transaction, update, *at).await?,
+        Write::Event(event, at) => write_event(transaction, event, *at).await?,
+        Write::RuleRun(name, run) => {
+            sqlx::query(
+                "INSERT INTO rule_runs (name, at, errors) VALUES (?, ?, ?)
+                 ON CONFLICT (name) DO UPDATE SET at = excluded.at, errors = excluded.errors",
+            )
+            .bind(name)
+            .bind(run.at.as_millisecond())
+            .bind(serde_json::to_string(&run.errors)?)
+            .execute(&mut **transaction)
+            .await?;
+            sqlx::query("INSERT INTO rule_executions (name, at, errors) VALUES (?, ?, ?)")
+                .bind(name)
+                .bind(run.at.as_millisecond())
+                .bind(serde_json::to_string(&run.errors)?)
+                .execute(&mut **transaction)
+                .await?;
+        }
+        Write::Command(command) => {
+            sqlx::query(
+                "INSERT INTO commands (device_id, entity, channel, at, operation, value, rule,
+                 error) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&command.device_id)
+            .bind(command.entity)
+            .bind(command.channel)
+            .bind(command.at.as_millisecond())
+            .bind(command.operation.key())
+            .bind(
+                command
+                    .value
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()?,
+            )
+            .bind(&command.rule)
+            .bind(&command.error)
+            .execute(&mut **transaction)
+            .await?;
+        }
+        Write::Notification(notification) => {
+            sqlx::query(
+                "INSERT INTO notifications (at, title, message, source) VALUES (?, ?, ?, ?)",
+            )
+            .bind(notification.at.as_millisecond())
+            .bind(&notification.title)
+            .bind(&notification.message)
+            .bind(&notification.source)
+            .execute(&mut **transaction)
+            .await?;
+        }
+        Write::Update(update) => {
+            sqlx::query(
+                "INSERT INTO updates (device_id, started_at, finished_at, from_version,
+                 to_version, outcome, detail) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&update.device_id)
+            .bind(update.started_at.as_millisecond())
+            .bind(update.finished_at.as_millisecond())
+            .bind(&update.from_version)
+            .bind(&update.to_version)
+            .bind(update.outcome.key())
+            .bind(&update.detail)
+            .execute(&mut **transaction)
+            .await?;
+        }
+        Write::Flush(_) => {}
     }
     Ok(())
 }
@@ -977,6 +1021,66 @@ mod tests {
             Confidence::Assumed
         );
         assert_eq!(variant_name(&EventKind::LongPress).unwrap(), "LongPress");
+    }
+
+    #[tokio::test]
+    async fn a_failed_write_does_not_drop_the_rest_of_its_batch() {
+        let directory =
+            std::env::temp_dir().join(format!("oxihome-storage-batch-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("hub.sqlite");
+        let _ = std::fs::remove_file(&path);
+        let (storage, _) = Storage::open(&path, Duration::from_secs(3600))
+            .await
+            .unwrap();
+        sqlx::query("DROP TABLE commands")
+            .execute(&storage.pool)
+            .await
+            .unwrap();
+        let at = Timestamp::now();
+
+        write_batch(
+            &storage.pool,
+            vec![
+                Write::Node(StoredNode {
+                    device_id: "esp32-test".into(),
+                    build: Build::new("firmware", "0.9.0", "esp32"),
+                    protocol_version: 2,
+                    entities: Vec::new(),
+                    last_seen: at,
+                    uptime_seconds: None,
+                    rssi: None,
+                    heartbeat_interval: Duration::from_secs(30),
+                }),
+                Write::Command(StoredCommand {
+                    device_id: "esp32-test".into(),
+                    entity: 1,
+                    channel: 0,
+                    at,
+                    operation: Operation::Set,
+                    value: Some(Value::Bool(true)),
+                    rule: None,
+                    error: None,
+                }),
+                Write::Notification(StoredNotification {
+                    title: "Saved".into(),
+                    message: String::new(),
+                    source: "test".into(),
+                    at,
+                }),
+            ],
+        )
+        .await;
+
+        let nodes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM nodes")
+            .fetch_one(&storage.pool)
+            .await
+            .unwrap();
+        let notifications: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notifications")
+            .fetch_one(&storage.pool)
+            .await
+            .unwrap();
+        assert_eq!((nodes, notifications), (1, 1));
     }
 
     #[tokio::test]
