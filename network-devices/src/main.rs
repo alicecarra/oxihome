@@ -90,7 +90,7 @@ async fn main() -> anyhow::Result<()> {
             () = oxihome_node::shutdown_signal() => return Ok(()),
         }
 
-        if let Err(error) = scan::probe(subnet) {
+        if let Err(error) = tokio::task::spawn_blocking(move || scan::probe(subnet)).await? {
             println!("probing {subnet} failed: {error}");
             continue;
         }
