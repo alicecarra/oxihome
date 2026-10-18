@@ -79,7 +79,14 @@ impl Fetcher {
 pub fn parse(body: &[u8]) -> anyhow::Result<Vec<Item>> {
     let feed = feed_rs::parser::parse(body).context("reading the feed")?;
     let mut items: Vec<Item> = feed.entries.into_iter().rev().map(item).collect();
-    items.sort_by_key(|item| item.date);
+    let dated: Vec<usize> = (0..items.len())
+        .filter(|&index| items[index].date.is_some())
+        .collect();
+    let mut sorted: Vec<Item> = dated.iter().map(|&index| items[index].clone()).collect();
+    sorted.sort_by_key(|item| item.date);
+    for (index, item) in dated.into_iter().zip(sorted) {
+        items[index] = item;
+    }
     Ok(items)
 }
 
@@ -164,6 +171,23 @@ mod tests {
         let titles: Vec<_> = items.iter().map(|item| item.title.as_str()).collect();
         assert_eq!(titles, ["Oldest", UNTITLED, "Newest"]);
         assert_eq!(items[2].id, "3");
+    }
+
+    #[test]
+    fn items_without_dates_stay_in_place_among_dated_ones() {
+        let rss = br#"<?xml version="1.0"?>
+<rss version="2.0"><channel>
+  <title>Blog</title>
+  <link>https://example.com</link>
+  <description>Posts</description>
+  <item><title>C</title><guid>c</guid><pubDate>Wed, 14 Oct 2026 12:00:00 GMT</pubDate></item>
+  <item><title>Undated</title><guid>u</guid></item>
+  <item><title>A</title><guid>a</guid><pubDate>Mon, 12 Oct 2026 12:00:00 GMT</pubDate></item>
+  <item><title>B</title><guid>b</guid><pubDate>Tue, 13 Oct 2026 12:00:00 GMT</pubDate></item>
+</channel></rss>"#;
+        let items = parse(rss).unwrap();
+        let titles: Vec<_> = items.iter().map(|item| item.title.as_str()).collect();
+        assert_eq!(titles, ["A", "B", "Undated", "C"]);
     }
 
     #[test]
