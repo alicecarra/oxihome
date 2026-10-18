@@ -468,7 +468,10 @@ mod tests {
             }
             .validate("esp32c6")
         };
-        assert_eq!(check(35, Driver::Output { inverted: false }).len(), 1);
+        assert_eq!(
+            check(35, Driver::Output { inverted: false }),
+            vec![HardwareProblem::MissingPin { entity: 1, pin: 35 }]
+        );
         assert_eq!(
             check(24, Driver::Buzzer),
             vec![HardwareProblem::ReservedPin { entity: 1, pin: 24 }]

@@ -37,7 +37,7 @@ pub fn read(json: &str) -> Result<Message, ReadError> {
     let envelope = Message::envelope(json).map_err(ReadError::Invalid)?;
     match envelope.version {
         PROTOCOL_VERSION => Message::from_json(json).map_err(ReadError::Invalid),
-        1 => {
+        OLDEST_PROTOCOL_VERSION => {
             let mut message: Json = serde_json::from_str(json).map_err(ReadError::Invalid)?;
             upgrade_version_1(&mut message);
             serde_json::from_value(message).map_err(ReadError::Invalid)

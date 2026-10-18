@@ -222,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn text_values_are_plain_json_strings() {
+    fn text_values_are_externally_tagged() {
         let json = serde_json::to_string(&Value::Text("NEC 00 45".into())).unwrap();
         assert_eq!(json, r#"{"Text":"NEC 00 45"}"#);
         let json = serde_json::to_string(&ValueType::Text { max_length: 1024 }).unwrap();
