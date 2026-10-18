@@ -1,5 +1,6 @@
 //! Simulated nodes that talk to the hub over MQTT like real boards.
 
+mod action;
 mod console;
 mod node;
 
@@ -8,13 +9,13 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::Context;
-
 use oxihome_node::config::{BrokerConfig, parse_file, read_config};
-use oxihome_node::mqtt::{self, Handle, SoftwareNode};
+use oxihome_node::mqtt;
 use oxihome_protocol::{Access, EntityDescriptor, Value};
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
+use action::Action;
 use console::{Command, HELP};
 use node::{Profile, SimulatedNode};
 
@@ -141,75 +142,47 @@ async fn main() -> anyhow::Result<()> {
             println!("unknown node {device_id}");
             continue;
         };
-        if let Err(error) = apply(entities, handle, command).await {
-            println!("{device_id}: {error}");
+        match typed_action(entities, command) {
+            Ok(action) => action::apply(handle, action).await,
+            Err(error) => println!("{device_id}: {error}"),
         }
     }
     Ok(())
 }
 
-async fn apply(
-    entities: &[EntityDescriptor],
-    handle: &Handle<SimulatedNode>,
-    command: Command,
-) -> Result<(), String> {
-    match command {
+/// The command with its values read as the node's channels declare them.
+fn typed_action(entities: &[EntityDescriptor], command: Command) -> Result<Action, String> {
+    Ok(match command {
+        Command::Online(_) => Action::Online,
+        Command::Offline(_) => Action::Offline,
+        Command::Reboot(_) => Action::Reboot,
         Command::Set {
             entity,
             channel,
             value,
             ..
-        } => {
-            let value = typed(entities, entity, Some(channel), None, &value)?;
-            handle
-                .act(move |node| {
-                    node.set(entity, channel, value).unwrap_or_else(|error| {
-                        println!("{} {error}", node.device_id());
-                        Vec::new()
-                    })
-                })
-                .await;
-        }
-        Command::Auto { channel, .. } => {
-            handle.act(move |node| node.release(channel)).await;
-        }
+        } => Action::Set {
+            entity,
+            channel,
+            value: typed(entities, entity, Some(channel), None, &value)?,
+        },
+        Command::Auto { channel, .. } => Action::Auto { channel },
         Command::Event {
             entity,
             channel,
             value,
             ..
-        } => {
-            let value = value
+        } => Action::Event {
+            entity,
+            channel,
+            value: value
                 .map(|value| typed(entities, entity, channel, Some(Access::Event), &value))
-                .transpose()?;
-            handle
-                .act(move |node| match node.event(entity, channel, value) {
-                    Ok(event) => vec![event],
-                    Err(error) => {
-                        println!("{} {error}", node.device_id());
-                        Vec::new()
-                    }
-                })
-                .await;
+                .transpose()?,
+        },
+        Command::List | Command::Help | Command::Quit => {
+            return Err("not a node command".into());
         }
-        Command::Reboot(_) => {
-            handle
-                .act(|node| {
-                    println!("{} rebooting", node.device_id());
-                    node.reboot(Instant::now());
-                    node.announcement()
-                })
-                .await;
-        }
-        Command::Offline(_) => {
-            handle.disconnect().await;
-        }
-        Command::Online(_) => {
-            handle.connect().await;
-        }
-        Command::List | Command::Help | Command::Quit => {}
-    }
-    Ok(())
+    })
 }
 
 /// `text` read as the type of `channel`, or of the entity's first channel with `access`.
@@ -240,4 +213,45 @@ fn typed(
         .ok_or_else(|| format!("{entity}.{} takes no value", declared.id))?;
     console::parse_value(value_type, text)
         .map_err(|error| format!("{entity}.{}: {error}", declared.id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entities() -> Vec<EntityDescriptor> {
+        [Profile::Lamp, Profile::Button, Profile::ClimateSensor]
+            .iter()
+            .zip(1..)
+            .map(|(profile, id)| profile.descriptor(id))
+            .collect()
+    }
+
+    fn action(line: &str) -> Result<Action, String> {
+        typed_action(&entities(), console::parse(line).unwrap().unwrap())
+    }
+
+    #[test]
+    fn typed_values_follow_the_channels() {
+        assert_eq!(
+            action("set sim 3.0 31"),
+            Ok(Action::Set {
+                entity: 3,
+                channel: 0,
+                value: Value::Float(31.0),
+            })
+        );
+        assert_eq!(
+            action("press sim 2"),
+            Ok(Action::Event {
+                entity: 2,
+                channel: None,
+                value: None,
+            })
+        );
+        assert_eq!(action("offline sim"), Ok(Action::Offline));
+        assert!(action("set sim 3.0 99").is_err());
+        assert!(action("set sim 3.7 20").is_err());
+        assert!(action("event sim 2 now").is_err());
+    }
 }
