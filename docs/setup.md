@@ -156,7 +156,8 @@ Each finished update is also stored in the `updates` table, kept until the node 
 below): the node page's
 **History** section (between the fields and the rules, refreshed live) lists the last 10
 (versions, outcome, how long it took), next to the last 10
-notifications about the node (offline, back online, rebooted, updates), which go away with the
+notifications about the node (offline, back online, rebooted, updates; the reboot of an update is
+not notified), which go away with the
 rest of the history after `retention_days`.
 
 An offline node's page has a **Forget** button: the hub drops the node from memory and its rows

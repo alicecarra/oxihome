@@ -500,6 +500,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_reboot_of_an_update_is_not_notified() {
+        let hub = Hub::for_tests("update-reboot", "").await;
+        let heartbeat = |uptime_s| {
+            Message::new(
+                "board",
+                1,
+                Payload::Heartbeat {
+                    uptime_s,
+                    rssi: None,
+                    battery: None,
+                },
+            )
+        };
+        on_message(&hub, &hello("board"));
+        on_message(&hub, &heartbeat(3000));
+        hub.ota_for_tests()
+            .start("board", "0.9.0".into(), "0.9.1".into(), "0.9.1.bin".into())
+            .unwrap();
+        let before = hub.last_notification_id();
+
+        let updated = Message::new(
+            "board",
+            0,
+            Payload::Hello {
+                build: Build::new("firmware", "0.9.1", "esp32"),
+                ip: None,
+                entities: Vec::new(),
+            },
+        );
+        on_message(&hub, &updated);
+        on_message(&hub, &heartbeat(30));
+        let titles: Vec<String> = hub
+            .notifications_since(before)
+            .into_iter()
+            .map(|notification| notification.title)
+            .collect();
+        assert_eq!(titles, ["board updated"]);
+    }
+
+    #[tokio::test]
     async fn answers_and_presence() {
         let hub = Hub::for_tests("answers", "").await;
         on_message(&hub, &hello("lamp"));

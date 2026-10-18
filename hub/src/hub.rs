@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, bail, ensure};
 use jiff::Timestamp;
@@ -53,6 +53,9 @@ pub struct ReceivedCode {
 }
 
 const RECENT_CODES: usize = 10;
+/// A reboot noticed this soon after an update ended is the update's own (the first heartbeat of
+/// the new image reveals it).
+const REBOOT_AFTER_UPDATE: Duration = Duration::from_secs(2 * 60);
 
 /// What changed, announced to the pages listening on `/events`.
 #[derive(Debug, Clone, Copy)]
@@ -118,6 +121,8 @@ pub struct Hub {
     ota: Option<Arc<Ota>>,
     /// Nodes already notified for speaking another protocol version, with that version.
     other_protocols: Mutex<HashSet<(String, u8)>>,
+    /// When each node's last update ended; the reboot it brings is not notified.
+    updates_finished: Mutex<HashMap<String, Instant>>,
     /// Scheduled rules run in this zone's local time.
     time_zone: TimeZone,
     changes: broadcast::Sender<Change>,
@@ -200,6 +205,7 @@ impl Hub {
             storage,
             ota,
             other_protocols: Mutex::default(),
+            updates_finished: Mutex::default(),
             time_zone,
             changes: broadcast::channel(64).0,
             shutting_down: watch::channel(false).0,
@@ -1078,6 +1084,10 @@ impl Hub {
         outcome: UpdateOutcome,
         detail: Option<String>,
     ) {
+        self.updates_finished
+            .lock()
+            .unwrap()
+            .insert(device_id.to_string(), Instant::now());
         let name = self.node_name(device_id);
         let (title, message) = match outcome {
             UpdateOutcome::Updated => (
@@ -1172,6 +1182,16 @@ impl Hub {
     }
 
     pub fn notify_node_event(&self, event: &NodeEvent) {
+        if let NodeEvent::Rebooted { device_id, .. } = event
+            && self
+                .updates_finished
+                .lock()
+                .unwrap()
+                .get(device_id)
+                .is_some_and(|finished| finished.elapsed() < REBOOT_AFTER_UPDATE)
+        {
+            return;
+        }
         let name = self.node_name(event.device_id());
         if let Some((title, message)) = notifications::for_node_event(event, &name) {
             self.notify(title, message, event.device_id().to_string());
