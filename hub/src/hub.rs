@@ -647,7 +647,9 @@ impl Hub {
             .unwrap()
             .sending
             .insert(device_id.to_string());
-        self.announce(Change::Nodes);
+        if started {
+            self.announce(Change::Nodes);
+        }
         started
     }
 
