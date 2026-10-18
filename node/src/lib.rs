@@ -37,6 +37,11 @@ pub trait Device {
 
     /// Runs a command already checked against the declaration.
     fn command(&mut self, entity: u8, channel: u8, op: &CommandOp) -> Result<(), Rejection>;
+
+    /// Sent in the `Hello`, so the hub can show where the node is on the local network.
+    fn ip(&self) -> Option<String> {
+        None
+    }
 }
 
 /// The last command answered, per sender.
@@ -237,7 +242,7 @@ impl NodeCore {
     fn hello_replying(&mut self, device: &impl Device, reply_to: Option<u32>) -> Message {
         let payload = Payload::Hello {
             build: self.build.clone(),
-            ip: None,
+            ip: device.ip(),
             entities: device.entities(),
         };
         self.message(payload, reply_to)
