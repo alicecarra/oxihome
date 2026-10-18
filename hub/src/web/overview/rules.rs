@@ -267,8 +267,12 @@ fn threshold_description(nodes: &Nodes, registry: &Registry, trigger: &Threshold
         Limit::Above(limit) => ("above", limit),
         Limit::Below(limit) => ("below", limit),
     };
+    let lasting = trigger
+        .lasting
+        .map(|lasting| format!(" for {lasting:#}"))
+        .unwrap_or_default();
     format!(
-        "{target}: {word} {}",
+        "{target}: {word} {}{lasting}",
         value_label(&Value::Float(limit), unit)
     )
 }
@@ -587,10 +591,11 @@ mod tests {
             entity: 3,
             channel: 1,
             limit: Limit::Above(85.0),
+            lasting: Some(jiff::SignedDuration::from_mins(5)),
         };
         assert_eq!(
             threshold_description(&nodes(), &registry, &trigger),
-            "Test board › entity 3 · Humidity: above 85.0 %"
+            "Test board › entity 3 · Humidity: above 85.0 % for 5m"
         );
     }
 

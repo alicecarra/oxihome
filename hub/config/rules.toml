@@ -3,6 +3,7 @@
 [[rules]]
 name = "Arrived home at night: external LED and Telegram"
 when = { device = "network-devices", entity = 1, channel = 1, event = "Received", data = "online" }
+cooldown = "30m"
 if = [{ from = "18:00", to = "06:00" }]
 then = [
     { set = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0, value = true } },
@@ -12,6 +13,7 @@ then = [
 [[rules]]
 name = "Left home: lights and receiver off, Telegram"
 when = { device = "network-devices", entity = 1, channel = 1, event = "Received", data = "offline" }
+cooldown = "30m"
 then = [
     { set = { device = "esp32-08d1f9ca41e4", entity = 1, channel = 0, value = false } },
     { set = { device = "esp32-08d1f9ca41e4", entity = 4, channel = 0, value = false } },
@@ -22,6 +24,7 @@ then = [
 [[rules]]
 name = "Tablet left the network: Telegram"
 when = { device = "network-devices", entity = 2, channel = 1, event = "Received", data = "offline" }
+cooldown = "1h"
 then = [
     { invoke = { device = "telegram", entity = 1, channel = 0, value = "The tablet left the network" } },
 ]
@@ -43,6 +46,7 @@ then = [
 [[rules]]
 name = "Started raining: Telegram"
 when = { device = "weather", entity = 1, channel = 2, above = 0 }
+cooldown = "3h"
 then = [
     { invoke = { device = "telegram", entity = 1, channel = 0, value = "It started raining ({value})." } },
 ]
@@ -58,6 +62,7 @@ then = [
 [[rules]]
 name = "Strong wind: Telegram"
 when = { device = "weather", entity = 1, channel = 3, above = 50 }
+cooldown = "1h"
 then = [
     { invoke = { device = "telegram", entity = 1, channel = 0, value = "Strong wind: {value}" } },
 ]
@@ -91,6 +96,7 @@ then = [
 [[rules]]
 name = "Notebook disk almost full: Telegram"
 when = { device = "notebook", entity = 10, channel = 0, above = 90 }
+cooldown = "12h"
 then = [
     { invoke = { device = "telegram", entity = 1, channel = 0, value = "Notebook disk is at {value}" } },
 ]
@@ -98,13 +104,14 @@ then = [
 [[rules]]
 name = "Docker host disk almost full: Telegram"
 when = { device = "docker-host", entity = 10, channel = 0, above = 90 }
+cooldown = "12h"
 then = [
     { invoke = { device = "telegram", entity = 1, channel = 0, value = "Docker host disk is at {value}" } },
 ]
 
 [[rules]]
 name = "Docker host memory high: Telegram"
-when = { device = "docker-host", entity = 2, channel = 0, above = 90 }
+when = { device = "docker-host", entity = 2, channel = 0, above = 90, for = "5m" }
 then = [
     { invoke = { device = "telegram", entity = 1, channel = 0, value = "Docker host memory is at {value}" } },
 ]
@@ -118,35 +125,35 @@ then = [
 
 [[rules]]
 name = "Pi-hole using two cores: Telegram"
-when = { device = "docker-host", entity = 50, channel = 2, above = 200 }
+when = { device = "docker-host", entity = 50, channel = 2, above = 200, for = "5m" }
 then = [
     { invoke = { device = "telegram", entity = 1, channel = 0, value = "Pi-hole is using {value} CPU" } },
 ]
 
 [[rules]]
 name = "Jellyfin using two cores: Telegram"
-when = { device = "docker-host", entity = 51, channel = 2, above = 200 }
+when = { device = "docker-host", entity = 51, channel = 2, above = 200, for = "5m" }
 then = [
     { invoke = { device = "telegram", entity = 1, channel = 0, value = "Jellyfin is using {value} CPU" } },
 ]
 
 [[rules]]
 name = "Trilium using two cores: Telegram"
-when = { device = "docker-host", entity = 52, channel = 2, above = 200 }
+when = { device = "docker-host", entity = 52, channel = 2, above = 200, for = "5m" }
 then = [
     { invoke = { device = "telegram", entity = 1, channel = 0, value = "Trilium is using {value} CPU" } },
 ]
 
 [[rules]]
 name = "Portainer using two cores: Telegram"
-when = { device = "docker-host", entity = 53, channel = 2, above = 200 }
+when = { device = "docker-host", entity = 53, channel = 2, above = 200, for = "5m" }
 then = [
     { invoke = { device = "telegram", entity = 1, channel = 0, value = "Portainer is using {value} CPU" } },
 ]
 
 [[rules]]
 name = "Hub using two cores: Telegram"
-when = { device = "docker-host", entity = 55, channel = 2, above = 200 }
+when = { device = "docker-host", entity = 55, channel = 2, above = 200, for = "5m" }
 then = [
     { invoke = { device = "telegram", entity = 1, channel = 0, value = "The Oxihome hub is using {value} CPU" } },
 ]
@@ -166,6 +173,7 @@ then = [
 [[rules]]
 name = "Any node offline: Telegram"
 when = { offline = "*" }
+cooldown = "1h"
 if = [{ online = "telegram" }]
 then = [
     { invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} went offline" } },
@@ -174,6 +182,7 @@ then = [
 [[rules]]
 name = "Telegram bot offline: buzzer"
 when = { offline = "telegram" }
+cooldown = "1h"
 then = [
     { invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Short" } },
     { notify = { title = "Telegram bot offline", message = "Telegram messages will not arrive" } },
@@ -182,6 +191,7 @@ then = [
 [[rules]]
 name = "Node stopped reporting: Telegram"
 when = { stopped = "*" }
+cooldown = "1h"
 then = [
     { invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} › {channel} stopped reporting: {detail}" } },
 ]
@@ -189,6 +199,7 @@ then = [
 [[rules]]
 name = "Node noisy: Telegram"
 when = { noisy = "*" }
+cooldown = "1h"
 then = [
     { invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} › {channel} is noisy: {detail}" } },
 ]
@@ -196,6 +207,7 @@ then = [
 [[rules]]
 name = "Node not answering: Telegram"
 when = { unanswered = "*" }
+cooldown = "1h"
 then = [
     { invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} is not answering commands: {detail}" } },
 ]
@@ -203,6 +215,7 @@ then = [
 [[rules]]
 name = "Node reported a problem: Telegram"
 when = { reported = "*" }
+cooldown = "1h"
 then = [
     { invoke = { device = "telegram", entity = 1, channel = 0, value = "{node} reported a problem: {detail}" } },
 ]

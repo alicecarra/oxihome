@@ -1,7 +1,7 @@
 use croner::Cron;
 use croner::parser::{CronParser, Seconds, Year};
 use jiff::civil::{DateTime, Time, Weekday};
-use jiff::{ToSpan, Zoned};
+use jiff::{SignedDuration, ToSpan, Zoned};
 use oxihome_protocol::{EventKind, Value};
 use serde::Deserialize;
 
@@ -83,6 +83,8 @@ struct TriggerFields {
     data: Option<String>,
     above: Option<f32>,
     below: Option<f32>,
+    #[serde(rename = "for")]
+    lasting: Option<String>,
     at: Option<Time>,
     #[serde(default)]
     days: Vec<Day>,
@@ -108,6 +110,7 @@ impl TriggerFields {
             ("data", self.data.is_some()),
             ("above", self.above.is_some()),
             ("below", self.below.is_some()),
+            ("for", self.lasting.is_some()),
             ("at", self.at.is_some()),
             ("days", !self.days.is_empty()),
             ("cron", self.cron.is_some()),
@@ -201,6 +204,9 @@ impl TryFrom<TriggerFields> for Trigger {
             if fields.data.is_some() && fields.event.is_none() {
                 return Err("`data` goes with `event`".into());
             }
+            if fields.lasting.is_some() && fields.event.is_some() {
+                return Err("`for` goes with `above` or `below`".into());
+            }
             let (Some(device), Some(entity), Some(channel)) =
                 (fields.device, fields.entity, fields.channel)
             else {
@@ -220,12 +226,17 @@ impl TryFrom<TriggerFields> for Trigger {
                 (_, _, Some(below)) => Limit::Below(below),
                 _ => return Err("a channel trigger needs `event`, `above` or `below`".into()),
             };
+            let lasting = fields.lasting.as_deref().map(lasting).transpose()?;
             return Ok(Trigger::Threshold(ThresholdTrigger {
                 device,
                 entity,
                 channel,
                 limit,
+                lasting,
             }));
+        }
+        if fields.lasting.is_some() {
+            return Err("`for` goes with `above` or `below`".into());
         }
         if fields.at.is_some() && fields.cron.is_some() {
             return Err("use either `at` or `cron`, not both".into());
@@ -255,6 +266,23 @@ pub struct ThresholdTrigger {
     pub entity: u8,
     pub channel: u8,
     pub limit: Limit,
+    /// `for = "5m"`: runs only if no confirmed value back within the limit comes in this long
+    /// after the crossing.
+    pub lasting: Option<SignedDuration>,
+}
+
+const LONGEST_LASTING: SignedDuration = SignedDuration::from_hours(24);
+
+fn lasting(text: &str) -> Result<SignedDuration, String> {
+    let duration: SignedDuration = text
+        .parse()
+        .map_err(|error| format!("for \"{text}\": {error}"))?;
+    if duration <= SignedDuration::ZERO || duration > LONGEST_LASTING {
+        return Err(format!(
+            "for \"{text}\": must be more than zero and at most 24 hours"
+        ));
+    }
+    Ok(duration)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -265,13 +293,16 @@ pub enum Limit {
 
 impl Limit {
     pub(super) fn crossed(self, previous: Option<&Value>, value: &Value) -> bool {
-        let Some(now) = number(value) else {
-            return false;
-        };
-        let before = previous.and_then(number);
+        number(value).is_some_and(|now| self.passed(now))
+            && previous
+                .and_then(number)
+                .is_none_or(|before| !self.passed(before))
+    }
+
+    pub(super) fn passed(self, value: f32) -> bool {
         match self {
-            Limit::Above(limit) => now > limit && before.is_none_or(|before| before <= limit),
-            Limit::Below(limit) => now < limit && before.is_none_or(|before| before >= limit),
+            Limit::Above(limit) => value > limit,
+            Limit::Below(limit) => value < limit,
         }
     }
 }
@@ -516,7 +547,17 @@ mod tests {
                 entity: 3,
                 channel: 1,
                 limit: Limit::Below(40.5),
+                lasting: None,
             }))
+        );
+        assert_eq!(
+            when(r#"{ device = "a", entity = 3, channel = 0, above = 90, for = "5m" }"#).map(
+                |trigger| match trigger {
+                    Trigger::Threshold(trigger) => trigger.lasting,
+                    _ => None,
+                }
+            ),
+            Ok(Some(SignedDuration::from_mins(5)))
         );
         let error = |text: &str| when(text).unwrap_err();
         assert!(
@@ -528,6 +569,15 @@ mod tests {
                 .contains("cannot have")
         );
         assert!(error(r#"{ above = 28 }"#).contains("needs `device`"));
+        assert!(
+            error(r#"{ device = "a", entity = 3, channel = 0, event = "Press", for = "5m" }"#)
+                .contains("`for` goes with")
+        );
+        assert!(error(r#"{ at = "07:00", for = "5m" }"#).contains("`for` goes with"));
+        assert!(
+            error(r#"{ device = "a", entity = 3, channel = 0, above = 28, for = "0s" }"#)
+                .contains("more than zero")
+        );
         assert!(
             error(r#"{ device = "a", entity = 3, channel = 0 }"#)
                 .contains("needs `event`, `above` or `below`")

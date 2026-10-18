@@ -439,7 +439,9 @@ previous configuration stays in use.
     (or `below = 27`). It runs when a value confirmed by the node crosses the limit, not again while
     the value stays past it; the first value the hub learns counts as a crossing (a value kept in the
     database from before a restart is not a first value, so a restart does not run the rule again). A pair of rules
-    (on above 28, off below 27) gives hysteresis;
+    (on above 28, off below 27) gives hysteresis. `for = "5m"` (at most 24h) runs it only if the
+    value stays past the limit that long after crossing: a confirmed value back within the limit or
+    the node going offline ends the wait, and so does a hub restart;
   - a cron expression, standard five fields (minute, hour, day of month, month, day of week):
     `when = { cron = "*/30 8-22 * * mon-fri" }`. When both the day of month and the day of week
     are restricted, either one matching is enough, as in classic cron;
@@ -457,6 +459,11 @@ previous configuration stays in use.
   - a node reporting a problem by itself: `when = { reported = "..." }` (node id or `"*"`), for an
     `Error` that answers no command, such as the firmware's "DHT11 not responding". It runs for
     every report; the hub also shows a toast and lists the report on the node's page.
+
+  `cooldown = "1h"` (optional, at most 168h; not on button rules) keeps a rule from starting again
+  that soon about the same node and channel, so `offline = "*"` still reports other nodes; the
+  hub logs `rule "...": skipped, cooling down`. "Run now" ignores it and does not start it, and a
+  hub restart forgets it.
 
   Conditions (`if`, optional) are checked when the trigger fires; the actions only run when every
   condition holds, otherwise the hub logs `rule "...": skipped, ... does not hold`. Each condition is

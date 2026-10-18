@@ -6,7 +6,7 @@ use jiff::civil::DateTime;
 
 use super::{Change, Hub, ReceivedCode};
 use crate::config::dashboard::Dashboard;
-use crate::config::rules::{Rule, RuleRun, RuleUse, Running};
+use crate::config::rules::{Cooldowns, Holds, Rule, RuleRun, RuleUse, Running};
 use crate::node::events::EventRecord;
 use crate::node::state::ChannelUpdate;
 use crate::storage::Write;
@@ -48,6 +48,23 @@ impl Hub {
             .into_iter()
             .cloned()
             .collect()
+    }
+
+    /// Ends the `for` waits the update or the node going offline (`None`) breaks.
+    pub fn end_holds(&self, device_id: &str, update: Option<&ChannelUpdate>) {
+        let names: Vec<String> = {
+            let rules = self.rules.lock().unwrap();
+            match update {
+                Some(update) => rules.released(update),
+                None => rules.waiting_on(device_id),
+            }
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+        };
+        for name in names {
+            self.holds.end(&name);
+        }
     }
 
     pub fn offline_rules(&self, device_id: &str) -> Vec<Rule> {
@@ -93,6 +110,14 @@ impl Hub {
 
     pub fn running(&self) -> &Running {
         &self.running
+    }
+
+    pub fn holds(&self) -> &Holds {
+        &self.holds
+    }
+
+    pub fn cooldowns(&self) -> &Cooldowns {
+        &self.cooldowns
     }
 
     pub fn rule_runs(&self) -> HashMap<String, RuleRun> {

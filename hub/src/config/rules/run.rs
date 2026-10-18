@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
@@ -220,6 +220,7 @@ impl Subject {
                 entity,
                 channel,
                 limit: Limit::Above(limit) | Limit::Below(limit),
+                ..
             }) => Self {
                 node: Some(names.node_name(device)),
                 channel: Some(names.channel_name(device, *entity, *channel)),
@@ -328,15 +329,60 @@ pub enum Start {
     Busy,
 }
 
+/// Starts a rule its trigger fired: a threshold with `for` waits first, and a rule with a
+/// `cooldown` does not start again that soon about the same node and channel.
+pub fn run_triggered(hub: Arc<Hub>, rule: Rule, subject: Subject) {
+    match &rule.when {
+        Trigger::Threshold(ThresholdTrigger {
+            lasting: Some(lasting),
+            ..
+        }) => hold(hub, *lasting, rule, subject),
+        _ => start_unless_cooling_down(hub, rule, subject),
+    }
+}
+
+/// Runs the rule after `lasting` unless a value back within the limit, the node going offline,
+/// a new crossing or a change to the rule ends the wait first.
+fn hold(hub: Arc<Hub>, lasting: SignedDuration, rule: Rule, subject: Subject) {
+    let id = hub.holds().begin(&rule.name);
+    println!(
+        "rule \"{}\": runs if the value stays for {lasting:#}",
+        rule.name
+    );
+    tokio::spawn(async move {
+        tokio::time::sleep(lasting.unsigned_abs()).await;
+        if !hub.holds().finish(&rule.name, id) {
+            return;
+        }
+        let current = hub.rules().into_iter().find(|current| {
+            current.name == rule.name && current.enabled && current.when == rule.when
+        });
+        if let Some(current) = current {
+            start_unless_cooling_down(hub, current, subject);
+        }
+    });
+}
+
+fn start_unless_cooling_down(hub: Arc<Hub>, rule: Rule, subject: Subject) {
+    let Some(cooldown) = rule.cooldown else {
+        start(hub, rule, subject);
+        return;
+    };
+    let key = RunKey::new(&rule, &subject);
+    let now = Timestamp::now();
+    if hub.cooldowns().cooling(&key, cooldown, now) {
+        println!("rule \"{}\": skipped, cooling down", rule.name);
+        return;
+    }
+    if let Start::Started(_) = start(hub.clone(), rule, subject) {
+        hub.cooldowns().started(key, now);
+    }
+}
+
 /// Starts the actions in order when every condition holds and the rule is not still running
 /// about the same node and channel; a failed action does not stop the next ones.
 pub fn start(hub: Arc<Hub>, rule: Rule, subject: Subject) -> Start {
-    let key = RunKey {
-        rule: rule.name.clone(),
-        node: subject.node.clone(),
-        channel: subject.channel.clone(),
-    };
-    let Some(guard) = hub.running().claim(key) else {
+    let Some(guard) = hub.running().claim(RunKey::new(&rule, &subject)) else {
         println!("rule \"{}\": still running, ignored", rule.name);
         return Start::Busy;
     };
@@ -380,6 +426,75 @@ struct RunKey {
     rule: String,
     node: Option<String>,
     channel: Option<String>,
+}
+
+impl RunKey {
+    fn new(rule: &Rule, subject: &Subject) -> Self {
+        Self {
+            rule: rule.name.clone(),
+            node: subject.node.clone(),
+            channel: subject.channel.clone(),
+        }
+    }
+}
+
+/// Threshold rules waiting out their `for`, by rule name; a new wait replaces the old one.
+#[derive(Default)]
+pub struct Holds(Mutex<Waits>);
+
+#[derive(Default)]
+struct Waits {
+    last_id: u64,
+    by_rule: HashMap<String, u64>,
+}
+
+impl Holds {
+    fn begin(&self, rule: &str) -> u64 {
+        let mut waits = self.0.lock().unwrap();
+        waits.last_id += 1;
+        let id = waits.last_id;
+        waits.by_rule.insert(rule.to_string(), id);
+        id
+    }
+
+    /// Whether this wait was still on; it is over either way.
+    fn finish(&self, rule: &str, id: u64) -> bool {
+        let mut waits = self.0.lock().unwrap();
+        let current = waits.by_rule.get(rule) == Some(&id);
+        if current {
+            waits.by_rule.remove(rule);
+        }
+        current
+    }
+
+    pub fn end(&self, rule: &str) {
+        if self.0.lock().unwrap().by_rule.remove(rule).is_some() {
+            println!("rule \"{rule}\": the value did not stay, not run");
+        }
+    }
+
+    #[cfg(test)]
+    pub fn includes(&self, rule: &str) -> bool {
+        self.0.lock().unwrap().by_rule.contains_key(rule)
+    }
+}
+
+/// When each rule with a `cooldown` last started, by rule and what it ran about.
+#[derive(Default)]
+pub struct Cooldowns(Mutex<HashMap<RunKey, Timestamp>>);
+
+impl Cooldowns {
+    fn cooling(&self, key: &RunKey, cooldown: SignedDuration, now: Timestamp) -> bool {
+        self.0
+            .lock()
+            .unwrap()
+            .get(key)
+            .is_some_and(|started| now.duration_since(*started) < cooldown)
+    }
+
+    fn started(&self, key: RunKey, now: Timestamp) {
+        self.0.lock().unwrap().insert(key, now);
+    }
 }
 
 impl Running {

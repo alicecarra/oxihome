@@ -6,14 +6,16 @@ mod trigger;
 use std::collections::HashSet;
 
 use anyhow::bail;
-use jiff::Timestamp;
 use jiff::civil::DateTime;
+use jiff::{SignedDuration, Timestamp};
 use oxihome_protocol::{Confidence, EventKind, Value};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 pub use condition::{ChannelCondition, Condition, Expected, HomeState, ValueTest};
 pub use editing::with_rule_enabled;
-pub use run::{Action, Running, Start, Subject, has_placeholders, start};
+pub use run::{
+    Action, Cooldowns, Holds, Running, Start, Subject, has_placeholders, run_triggered, start,
+};
 pub use trigger::{
     CronTrigger, Day, EventTrigger, Limit, OfflineTrigger, ScheduleTrigger, ThresholdTrigger,
     TrafficTrigger, Trigger,
@@ -34,6 +36,27 @@ pub struct Rule {
     #[serde(default, rename = "if")]
     pub conditions: Vec<Condition>,
     pub then: Vec<Action>,
+    /// `cooldown = "1h"`: after the rule starts, triggers about the same node and channel are
+    /// ignored this long. Runs from `/rules` neither wait for it nor start it.
+    #[serde(default, deserialize_with = "cooldown")]
+    pub cooldown: Option<SignedDuration>,
+}
+
+const LONGEST_COOLDOWN: SignedDuration = SignedDuration::from_hours(7 * 24);
+
+fn cooldown<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<SignedDuration>, D::Error> {
+    let text = String::deserialize(deserializer)?;
+    let duration: SignedDuration = text
+        .parse()
+        .map_err(|error| serde::de::Error::custom(format!("cooldown \"{text}\": {error}")))?;
+    if duration <= SignedDuration::ZERO || duration > LONGEST_COOLDOWN {
+        return Err(serde::de::Error::custom(format!(
+            "cooldown \"{text}\": must be more than zero and at most 168h (7 days)"
+        )));
+    }
+    Ok(Some(duration))
 }
 
 /// How a rule involves a node: it runs on something from it, or acts on it.
@@ -193,13 +216,20 @@ impl Rules {
     pub fn check_buttons(&self) -> anyhow::Result<()> {
         let mut buttons = HashSet::new();
         for rule in &self.rules {
-            if let Trigger::Button(trigger) = &rule.when
-                && !buttons.insert(&trigger.button)
-            {
+            let Trigger::Button(trigger) = &rule.when else {
+                continue;
+            };
+            if !buttons.insert(&trigger.button) {
                 bail!(
                     "rule \"{}\": another rule has the button \"{}\"",
                     rule.name,
                     trigger.button
+                );
+            }
+            if rule.cooldown.is_some() {
+                bail!(
+                    "rule \"{}\": a button rule cannot have a cooldown",
+                    rule.name
                 );
             }
         }
@@ -249,6 +279,41 @@ impl Rules {
                             && trigger.channel == update.channel
                             && trigger.limit.crossed(update.previous.as_ref(), &update.value))
             })
+            .collect()
+    }
+
+    /// Threshold rules with `for` whose wait the update ends: a confirmed number back within the
+    /// limit.
+    pub fn released(&self, update: &ChannelUpdate) -> Vec<&str> {
+        if update.confidence != Confidence::Confirmed {
+            return Vec::new();
+        }
+        let Some(value) = number(&update.value) else {
+            return Vec::new();
+        };
+        self.rules
+            .iter()
+            .filter(|rule| {
+                matches!(&rule.when, Trigger::Threshold(trigger)
+                    if trigger.lasting.is_some()
+                        && trigger.device == update.device_id
+                        && trigger.entity == update.entity
+                        && trigger.channel == update.channel
+                        && !trigger.limit.passed(value))
+            })
+            .map(|rule| rule.name.as_str())
+            .collect()
+    }
+
+    /// Threshold rules with `for` on the node's channels; its going offline ends their wait.
+    pub fn waiting_on(&self, device_id: &str) -> Vec<&str> {
+        self.rules
+            .iter()
+            .filter(|rule| {
+                matches!(&rule.when, Trigger::Threshold(trigger)
+                    if trigger.lasting.is_some() && trigger.device == device_id)
+            })
+            .map(|rule| rule.name.as_str())
             .collect()
     }
 
@@ -354,6 +419,50 @@ mod tests {
         .unwrap();
         let error = twice.check_buttons().unwrap_err().to_string();
         assert!(error.contains("another rule has the button"), "{error}");
+    }
+
+    #[test]
+    fn cooldowns_parse_and_buttons_reject_them() {
+        let rules = |text: &str| toml::from_str::<Rules>(text);
+        let hourly = rules(
+            r#"
+            [[rules]]
+            name = "A"
+            when = { offline = "*" }
+            cooldown = "1h"
+            then = []
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            hourly.all()[0].cooldown,
+            Some(SignedDuration::from_hours(1))
+        );
+        let error = rules(
+            r#"
+            [[rules]]
+            name = "A"
+            when = { offline = "*" }
+            cooldown = "200h"
+            then = []
+            "#,
+        )
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(error.contains("at most 168h"), "{error}");
+        let button = rules(
+            r#"
+            [[rules]]
+            name = "A"
+            when = { button = "Go" }
+            cooldown = "1m"
+            then = []
+            "#,
+        )
+        .unwrap();
+        let error = button.check_buttons().unwrap_err().to_string();
+        assert!(error.contains("cannot have a cooldown"), "{error}");
     }
 
     #[test]
@@ -844,6 +953,38 @@ mod tests {
         assumed.confidence = Confidence::Assumed;
         assert!(crossed(assumed).is_empty());
         assert!(crossed(reading(Value::Bool(true), None)).is_empty());
+    }
+
+    const LASTING: &str = r#"
+        [[rules]]
+        name = "Hot for a while"
+        when = { device = "sim-living-room", entity = 3, channel = 0, above = 28, for = "5m" }
+        then = []
+
+        [[rules]]
+        name = "Hot"
+        when = { device = "sim-living-room", entity = 3, channel = 0, above = 28 }
+        then = []
+    "#;
+
+    #[test]
+    fn only_a_confirmed_value_back_within_the_limit_ends_a_wait() {
+        let rules: Rules = toml::from_str(LASTING).unwrap();
+        let float = Value::Float;
+        assert_eq!(
+            rules.released(&reading(float(27.0), Some(float(29.0)))),
+            ["Hot for a while"]
+        );
+        assert!(
+            rules
+                .released(&reading(float(29.5), Some(float(29.0))))
+                .is_empty()
+        );
+        let mut assumed = reading(float(27.0), Some(float(29.0)));
+        assumed.confidence = Confidence::Assumed;
+        assert!(rules.released(&assumed).is_empty());
+        assert_eq!(rules.waiting_on("sim-living-room"), ["Hot for a while"]);
+        assert!(rules.waiting_on("board").is_empty());
     }
 
     const CONDITIONS: &str = r#"

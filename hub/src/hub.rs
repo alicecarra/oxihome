@@ -14,7 +14,7 @@ use crate::commands::Commands;
 use crate::config::dashboard::Dashboards;
 use crate::config::nodes::{NameTarget, Nodes};
 use crate::config::remotes::Remotes;
-use crate::config::rules::{RuleRun, Rules, Running};
+use crate::config::rules::{Cooldowns, Holds, RuleRun, Rules, Running};
 use crate::config::{ConfigTexts, HomeConfig};
 use crate::mqtt::Mqtt;
 use crate::node::events::{EventRecord, Events};
@@ -109,6 +109,8 @@ pub struct Hub {
     /// Last run of each rule, by name.
     rule_runs: Mutex<HashMap<String, RuleRun>>,
     running: Running,
+    holds: Holds,
+    cooldowns: Cooldowns,
     remotes: Mutex<Remotes>,
     dashboards: Mutex<Dashboards>,
     /// Newest first, without repeats of held keys.
@@ -194,6 +196,8 @@ impl Hub {
             rules: Mutex::new(config.rules),
             rule_runs: Mutex::new(restored.rule_runs.into_iter().collect()),
             running: Running::default(),
+            holds: Holds::default(),
+            cooldowns: Cooldowns::default(),
             remotes: Mutex::new(config.remotes),
             dashboards: Mutex::new(config.dashboards),
             recent_codes: Mutex::new(recent_codes),

@@ -107,6 +107,7 @@ pub fn on_message(hub: &Arc<Hub>, message: &Message) {
 
     for update in updates {
         println!("{update}");
+        hub.end_holds(&update.device_id, Some(&update));
         spawn_rules(
             hub,
             hub.crossed_rules(&update),
@@ -200,6 +201,7 @@ fn on_node_event(hub: &Arc<Hub>, node_event: &NodeEvent) {
     println!("{node_event}");
     hub.notify_node_event(node_event);
     if let NodeEvent::Offline(device_id) = node_event {
+        hub.end_holds(device_id, None);
         let subject = Subject {
             node: Some(hub.node_name(device_id)),
             ..Subject::default()
@@ -210,7 +212,7 @@ fn on_node_event(hub: &Arc<Hub>, node_event: &NodeEvent) {
 
 fn spawn_rules(hub: &Arc<Hub>, matched: Vec<Rule>, subject: Subject) {
     for rule in matched {
-        rules::start(hub.clone(), rule, subject.clone());
+        rules::run_triggered(hub.clone(), rule, subject.clone());
     }
 }
 
@@ -313,6 +315,67 @@ mod tests {
             rules::start(hub.clone(), rule, Subject::default()),
             rules::Start::Started(_)
         ));
+    }
+
+    fn titles_of(hub: &Hub) -> Vec<String> {
+        hub.notifications_since(0)
+            .into_iter()
+            .map(|notification| notification.title)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_rule_with_for_runs_only_if_its_wait_is_not_ended() {
+        let hub = Hub::for_tests(
+            "lasting",
+            r#"
+            [[rules]]
+            name = "Hot for a while"
+            when = { device = "sim-living-room", entity = 3, channel = 0, above = 28, for = "100ms" }
+            then = [{ notify = { title = "Hot", message = "" } }]
+            "#,
+        )
+        .await;
+        let rule = hub.rules().remove(0);
+        rules::run_triggered(hub.clone(), rule.clone(), Subject::default());
+        assert!(hub.holds().includes("Hot for a while"));
+        hub.end_holds("sim-living-room", None);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(titles_of(&hub).is_empty());
+
+        rules::run_triggered(hub.clone(), rule, Subject::default());
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(titles_of(&hub), ["Hot"]);
+        assert!(!hub.holds().includes("Hot for a while"));
+    }
+
+    #[tokio::test]
+    async fn a_cooldown_holds_back_the_same_node_only() {
+        let hub = Hub::for_tests("cooldown", "").await;
+        let rule: Rule = toml::from_str(
+            r#"
+            name = "Offline"
+            when = { offline = "*" }
+            cooldown = "1h"
+            then = [{ notify = { title = "{node}", message = "" } }]
+            "#,
+        )
+        .unwrap();
+        let about = |node: &str| Subject {
+            node: Some(node.into()),
+            ..Subject::default()
+        };
+        rules::run_triggered(hub.clone(), rule.clone(), about("A"));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        rules::run_triggered(hub.clone(), rule.clone(), about("A"));
+        rules::run_triggered(hub.clone(), rule.clone(), about("B"));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(titles_of(&hub), ["A", "B"]);
+        let rules::Start::Started(by_hand) = rules::start(hub.clone(), rule, about("A")) else {
+            panic!("a run by hand ignores the cooldown");
+        };
+        by_hand.await.unwrap();
+        assert_eq!(titles_of(&hub), ["A", "B", "A"]);
     }
 
     fn hello(device_id: &str) -> Message {
