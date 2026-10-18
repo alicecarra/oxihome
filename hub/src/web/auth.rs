@@ -386,19 +386,24 @@ mod tests {
         assert!(!failures.blocked(start + FAILURE_WINDOW));
     }
 
-    #[test]
-    fn verifies_its_own_hash() {
+    #[tokio::test]
+    async fn verifies_the_password() {
+        let directory =
+            std::env::temp_dir().join(format!("oxihome-auth-test-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("hub.sqlite");
+        let _ = std::fs::remove_file(&path);
+        let (storage, _) = crate::storage::Storage::open(&path, Duration::from_secs(3600))
+            .await
+            .unwrap();
+
         let hash = hash_password("correct horse").unwrap();
-        let parsed = PasswordHash::new(&hash).unwrap();
-        assert!(
-            Argon2::default()
-                .verify_password(b"correct horse", &parsed)
-                .is_ok()
-        );
-        assert!(
-            Argon2::default()
-                .verify_password(b"wrong", &parsed)
-                .is_err()
-        );
+        let auth = Auth::new(Some(hash), storage.sessions()).unwrap();
+        assert!(auth.verify("correct horse".into()).await);
+        assert!(!auth.verify("wrong".into()).await);
+
+        let open = Auth::new(None, storage.sessions()).unwrap();
+        assert!(!open.verify("correct horse".into()).await);
+        assert!(Auth::new(Some("not a hash".into()), storage.sessions()).is_err());
     }
 }
