@@ -12,3 +12,7 @@ entities = ["lamp", "button", "climate_sensor"]
 [[nodes]]
 id = "sim-bedroom"
 entities = ["lamp"]
+
+[[nodes]]
+id = "sim-remote"
+clone = "simulator/clones/esp32-14335c2e7270.json"

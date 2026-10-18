@@ -1966,7 +1966,7 @@ dependencies = [
 
 [[package]]
 name = "oxihome-simulator"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "oxihome-node",

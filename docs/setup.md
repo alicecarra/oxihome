@@ -898,24 +898,62 @@ apart.
 
 ## Simulator
 
-Simulated nodes that talk to the broker like real boards, to work on the hub without hardware.
-Each node in `simulator/simulator.toml` gets its own MQTT connection and a list of entity profiles:
-`lamp` (switchable `Bool`), `button` (events) and `climate_sensor` (temperature and humidity).
+Simulated nodes that talk to the broker like real boards, to work on the hub without hardware. Each
+node in `simulator/simulator.toml` gets its own MQTT connection and a list of entities: either
+ready-made profiles under `entities` (`lamp`, a switchable `Bool`; `button`, events;
+`climate_sensor`, the firmware's DHT11), numbered from 1, or `clone`, a file with the entities
+another node declared.
 
 ```sh
 cp simulator/secrets.toml.example simulator/secrets.toml   # then set one password per node
 chmod 600 simulator/secrets.toml
+ssh docker-host oxihome/mosquitto/set-password.sh sim-remote   # one broker user per node
 cargo run -p oxihome-simulator -- simulator/simulator.toml
 ```
 
-The passwords are in `simulator/secrets.toml` (out of git), pointed to by `[mqtt] secrets`.
+The passwords are in `simulator/secrets.toml` (out of git), pointed to by `[mqtt] secrets`. The
+nodes connect to the production broker and show up in the house's hub like any node (the "Any node
+offline" rule also sends a Telegram message when one goes offline); the **Forget** button on a
+node's page removes one that is no longer simulated.
 
-Type `help` for the commands: `press <node> <entity>`, `offline <node>`, `online <node>`,
-`reboot <node>`, `climate <node> <temperature> [humidity]`, `list`, `quit`.
+The behaviour comes from each channel's access, not from the profile:
 
-Climate sensors follow a slow wave (22 ± 2 °C, 50 ± 5 %). `climate sim-living-room 30 80` fixes
-the readings and sends them right away, to test rules with limits; a value left out keeps following
-the wave, and `climate sim-living-room auto` goes back to the wave for both.
+| Access | Behaviour |
+| --- | --- |
+| `Read` | `Int` and `Float` follow a slow wave around the middle of their range (5 % of the range each way, on the step), each channel with its own period; other types hold a default. `set` fixes a value until `auto`. |
+| `ReadWrite` | Keeps the last `Set`, from the hub or from `set`; starts in the middle of the range (`false`, the first option, empty text), the management entity's parameters at their documented default. |
+| `Write` | Keeps the last `Set`, left out of the state. |
+| `Trigger` | Answers `Ack` and prints the channel and the value on the console. |
+| `Event` | Sent by `event`: `Press` for channels without a value type, `Received` with the value for the others (an IR code). |
+
+Type `help` for the commands. Channels are written `<entity>.<channel>`, values as their type
+declares (`true`/`false`/`on`/`off`, numbers in range, an option of the list, text up to the end of
+the line):
+
+```text
+list                                    every node's channels, with names, access and type
+set sim-living-room 3.0 31              a fixed temperature, sent right away
+set sim-living-room 1.0 on              the lamp turned on by hand, as the hub would see it
+auto sim-living-room [3.0]              readings back to their wave
+event sim-remote 2                      a press on the button (`press sim-remote 2` too)
+event <node> 6.0 NEC 00 45              an IR code received, on a clone of the test board
+offline | online | reboot <node>
+```
+
+To simulate a node the hub knows, download what it declared in its last `Hello`: **Download
+entities** on the node's page in the hub (`/nodes/<device id>/entities.json`) gives
+`<device id>.json`. Save it in `simulator/clones/` and point a node at it:
+
+```toml
+[[nodes]]
+id = "sim-remote"
+clone = "simulator/clones/esp32-14335c2e7270.json"
+```
+
+The clone keeps its own id from `simulator.toml` and the simulator's build, so the hub does not
+offer it firmware updates. Boards send their entities without names (those live in the hub's
+`nodes.toml`), so a cloned board shows "entity 3" until it gets names there; software nodes name
+everything themselves.
 
 ## Raw MQTT messages
 
