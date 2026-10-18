@@ -88,7 +88,8 @@ pub enum UpdateStatus {
     InProgress(String),
 }
 
-/// Shared by the MQTT loop service and the web server.
+/// Shared by the MQTT loop service and the web server. Locks are unwrapped everywhere in the hub:
+/// a panic while holding one stops the main loop, and Docker restarts the hub with a clean state.
 pub struct Hub {
     mqtt: Mqtt,
     registry: Mutex<Registry>,

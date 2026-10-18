@@ -1,7 +1,7 @@
 //! Login to the web interface: one password, sessions kept in SQLite.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -93,7 +93,7 @@ struct Failures(Mutex<VecDeque<Instant>>);
 
 impl Failures {
     fn blocked(&self, now: Instant) -> bool {
-        let mut failures = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut failures = self.0.lock().unwrap();
         while failures
             .front()
             .is_some_and(|failure| now.duration_since(*failure) >= FAILURE_WINDOW)
@@ -104,10 +104,7 @@ impl Failures {
     }
 
     fn record(&self, now: Instant) {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push_back(now);
+        self.0.lock().unwrap().push_back(now);
     }
 }
 
