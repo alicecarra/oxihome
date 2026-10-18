@@ -73,6 +73,20 @@ title = "Raining"
 width = 1
 channel = { device = "weather", entity = 1, channel = 4 }
 
+[[dashboards.blocks]]
+type = "channels"
+title = "K1C"
+width = 1
+channels = [
+    { device = "printer", entity = 2, channel = 0 },
+    { device = "printer", entity = 2, channel = 1 },
+    { device = "printer", entity = 2, channel = 2 },
+    { device = "printer", entity = 2, channel = 3 },
+    { device = "printer", entity = 2, channel = 5 },
+    { device = "printer", entity = 1, channel = 0 },
+    { device = "printer", entity = 1, channel = 2 },
+]
+
 
 
 [[dashboards.blocks]]

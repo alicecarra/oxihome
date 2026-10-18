@@ -62,6 +62,30 @@ then = [
     { invoke = { device = "telegram", entity = 1, channel = 0, value = "Strong wind: {value}" } },
 ]
 
+# 3D printer (printer: the K1C; entity 2 channel 7 is the job's change event)
+
+[[rules]]
+name = "K1C finished: Telegram"
+when = { device = "printer", entity = 2, channel = 7, event = "Received", data = "finished" }
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "K1C: print finished" } },
+]
+
+[[rules]]
+name = "K1C failed: Telegram"
+when = { device = "printer", entity = 2, channel = 7, event = "Received", data = "failed" }
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "K1C: print failed" } },
+]
+
+# It also pauses by itself when the filament runs out.
+[[rules]]
+name = "K1C paused: Telegram"
+when = { device = "printer", entity = 2, channel = 7, event = "Received", data = "paused" }
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "K1C: print paused" } },
+]
+
 # Servers (linux-monitor: 2 memory, 4 system, 10 disk /, 50+ containers)
 
 [[rules]]

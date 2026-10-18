@@ -943,9 +943,12 @@ connection (reachable). While disconnected the readings keep their last values.
 The job state follows the printer's `state` field, read from its web page: 0 `idle`, 1 `printing`,
 2 `finished`, 3 `failed`, 4 `cancelled`, 5 `paused`. Each change publishes the new name as an
 event on the job's change channel (not on the first status after connecting), so a rule with
-`data = "finished"` catches the end of a print. To keep the traffic down, between reports the node
-publishes only changes of 0.5 °C or more and of 60 s or more in the times; the report every 30 s
-sends whatever else changed. The camera (`http://192.168.15.70:8080/?action=snapshot`) is not used
+`data = "finished"` catches the end of a print. To keep the traffic down, each channel goes out
+alone, and only when it moved far enough from the last value sent: more than 1 °C for the
+temperatures (the nozzle swings about 0.7 °C around its target and the chamber flips between two
+whole degrees), 5 minutes for the elapsed and left times, any change for the rest. Small drifts
+add up until they pass the step. While printing that is about one message a minute per layer
+change plus a few temperatures. The camera (`http://192.168.15.70:8080/?action=snapshot`) is not used
 yet.
 
 ## Simulator

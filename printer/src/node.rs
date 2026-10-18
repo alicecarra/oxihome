@@ -5,7 +5,7 @@ use oxihome_node::mqtt::SoftwareNode;
 use oxihome_node::{Device, NodeCore, Rejection};
 use oxihome_protocol::{
     Access, Build, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, ErrorCode,
-    EventKind, Message, Quantity, Unit, Value, ValueType,
+    EventKind, Message, Payload, Quantity, Unit, Value, ValueType,
 };
 use serde_json::Map;
 
@@ -27,15 +27,17 @@ const JOB_LEFT_CHANNEL: u8 = 5;
 const JOB_CHANGE_CHANNEL: u8 = 7;
 const FILE_MAX_LENGTH: u16 = 128;
 
-/// The printer sends a few updates a second; between reports only changes this big go out.
-const TEMPERATURE_STEP: f32 = 0.5;
-const TIME_STEP_S: i32 = 60;
+/// The printer sends a few updates a second; a channel goes out only when it moved this far from
+/// what the hub last got. More than 1 °C hides the nozzle swinging around its target and the
+/// chamber flipping between two whole degrees.
+const TEMPERATURE_STEP: f32 = 1.0;
+const TIME_STEP_S: i32 = 300;
 
 pub struct PrinterNode {
     core: NodeCore,
     device: PrinterDevice,
-    /// What the hub last got of each entity.
-    published: HashMap<u8, Vec<ChannelValue>>,
+    /// What the hub last got of each channel, by entity and channel.
+    published: HashMap<(u8, u8), Value>,
     started_at: Instant,
 }
 
@@ -69,7 +71,7 @@ impl PrinterNode {
         let after = status.job_state();
         self.device.reachable = Some(true);
 
-        let mut messages = self.changes(significant);
+        let mut messages = self.changes();
         if let Some(after) = after
             && before != Some(after)
         {
@@ -93,53 +95,47 @@ impl PrinterNode {
     /// The readings keep their last values; the connection entity tells they are old.
     pub fn disconnected(&mut self) -> Vec<Message> {
         self.device.reachable = Some(false);
-        self.changes(|_, old, new| old != new)
+        self.changes()
     }
 
-    /// The entities whose values changed enough since the hub last got them.
-    fn changes(
-        &mut self,
-        enough: fn(u8, &[ChannelValue], &[ChannelValue]) -> bool,
-    ) -> Vec<Message> {
+    /// One `State` per entity with only the channels that moved enough.
+    fn changes(&mut self) -> Vec<Message> {
         let mut messages = Vec::new();
         for entity in ENTITIES {
             let Some(values) = self.device.state(entity) else {
                 continue;
             };
-            let changed = self
-                .published
-                .get(&entity)
-                .is_none_or(|old| enough(entity, old, &values));
-            if changed {
-                messages.extend(self.core.state(&self.device, entity));
-                self.published.insert(entity, values);
+            let values: Vec<ChannelValue> = values
+                .into_iter()
+                .filter(|new| {
+                    self.published
+                        .get(&(entity, new.channel))
+                        .is_none_or(|old| significant(entity, new.channel, old, &new.value))
+                })
+                .collect();
+            if values.is_empty() {
+                continue;
             }
+            for value in &values {
+                self.published
+                    .insert((entity, value.channel), value.value.clone());
+            }
+            messages.push(self.core.message(Payload::State { entity, values }, None));
         }
         messages
     }
 }
 
-fn significant(entity: u8, old: &[ChannelValue], new: &[ChannelValue]) -> bool {
-    if old.len() != new.len() {
-        return true;
+fn significant(entity: u8, channel: u8, old: &Value, new: &Value) -> bool {
+    match (entity, channel, old, new) {
+        (TEMPERATURES_ENTITY, _, Value::Float(old), Value::Float(new)) => {
+            (old - new).abs() > TEMPERATURE_STEP
+        }
+        (JOB_ENTITY, JOB_ELAPSED_CHANNEL | JOB_LEFT_CHANNEL, Value::Int(old), Value::Int(new)) => {
+            (old - new).abs() >= TIME_STEP_S
+        }
+        (_, _, old, new) => old != new,
     }
-    old.iter().zip(new).any(|(old, new)| {
-        if old.channel != new.channel {
-            return true;
-        }
-        match (entity, new.channel, &old.value, &new.value) {
-            (TEMPERATURES_ENTITY, _, Value::Float(old), Value::Float(new)) => {
-                (old - new).abs() >= TEMPERATURE_STEP
-            }
-            (
-                JOB_ENTITY,
-                JOB_ELAPSED_CHANNEL | JOB_LEFT_CHANNEL,
-                Value::Int(old),
-                Value::Int(new),
-            ) => (old - new).abs() >= TIME_STEP_S,
-            (_, _, old, new) => old != new,
-        }
-    })
 }
 
 impl SoftwareNode for PrinterNode {
@@ -158,17 +154,20 @@ impl SoftwareNode for PrinterNode {
     fn announcement(&mut self) -> Vec<Message> {
         self.published = ENTITIES
             .into_iter()
-            .filter_map(|entity| Some((entity, self.device.state(entity)?)))
+            .flat_map(|entity| {
+                self.device
+                    .state(entity)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(move |value| ((entity, value.channel), value.value))
+            })
             .collect();
         self.core.announcement(&self.device)
     }
 
-    /// Also sends the small changes held back since the last report.
     fn report(&mut self) -> Vec<Message> {
         let uptime_s = self.started_at.elapsed().as_secs() as u32;
-        let mut messages = vec![self.core.heartbeat(uptime_s, None, None)];
-        messages.extend(self.changes(|_, old, new| old != new));
-        messages
+        vec![self.core.heartbeat(uptime_s, None, None)]
     }
 }
 
@@ -419,18 +418,35 @@ mod tests {
     }
 
     #[test]
-    fn small_changes_wait_for_the_report() {
+    fn only_the_channels_that_moved_enough_go_out() {
         let mut node = PrinterNode::new("printer".into());
         node.update(printing());
-        let small = node.update(update(
-            json!({ "nozzleTemp": "220.700000", "printJobTime": 5140 }),
-        ));
-        assert!(states(&small).is_empty());
-        let big = node.update(update(json!({ "nozzleTemp": "221.100000" })));
-        assert_eq!(states(&big), [TEMPERATURES_ENTITY]);
-        let report = node.report();
-        assert_eq!(states(&report), [JOB_ENTITY], "the elapsed time held back");
+        let small = node.update(update(json!({
+            "nozzleTemp": "221.400000", "boxTemp": 34, "printJobTime": 5400,
+        })));
+        assert!(small.is_empty());
         assert!(states(&node.report()).is_empty());
+
+        let messages = node.update(update(
+            json!({ "nozzleTemp": "221.600000", "layer": 257, "printJobTime": 5430 }),
+        ));
+        let channels: Vec<(u8, Vec<u8>)> = messages
+            .iter()
+            .filter_map(|message| match &message.payload {
+                Payload::State { entity, values } => {
+                    Some((*entity, values.iter().map(|value| value.channel).collect()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            channels,
+            [
+                (TEMPERATURES_ENTITY, vec![0]),
+                (JOB_ENTITY, vec![2, JOB_ELAPSED_CHANNEL])
+            ],
+            "the drift adds up from the last value sent"
+        );
     }
 
     #[test]
