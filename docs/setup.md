@@ -955,6 +955,42 @@ offer it firmware updates. Boards send their entities without names (those live 
 `nodes.toml`), so a cloned board shows "entity 3" until it gets names there; software nodes name
 everything themselves.
 
+### Controls in the hub
+
+With a `[control]` section (`id = "simulator"`), the simulator is also a software node whose
+entities do what the console does, so the hub's node page, dashboard and rules can drive the
+simulated nodes. The hub only switches `Bool` channels and fires triggers, so every control is one
+of those. One entity per simulated node, numbered from 1 in the order of `simulator.toml` and named
+after the node:
+
+| Channel | Kind | Does |
+| --- | --- | --- |
+| 0 Online | `Bool`, switch | `online` and `offline`; also follows the console |
+| 1 Reboot | trigger | `reboot` |
+| 2 Automatic readings | trigger | `auto` for the whole node |
+| 3 and up, `Fix <entity>.<channel> …` | trigger with text, or with options for `Enum` and `Bool` readings | `set` on a read only channel; the text is read as that channel's type, out of range is refused |
+| then `Event <entity>.<channel> …` | trigger, with the event's value type | `event` |
+
+The control channels follow the order of the simulated channels, so changing a clone file or the
+order of the nodes renumbers them; `list` shows them. Its broker user is created like the others
+(`set-password.sh simulator`).
+
+A rule is enough for a scenario, e.g. a dashboard button that warms the living room, drops the node
+and brings it back:
+
+```toml
+[[rules]]
+name = "Simulate a hot living room"
+when = { button = "Hot living room" }
+then = [
+    { invoke = { device = "simulator", entity = 1, channel = 4, value = "31" } },
+    { wait = "1m" },
+    { set = { device = "simulator", entity = 1, channel = 0, value = false } },
+    { wait = "30s" },
+    { set = { device = "simulator", entity = 1, channel = 0, value = true } },
+]
+```
+
 ## Raw MQTT messages
 
 To see the JSON messages nodes and the hub exchange, subscribe inside the broker container as

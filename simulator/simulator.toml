@@ -5,6 +5,10 @@ secrets = "simulator/secrets.toml"
 # Outgoing messages waiting to be sent; new ones are dropped while it is full.
 # queue_size = 4096
 
+# A node whose entities control the simulated ones from the hub; leave it out to use the console only.
+[control]
+id = "simulator"
+
 [[nodes]]
 id = "sim-living-room"
 entities = ["lamp", "button", "climate_sensor"]
