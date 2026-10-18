@@ -5,7 +5,7 @@ mod fetch;
 mod node;
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, bail};
@@ -23,8 +23,6 @@ const DEFAULT_INTERVAL_MINUTES: u64 = 30;
 const MINIMUM_INTERVAL_MINUTES: u64 = 15;
 /// Between the first fetches of consecutive feeds, so they never all go out together.
 const START_SPACING: Duration = Duration::from_secs(10);
-/// Next to the configuration file.
-const STATE_FILE: &str = "rss-state.json";
 
 #[derive(Deserialize)]
 struct Config {
@@ -104,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    let state_path = Path::new(&path).with_file_name(STATE_FILE);
+    let state_path = state_path(Path::new(&path));
     let saved = node::read_state(&state_path);
     let handle = mqtt::spawn(
         RssNode::new(config.node.id, feeds, saved, Some(state_path)),
@@ -128,6 +126,15 @@ async fn main() -> anyhow::Result<()> {
     }
     oxihome_node::shutdown_signal().await;
     Ok(())
+}
+
+/// Next to the configuration and named after it, so two instances can share a directory:
+/// `rss.toml` keeps `rss-state.json`, `youtube.toml` keeps `youtube-state.json`.
+fn state_path(config: &Path) -> PathBuf {
+    let stem = config
+        .file_stem()
+        .map_or("rss".into(), |stem| stem.to_string_lossy());
+    config.with_file_name(format!("{stem}-state.json"))
 }
 
 async fn follow(
@@ -154,5 +161,22 @@ async fn follow(
         if !acted {
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_configuration_keeps_its_own_state() {
+        assert_eq!(
+            state_path(Path::new("rss/rss.toml")),
+            Path::new("rss/rss-state.json")
+        );
+        assert_eq!(
+            state_path(Path::new("youtube.toml")),
+            Path::new("youtube-state.json")
+        );
     }
 }

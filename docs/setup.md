@@ -894,7 +894,7 @@ items from every feed in one list, with "Mark all read".
 The first fetch of a feed (and of a feed whose URL changed) only marks its items as seen, so
 nothing floods in. Afterwards, new items that pass the filters count as unread and become events,
 oldest first, at most 10 per fetch (the rest only count). Opening a link does not mark anything as
-read; only the two `Trigger`s do. `rss/rss-state.json`, next to the configuration, keeps the seen
+read; only the two `Trigger`s do. `<name>-state.json`, next to `<name>.toml`, keeps the seen
 ids (the last fetch's plus up to 500 older ones), the unread counts and the newest title and link;
 it is written through a temporary file, so the directory must be writable. Fetches use `ETag` and
 `If-Modified-Since` (kept in memory only), a 30 s timeout and a 5 MB limit; the feeds start 10 s

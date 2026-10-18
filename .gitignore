@@ -6,7 +6,7 @@
 /weather/weather.toml
 /telegram/telegram.toml
 /rss/rss.toml
-/rss/rss-state.json
+/rss/*-state.json
 /linux-monitor/linux-monitor.toml
 /network-devices/network-devices.toml
 /hub/secrets.toml
