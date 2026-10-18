@@ -1,0 +1,27 @@
+# A second instance of the rss node, only for YouTube channels. Copy to youtube.toml (kept out of
+# git: it holds the broker password) and run it like rss.toml; its state goes to youtube-state.json.
+# The fields are the same as in rss.toml.example.
+
+[mqtt]
+host = "localhost"
+port = 1883
+password = "the node's broker password"
+
+[node]
+id = "youtube"
+
+# A channel's page works as the url: the node follows the feed it links
+# (https://www.youtube.com/feeds/videos.xml?channel_id=UC...), which has the 15 newest uploads,
+# Shorts included; exclude = "/shorts/" skips them by their link.
+
+[[feeds]]
+entity = 2
+name = "Pirulla"
+url = "https://www.youtube.com/@Pirulla25"
+exclude = "/shorts/"
+
+[[feeds]]
+entity = 3
+name = "Cortes do Pirulla"
+url = "https://www.youtube.com/@CortesdoPirullaOficial"
+exclude = "/shorts/"

@@ -239,7 +239,7 @@ access:
 docker compose -f infra/compose.yaml up -d
 ```
 
-Each node logs in with its device id as the user name (`esp32-<mac>`, `weather`, `network-devices`, `telegram`, `rss`, `notebook`...);
+Each node logs in with its device id as the user name (`esp32-<mac>`, `weather`, `network-devices`, `telegram`, `rss`, `youtube`, `notebook`...);
 the hub is `oxihome-hub` and `observer` only reads. The ACL in `infra/mosquitto/acl` (in git: it has
 no secrets) lets a node publish only on `oxihome/<its id>/up` and read only its own `down` and the
 broadcast; only the hub publishes on `down`. The client id is forced to the user name, so a login
@@ -900,6 +900,25 @@ it is written through a temporary file, so the directory must be writable. Fetch
 `If-Modified-Since` (kept in memory only), a 30 s timeout and a 5 MB limit; the feeds start 10 s
 apart.
 
+### YouTube
+
+The YouTube channels run in a second instance of the same program, node `youtube`, so they have
+their own unread count, "Mark all read" and `feeds` block (`device = "youtube"`), apart from the
+blogs. Its configuration is `rss/youtube.toml`, also out of git, and its state
+`rss/youtube-state.json`:
+
+```sh
+cp rss/youtube.toml.example rss/youtube.toml   # then the broker password and the channels
+chmod 600 rss/youtube.toml
+infra/mosquitto/set-password.sh youtube        # the password goes in [mqtt] password
+cargo run -p oxihome-rss -- rss/youtube.toml
+```
+
+A channel's feed has its 15 newest uploads: videos, Shorts and live streams. Shorts have links
+with `/shorts/`, so `exclude = "/shorts/"` skips them. A live stream enters the feed when it is
+scheduled, not when it starts. The server sends no `ETag` or `Last-Modified` and caches the feed
+for 15 minutes.
+
 ## Simulator
 
 Simulated nodes that talk to the broker like real boards, to work on the hub without hardware. Each
@@ -1103,7 +1122,8 @@ production `[http] password_hash`, see "Login") and
 `~/oxihome/network-devices/network-devices.toml` (the local one with `host = "localhost"`: it runs
 on the host's network to read its ARP table) and `~/oxihome/telegram/telegram.toml` (the production
 bot's token, `host = "mosquitto"`) and `~/oxihome/rss/rss.toml` (`host = "mosquitto"`; the node
-writes `rss-state.json` there, so that volume is not read only). The web interface is
+writes `rss-state.json` there, so that volume is not read only) and `~/oxihome/youtube/youtube.toml`
+(the same for the YouTube instance). The web interface is
 at <https://oxihome.alicecarra.com>, through Caddy (see "HTTPS"); the hub publishes 8090 only on
 the server's localhost. The containers run as uid 1000, the owner of `~/oxihome`.
 
@@ -1122,6 +1142,10 @@ ssh docker-host 'mkdir -p ~/oxihome/rss && chmod 700 ~/oxihome/rss'
 ssh docker-host oxihome/mosquitto/set-password.sh rss   # the password for [mqtt] password
 sed 's/^host = .*/host = "mosquitto"/' rss/rss.toml | ssh docker-host 'umask 077; cat > ~/oxihome/rss/rss.toml'
 infra/production/deploy.sh rss
+ssh docker-host 'mkdir -p ~/oxihome/youtube && chmod 700 ~/oxihome/youtube'
+ssh docker-host oxihome/mosquitto/set-password.sh youtube   # the password for [mqtt] password
+sed 's/^host = .*/host = "mosquitto"/' rss/youtube.toml | ssh docker-host 'umask 077; cat > ~/oxihome/youtube/youtube.toml'
+infra/production/deploy.sh youtube   # the rss image; deploy.sh rss does not restart this one
 ```
 
 The first hub deploy took the notebook's configuration and database by faking a dev session

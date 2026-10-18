@@ -24,6 +24,11 @@ for argument in "$@"; do
     esac
 done
 [ -n "$service" ] || { echo "usage: $0 <service> [--no-build] [--discard]" >&2; exit 1; }
+# The youtube service is a second rss node.
+case $service in
+    youtube) binary=rss ;;
+    *) binary=$service ;;
+esac
 
 if [ "$service" = hub ] && pgrep -x oxihome-hub >/dev/null; then
     echo "a hub is running here: stop it first" >&2
@@ -31,10 +36,10 @@ if [ "$service" = hub ] && pgrep -x oxihome-hub >/dev/null; then
 fi
 
 if [ -n "$build" ]; then
-    tag="$(infra/production/build-image.sh "$service")"
+    tag="$(infra/production/build-image.sh "$binary")"
     echo "sending $tag"
     docker save "$tag" | ssh "$server" docker load
-    ssh "$server" docker tag "$tag" "oxihome-$service:current"
+    ssh "$server" docker tag "$tag" "oxihome-$binary:current"
 fi
 scp -q infra/production/compose.yaml "$server:$remote/compose.yaml"
 

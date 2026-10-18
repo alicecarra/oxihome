@@ -69,6 +69,19 @@ services:
       # Writable: the node keeps rss-state.json next to rss.toml.
       - ./rss:/data
 
+  # The rss node again, only for YouTube channels.
+  youtube:
+    image: oxihome-rss:current
+    container_name: oxihome-youtube
+    restart: unless-stopped
+    <<: *logging
+    user: "1000:1000"
+    command: ["youtube.toml"]
+    depends_on: [mosquitto]
+    volumes:
+      # Writable: the node keeps youtube-state.json next to youtube.toml.
+      - ./youtube:/data
+
   network-devices:
     image: oxihome-network-devices:current
     container_name: oxihome-network-devices
