@@ -61,7 +61,10 @@ async fn main() -> anyhow::Result<()> {
             queue_size: config.mqtt.queue_size.unwrap_or(mqtt::DEFAULT_QUEUE_SIZE),
         },
     );
-    let client = reqwest::Client::builder().timeout(FETCH_TIMEOUT).build()?;
+    let client = reqwest::Client::builder()
+        .timeout(FETCH_TIMEOUT)
+        .user_agent(concat!("oxihome-weather/", env!("CARGO_PKG_VERSION")))
+        .build()?;
     let mut fetch = tokio::time::interval(FETCH_INTERVAL);
     loop {
         tokio::select! {
