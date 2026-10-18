@@ -29,6 +29,8 @@ pub enum Write {
     Notification(StoredNotification),
     Update(StoredUpdate),
     Command(StoredCommand),
+    /// Removes a node's rows from `nodes`, `channel_values` and `updates`.
+    Forget(String),
     /// Answered once everything sent before it is written.
     Flush(oneshot::Sender<()>),
 }
@@ -43,6 +45,7 @@ impl Write {
             Write::Notification(_) => "notification",
             Write::Update(_) => "update",
             Write::Command(_) => "command",
+            Write::Forget(_) => "forgotten node",
             Write::Flush(_) => "flush",
         }
     }
@@ -749,6 +752,18 @@ async fn write_one(transaction: &mut Transaction<'_, Sqlite>, write: &Write) -> 
             .bind(&update.detail)
             .execute(&mut **transaction)
             .await?;
+        }
+        Write::Forget(device_id) => {
+            for query in [
+                "DELETE FROM nodes WHERE device_id = ?",
+                "DELETE FROM channel_values WHERE device_id = ?",
+                "DELETE FROM updates WHERE device_id = ?",
+            ] {
+                sqlx::query(query)
+                    .bind(device_id)
+                    .execute(&mut **transaction)
+                    .await?;
+            }
         }
         Write::Flush(_) => {}
     }

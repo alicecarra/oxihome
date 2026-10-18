@@ -187,6 +187,12 @@ impl Default for Registry {
 }
 
 impl Registry {
+    /// Returns whether the node was known.
+    pub fn forget(&mut self, device_id: &str) -> bool {
+        self.asked_for_hello.remove(device_id);
+        self.nodes.remove(device_id).is_some()
+    }
+
     pub fn new(missed_heartbeats: u32) -> Self {
         Self {
             nodes: HashMap::new(),

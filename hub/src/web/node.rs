@@ -9,7 +9,13 @@ use serde::Deserialize;
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::{content::Form, page, parse_query_params, path_param, route},
+    router::{
+        content::Form,
+        header::{HeaderName, HeaderValue},
+        page, parse_query_params, path_param,
+        response::response_headers,
+        route,
+    },
     view::{View, ViewExt, ViewHandle, attributes, component, view},
 };
 
@@ -231,6 +237,9 @@ async fn overview_section(
         .rssi
         .map_or_else(|| "—".to_string(), |rssi| format!("{rssi} dBm"));
     let device_id = node.device_id.clone();
+    let forget_question = format!(
+        "Forget {title}? Its values and update history go away; it comes back if it speaks again."
+    );
     // Shown, it refreshes on every change; edited, it is the form and does not refresh.
     let attrs = attributes! {
         id="node-overview"
@@ -292,6 +301,21 @@ async fn overview_section(
                                 <p class="mt-4 text-sm text-muted-foreground">(format!("Updating to {version}…"))</p>
                             },
                             None => {},
+                        }
+                        if node.presence == overview::Presence::Offline {
+                            <div class="mt-4">
+                                button(
+                                    variant: ButtonVariant::Destructive,
+                                    size: ButtonSize::Sm,
+                                    attrs: attributes! {
+                                        type="button"
+                                        hx-post="/nodes/forget"
+                                        hx-target="#status"
+                                        hx-confirm=(forget_question)
+                                    },
+                                    "Forget"
+                                )
+                            </div>
                         }
                     }
                 )
@@ -1060,6 +1084,26 @@ struct UpdateForm {
 pub async fn start_update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<ViewHandle> {
     let hub: &Arc<Hub> = app_context(cx);
     let result = hub.start_update(&form.device_id).await;
+    view! { cx =>
+        if let Err(error) = result {
+            <p class="text-sm text-destructive">(format!("{error:#}"))</p>
+        }
+    }
+    .single()
+    .await
+}
+
+/// On success the browser goes to the node list; the error goes to `#status` otherwise.
+#[route(POST "/nodes/forget")]
+pub async fn forget(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<ViewHandle> {
+    let hub: &Arc<Hub> = app_context(cx);
+    let result = hub.forget_node(&form.device_id);
+    if result.is_ok() {
+        response_headers(cx).append(
+            HeaderName::from_static("hx-redirect"),
+            HeaderValue::from_static("/nodes"),
+        );
+    }
     view! { cx =>
         if let Err(error) = result {
             <p class="text-sm text-destructive">(format!("{error:#}"))</p>

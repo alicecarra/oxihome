@@ -76,6 +76,10 @@ impl Events {
     }
 
     /// An event from before the restart.
+    pub fn forget(&mut self, device_id: &str) {
+        self.last.retain(|(known, _, _), _| known != device_id);
+    }
+
     pub fn restore(&mut self, event: EventRecord, at: Timestamp) {
         self.last.insert(
             (event.device_id, event.entity, event.channel),

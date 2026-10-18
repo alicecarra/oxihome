@@ -152,11 +152,16 @@ downloaded (no connection, HTTP status, transfer cut), `UpdateRejected` (9) when
 final check (corrupt, or for another chip), `Internal` for a flash write error. Firmware before
 0.19.0 sends `Internal` with an "OTA:" detail, which the hub also takes as a failed update.
 
-Each finished update is also stored in the `updates` table, which is never pruned: the node page's
+Each finished update is also stored in the `updates` table, kept until the node is forgotten (see
+below): the node page's
 **History** section (between the fields and the rules, refreshed live) lists the last 10
 (versions, outcome, how long it took), next to the last 10
 notifications about the node (offline, back online, rebooted, updates), which go away with the
 rest of the history after `retention_days`.
+
+An offline node's page has a **Forget** button: the hub drops the node from memory and its rows
+from `nodes`, `channel_values` and `updates`; its readings, events and commands age out with the
+rest of the history, and its names in `nodes.toml` stay. A node that speaks again comes back.
 
 ## Test board wiring
 

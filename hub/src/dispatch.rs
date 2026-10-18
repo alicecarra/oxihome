@@ -436,6 +436,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn only_offline_nodes_are_forgotten_and_stay_forgotten() {
+        let hub = Hub::for_tests("forget", "").await;
+        on_message(&hub, &hello("lamp"));
+        assert!(hub.forget_node("lamp").is_err());
+
+        hub.check_presence(Instant::now() + Duration::from_secs(3600));
+        hub.forget_node("lamp").unwrap();
+        assert!(!hub.device_ids().contains(&"lamp".to_string()));
+        assert!(hub.forget_node("lamp").is_err());
+
+        hub.flush_storage().await;
+        let (_, restored) = crate::storage::Storage::open(
+            &hub.config_directory().join("hub.sqlite"),
+            Duration::from_secs(3600),
+        )
+        .await
+        .unwrap();
+        assert!(restored.nodes.is_empty());
+    }
+
+    #[tokio::test]
     async fn answers_and_presence() {
         let hub = Hub::for_tests("answers", "").await;
         on_message(&hub, &hello("lamp"));

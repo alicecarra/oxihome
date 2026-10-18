@@ -850,6 +850,33 @@ impl Hub {
             .cloned()
     }
 
+    /// Drops an offline node from memory and from the `nodes`, `channel_values` and `updates`
+    /// tables; its history ages out with the rest. A node that speaks again comes back.
+    pub fn forget_node(&self, device_id: &str) -> anyhow::Result<()> {
+        ensure!(
+            !self.is_online(device_id),
+            "{device_id} is online; only an offline node can be forgotten"
+        );
+        ensure!(
+            self.registry.lock().unwrap().forget(device_id),
+            "{device_id} is not a known node"
+        );
+        self.state.lock().unwrap().forget(device_id);
+        self.events.lock().unwrap().forget(device_id);
+        let mut hardware = self.hardware.lock().unwrap();
+        hardware.sending.remove(device_id);
+        hardware.refused.remove(device_id);
+        hardware.reports.remove(device_id);
+        drop(hardware);
+        self.other_protocols
+            .lock()
+            .unwrap()
+            .retain(|(known, _)| known != device_id);
+        self.storage.write(Write::Forget(device_id.to_string()));
+        self.announce(Change::Nodes);
+        Ok(())
+    }
+
     pub fn is_online(&self, device_id: &str) -> bool {
         self.registry
             .lock()

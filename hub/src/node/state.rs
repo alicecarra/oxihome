@@ -38,6 +38,10 @@ impl State {
     }
 
     /// A value from before the restart.
+    pub fn forget(&mut self, device_id: &str) {
+        self.values.retain(|(known, _, _), _| known != device_id);
+    }
+
     pub fn restore(
         &mut self,
         device_id: String,
