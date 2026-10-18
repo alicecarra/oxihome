@@ -99,8 +99,8 @@ impl<T: Transport> Node<T> {
             match self.ota.update(&url) {
                 Ok(()) => esp_idf_svc::hal::reset::restart(),
                 Err(error) => {
-                    log::warn!("OTA: {error:#}");
-                    self.send_error(ErrorCode::Internal, format!("OTA: {error:#}"));
+                    log::warn!("OTA: {error}");
+                    self.send_error(error.code(), error.to_string());
                 }
             }
         }
