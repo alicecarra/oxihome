@@ -2,13 +2,13 @@
 //! small HTTP server of their own through single-use links; the web interface stays on localhost.
 
 use std::collections::HashMap;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use jiff::Timestamp;
+use password_hash::rand_core::{OsRng, RngCore};
 use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -19,6 +19,8 @@ const LINK_LIFETIME: Duration = Duration::from_secs(5 * 60);
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_REQUEST: usize = 4096;
+/// After a failed `accept`, which repeats while the cause lasts (e.g. no file descriptors left).
+const ACCEPT_RETRY: Duration = Duration::from_secs(1);
 
 #[derive(Deserialize)]
 pub struct OtaConfig {
@@ -136,8 +138,13 @@ impl Ota {
 
 pub async fn serve(listener: TcpListener, ota: Arc<Ota>) {
     loop {
-        let Ok((stream, peer)) = listener.accept().await else {
-            continue;
+        let (stream, peer) = match listener.accept().await {
+            Ok(accepted) => accepted,
+            Err(error) => {
+                println!("OTA server: {error}");
+                tokio::time::sleep(ACCEPT_RETRY).await;
+                continue;
+            }
         };
         let ota = ota.clone();
         tokio::spawn(async move {
@@ -195,9 +202,10 @@ fn request_token(request: &str) -> Option<&str> {
 
 fn random_token() -> anyhow::Result<String> {
     let mut bytes = [0u8; 16];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut random| random.read_exact(&mut bytes))
-        .context("reading /dev/urandom")?;
+    OsRng
+        .try_fill_bytes(&mut bytes)
+        .map_err(|error| anyhow::anyhow!("{error}"))
+        .context("getting random bytes")?;
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
