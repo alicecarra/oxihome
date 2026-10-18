@@ -15,6 +15,12 @@ pub enum ErrorCode {
     InvalidOperation = 6,
     /// Failure inside the node, e.g. a GPIO error.
     Internal = 7,
+    /// The node could not download the image of an `Ota` command: no connection, an HTTP status
+    /// other than 200, or the transfer stopped. Sent on its own, after the command's `Ack`.
+    UpdateDownloadFailed = 8,
+    /// The image was downloaded but failed the final check, e.g. corrupt or for another chip.
+    /// Sent on its own, after the command's `Ack`.
+    UpdateRejected = 9,
 }
 
 impl From<ErrorCode> for u16 {
@@ -36,6 +42,8 @@ impl TryFrom<u16> for ErrorCode {
             5 => Ok(Self::InvalidValue),
             6 => Ok(Self::InvalidOperation),
             7 => Ok(Self::Internal),
+            8 => Ok(Self::UpdateDownloadFailed),
+            9 => Ok(Self::UpdateRejected),
             unknown => Err(unknown),
         }
     }
@@ -55,10 +63,12 @@ mod tests {
             ErrorCode::InvalidValue,
             ErrorCode::InvalidOperation,
             ErrorCode::Internal,
+            ErrorCode::UpdateDownloadFailed,
+            ErrorCode::UpdateRejected,
         ] {
             assert_eq!(ErrorCode::try_from(u16::from(code)), Ok(code));
         }
         assert_eq!(ErrorCode::try_from(0), Err(0));
-        assert_eq!(ErrorCode::try_from(8), Err(8));
+        assert_eq!(ErrorCode::try_from(10), Err(10));
     }
 }
