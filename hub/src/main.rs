@@ -45,7 +45,6 @@ struct Config {
     http: HttpConfig,
     #[serde(default)]
     presence: PresenceConfig,
-    #[serde(default)]
     time: TimeConfig,
     storage: StorageConfig,
     /// Over-the-air updates; off when missing.
@@ -65,10 +64,11 @@ fn default_retention_days() -> u32 {
     7
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Deserialize)]
 struct TimeConfig {
-    /// IANA name, e.g. "America/Sao_Paulo"; the system's zone when missing.
-    zone: Option<String>,
+    /// IANA name, e.g. "America/Sao_Paulo"; the database built into the hub covers machines without
+    /// tzdata.
+    zone: String,
 }
 
 #[derive(Deserialize)]
@@ -145,10 +145,8 @@ async fn main() -> anyhow::Result<()> {
         "{path}: storage.retention_days must be at least 1"
     );
 
-    let time_zone = match &config.time.zone {
-        Some(name) => TimeZone::get(name).with_context(|| format!("{path}: time.zone"))?,
-        None => TimeZone::system(),
-    };
+    let time_zone =
+        TimeZone::get(&config.time.zone).with_context(|| format!("{path}: time.zone"))?;
 
     let home_config = HomeConfig::load(&config.config.dir)?;
     println!(

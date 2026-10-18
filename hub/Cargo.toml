@@ -13,7 +13,7 @@ tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal
 topcoat = { version = "=0.10.0", features = ["icon-iconify", "sse", "tailwind", "ui"] }
 toml = "1"
 toml_edit = "0.25"
-jiff = { version = "0.2.38", features = ["serde"] }
+jiff = { version = "0.2.38", features = ["serde", "tzdb-bundle-always"] }
 croner = { version = "4", default-features = false, features = ["jiff"] }
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite-bundled", "migrate", "macros"] }
 serde_json = "1"

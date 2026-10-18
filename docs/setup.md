@@ -481,7 +481,8 @@ previous configuration stays in use.
   ```
 
   Times are local, in the zone set in `[time] zone` of `hub/hub.toml` (an IANA name such as
-  `America/Sao_Paulo`; the system's zone when missing). Scheduled rules are checked once per minute:
+  `America/Sao_Paulo`; required; the hub reads the machine's tzdata and falls back to a copy built
+  into it, so the machine's own zone does not matter). Scheduled rules are checked once per minute:
   the minute the hub starts does not run, minutes skipped by a short gap (up to 5 minutes, e.g. a
   clock adjustment) run right after, and longer gaps (hub stopped or suspended) are not run late.
   `/rules` lists the rules with their trigger, conditions, next run and last result. Examples:
@@ -1122,7 +1123,7 @@ node points to docker-host); it stays for working offline.
 ### Images
 
 `infra/production/Dockerfile` builds one image per workspace binary (`--build-arg BINARY=hub`
-builds `oxihome-hub`), on Debian trixie with `tzdata` for the hub's `[time] zone`. Images are built
+builds `oxihome-hub`), on Debian trixie (without `tzdata`: the hub carries its own time zone database). Images are built
 on the notebook (the server is slower) and sent over ssh; there is no registry:
 
 ```sh
