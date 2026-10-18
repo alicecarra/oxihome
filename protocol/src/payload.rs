@@ -7,11 +7,16 @@ use crate::{Channel, Value};
 pub enum Payload {
     Hello {
         build: Build,
+        /// The node's address on the local network, when it has one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ip: Option<String>,
         entities: Vec<EntityDescriptor>,
     },
     Heartbeat {
         uptime_s: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         rssi: Option<i8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         battery: Option<u8>,
     },
     State {
@@ -22,6 +27,7 @@ pub enum Payload {
         entity: u8,
         channel: u8,
         event: EventKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         data: Option<Value>,
     },
     Command {
@@ -37,6 +43,7 @@ pub enum Payload {
     },
     Error {
         code: u16,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
     },
 }
@@ -126,6 +133,7 @@ pub enum QueryKind {
     Hello,
     /// `None` = all entities.
     State {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         entity: Option<u8>,
     },
 }

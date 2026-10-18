@@ -314,7 +314,7 @@ fn broadcast_queries_are_answered() {
         &answers[..],
         [Message {
             reply_to: Some(3),
-            payload: Payload::Hello { build, entities },
+            payload: Payload::Hello { build, entities, .. },
             ..
         }] if build.version == "1.0.0" && entities.len() == 4
     ));

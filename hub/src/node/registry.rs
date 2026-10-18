@@ -256,7 +256,10 @@ impl Registry {
     }
 
     pub fn handle(&mut self, message: &Message, now: Instant) -> Vec<NodeEvent> {
-        if let Payload::Hello { build, entities } = &message.payload {
+        if let Payload::Hello {
+            build, entities, ..
+        } = &message.payload
+        {
             // A rebooted node sends `Hello` before its first heartbeat: keep the last
             // uptime so that heartbeat can still reveal the reboot.
             let previous = self.nodes.get(&message.src);
@@ -380,6 +383,7 @@ mod tests {
     fn hello() -> Message {
         message(Payload::Hello {
             build: Build::new("firmware", "0.3.1", "esp32"),
+            ip: None,
             entities: vec![],
         })
     }
@@ -408,6 +412,7 @@ mod tests {
         registry.handle(
             &message(Payload::Hello {
                 build: Build::new("firmware", "0.7.0", "esp32"),
+                ip: None,
                 entities: vec![EntityDescriptor {
                     id: 5,
                     name: None,
@@ -759,6 +764,7 @@ mod tests {
         registry.handle(
             &message(Payload::Hello {
                 build: Build::new("rss", "0.2.0", "linux-x86_64"),
+                ip: None,
                 entities: vec![
                     EntityDescriptor {
                         id: 2,

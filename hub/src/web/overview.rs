@@ -1006,6 +1006,7 @@ mod tests {
             0,
             oxihome_protocol::Payload::Hello {
                 build: oxihome_protocol::Build::new("firmware", "0.6.0", "esp32"),
+                ip: None,
                 entities: vec![oxihome_protocol::EntityDescriptor {
                     id: 3,
                     name: None,
@@ -1049,6 +1050,7 @@ mod tests {
             0,
             oxihome_protocol::Payload::Hello {
                 build: oxihome_protocol::Build::new("simulator", "0.6.0", "linux-x86_64"),
+                ip: None,
                 entities: vec![
                     oxihome_protocol::EntityDescriptor {
                         id: 1,

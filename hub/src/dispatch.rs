@@ -240,6 +240,7 @@ mod tests {
             0,
             Payload::Hello {
                 build: Build::new("firmware", "0.9.0", "esp32"),
+                ip: None,
                 entities: Vec::new(),
             },
         )

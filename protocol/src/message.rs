@@ -20,9 +20,11 @@ pub struct Message {
     /// Claimed sender, not authenticated.
     pub src: String,
     /// `None` = broadcast.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dst: Option<String>,
     /// Remaining hops (mesh); 1 = direct delivery.
     pub ttl: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<u64>,
@@ -112,6 +114,7 @@ mod tests {
     fn hello_with_descriptors() {
         roundtrip(Payload::Hello {
             build: Build::new("firmware", "0.1.0", "esp32"),
+            ip: Some("192.168.15.42".into()),
             entities: vec![
                 EntityDescriptor {
                     id: 1,
@@ -227,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn names_are_left_out_when_missing() {
+    fn missing_fields_are_left_out() {
         let channel = Channel {
             id: 0,
             name: None,
@@ -237,10 +240,7 @@ mod tests {
             unit: None,
         };
         let json = serde_json::to_string(&channel).unwrap();
-        assert_eq!(
-            json,
-            r#"{"id":0,"access":"Trigger","value":null,"quantity":null,"unit":null}"#
-        );
+        assert_eq!(json, r#"{"id":0,"access":"Trigger"}"#);
         assert_eq!(serde_json::from_str::<Channel>(&json).unwrap(), channel);
     }
 
@@ -250,5 +250,22 @@ mod tests {
         let msg = Message::from_json(json).unwrap();
         assert_eq!(msg.timestamp, None);
         assert_eq!(msg.auth, None);
+    }
+
+    #[test]
+    fn empty_fields_are_left_out_of_a_message() {
+        let heartbeat = Message::new(
+            "esp32-a",
+            1,
+            Payload::Heartbeat {
+                uptime_s: 5,
+                rssi: None,
+                battery: None,
+            },
+        );
+        assert_eq!(
+            heartbeat.to_json().unwrap(),
+            r#"{"version":2,"msg_id":1,"src":"esp32-a","ttl":1,"kind":"Heartbeat","payload":{"uptime_s":5}}"#
+        );
     }
 }

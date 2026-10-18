@@ -237,6 +237,7 @@ impl NodeCore {
     fn hello_replying(&mut self, device: &impl Device, reply_to: Option<u32>) -> Message {
         let payload = Payload::Hello {
             build: self.build.clone(),
+            ip: None,
             entities: device.entities(),
         };
         self.message(payload, reply_to)

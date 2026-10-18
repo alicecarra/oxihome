@@ -12,8 +12,11 @@ pub struct Channel {
     pub name: Option<String>,
     pub access: Access,
     /// `None` for channels without a value: a `Trigger` with no argument, an `Event` with no data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<ValueType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quantity: Option<Quantity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unit: Option<Unit>,
 }
 
