@@ -1,8 +1,8 @@
 mod auth;
 mod buttons;
+mod changes;
 mod chart;
 mod dashboard;
-mod events;
 mod feeds;
 pub(crate) mod format;
 mod home;
@@ -102,7 +102,7 @@ pub fn router(hub: Arc<Hub>, auth: Auth, listen_host: &str, allowed_hosts: &[Str
         .route(settings::reload)
         .route(settings::save)
         .route(toasts::toasts)
-        .route(events::events)
+        .route(changes::events)
         .route(traffic::traffic_events)
         .route(htmx_script)
         .route(htmx_sse_script)
