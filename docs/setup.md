@@ -351,7 +351,8 @@ What it keeps:
   `Float`, for charts.
 - `events`: every event (button, IR code). The last event of each channel and the recent codes
   of the Learn section on `/remotes` are read back from it at start.
-- `rule_runs`: the last run of each rule, shown on `/rules`.
+- `rule_runs`: the last run of each rule, shown on `/rules`. Runs of rules no longer in
+  `rules.toml` (removed or renamed) are dropped at start and whenever the configuration is applied.
 - `notifications`: the toasts (node offline, rule failed, `notify` actions), for the dashboard's
   `events` block.
 

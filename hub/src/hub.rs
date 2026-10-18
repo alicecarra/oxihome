@@ -177,7 +177,7 @@ impl Hub {
                 });
             }
         }
-        Self {
+        let hub = Self {
             mqtt,
             registry: Mutex::new(registry),
             state: Mutex::new(state),
@@ -203,6 +203,31 @@ impl Hub {
             time_zone,
             changes: broadcast::channel(64).0,
             shutting_down: watch::channel(false).0,
+        };
+        hub.forget_runs_of_removed_rules();
+        hub
+    }
+
+    /// The last run of a rule no longer in `rules.toml` (removed or renamed) goes away.
+    fn forget_runs_of_removed_rules(&self) {
+        let names: HashSet<String> = self
+            .rules
+            .lock()
+            .unwrap()
+            .all()
+            .iter()
+            .map(|rule| rule.name.clone())
+            .collect();
+        let mut runs = self.rule_runs.lock().unwrap();
+        let removed: Vec<String> = runs
+            .keys()
+            .filter(|name| !names.contains(*name))
+            .cloned()
+            .collect();
+        runs.retain(|name, _| names.contains(name));
+        drop(runs);
+        if !removed.is_empty() {
+            self.storage.write(Write::ForgetRuleRuns(removed));
         }
     }
 
@@ -586,6 +611,7 @@ impl Hub {
         *self.rules.lock().unwrap() = config.rules;
         *self.remotes.lock().unwrap() = config.remotes;
         *self.dashboards.lock().unwrap() = config.dashboards;
+        self.forget_runs_of_removed_rules();
         self.announce(Change::Nodes);
         for device_id in self.device_ids() {
             tokio::spawn(parameters::apply(self.clone(), device_id.clone()));

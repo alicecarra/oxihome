@@ -31,6 +31,8 @@ pub enum Write {
     Command(StoredCommand),
     /// Removes a node's rows from `nodes`, `channel_values` and `updates`.
     Forget(String),
+    /// Removes the last runs of these rules; their executions stay in the history.
+    ForgetRuleRuns(Vec<String>),
     /// Answered once everything sent before it is written.
     Flush(oneshot::Sender<()>),
 }
@@ -46,6 +48,7 @@ impl Write {
             Write::Update(_) => "update",
             Write::Command(_) => "command",
             Write::Forget(_) => "forgotten node",
+            Write::ForgetRuleRuns(_) => "forgotten rule runs",
             Write::Flush(_) => "flush",
         }
     }
@@ -761,6 +764,14 @@ async fn write_one(transaction: &mut Transaction<'_, Sqlite>, write: &Write) -> 
             ] {
                 sqlx::query(query)
                     .bind(device_id)
+                    .execute(&mut **transaction)
+                    .await?;
+            }
+        }
+        Write::ForgetRuleRuns(names) => {
+            for name in names {
+                sqlx::query("DELETE FROM rule_runs WHERE name = ?")
+                    .bind(name)
                     .execute(&mut **transaction)
                     .await?;
             }

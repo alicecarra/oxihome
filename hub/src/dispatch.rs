@@ -457,6 +457,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn runs_of_removed_rules_are_forgotten() {
+        let rule = |name: &str| {
+            format!(
+                "[[rules]]\nname = \"{name}\"\nwhen = {{ device = \"sim\", entity = 1, channel = 0, event = \"Press\" }}\nthen = []\n"
+            )
+        };
+        let hub = Hub::for_tests("rule-runs", &format!("{}{}", rule("A"), rule("B"))).await;
+        for name in ["A", "B"] {
+            hub.record_rule_run(
+                name,
+                rules::RuleRun {
+                    at: jiff::Timestamp::now(),
+                    errors: Vec::new(),
+                },
+            );
+        }
+
+        let modified = hub.config_file("rules.toml").unwrap().modified;
+        hub.save_config_file("rules.toml", &rule("A"), modified)
+            .unwrap();
+        let names = |runs: Vec<String>| {
+            let mut runs = runs;
+            runs.sort();
+            runs
+        };
+        assert_eq!(names(hub.rule_runs().into_keys().collect()), ["A"]);
+
+        hub.flush_storage().await;
+        let (_, restored) = crate::storage::Storage::open(
+            &hub.config_directory().join("hub.sqlite"),
+            Duration::from_secs(3600),
+        )
+        .await
+        .unwrap();
+        let restored = restored
+            .rule_runs
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(names(restored), ["A"]);
+    }
+
+    #[tokio::test]
     async fn answers_and_presence() {
         let hub = Hub::for_tests("answers", "").await;
         on_message(&hub, &hello("lamp"));
