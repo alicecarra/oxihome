@@ -113,10 +113,6 @@ pub fn on_config_changed(hub: &Arc<Hub>) {
         None => {}
         Some(Ok(rule_count)) => {
             println!("config reloaded from disk ({rule_count} rules)");
-            for device_id in hub.device_ids() {
-                tokio::spawn(parameters::apply(hub.clone(), device_id.clone()));
-                tokio::spawn(hardware::apply(hub.clone(), device_id));
-            }
             hub.notify(
                 "Config reloaded from disk".into(),
                 format!("{rule_count} rules"),
@@ -205,7 +201,8 @@ fn spawn_rules(hub: &Arc<Hub>, matched: Vec<Rule>, subject: Subject) {
 mod tests {
     use std::time::Duration;
 
-    use oxihome_protocol::{Build, Value};
+    use oxihome_protocol::management::{self, HEARTBEAT_INTERVAL};
+    use oxihome_protocol::{Build, CommandOp, Value};
 
     use super::*;
     use crate::hub::CommandOrigin;
@@ -315,6 +312,38 @@ mod tests {
 
     fn ack(device_id: &str, message_id: u32) -> Message {
         Message::new(device_id, 1, Payload::Ack { ok: true }).replying_to(message_id)
+    }
+
+    #[tokio::test]
+    async fn saved_parameters_are_sent_to_the_node() {
+        let hub = Hub::for_tests("apply-config", "").await;
+        let mut lamp = hello("lamp");
+        if let Payload::Hello { entities, .. } = &mut lamp.payload {
+            entities.push(management::descriptor());
+        }
+        on_message(&hub, &lamp).await.unwrap();
+
+        let mut sent = hub.traffic().subscribe();
+        let modified = hub.config_file("nodes.toml").unwrap().modified;
+        hub.save_config_file(
+            "nodes.toml",
+            "[nodes.lamp]\nparameters = { heartbeat_interval = 60 }\n",
+            modified,
+        )
+        .unwrap();
+        let entry = tokio::time::timeout(Duration::from_secs(1), sent.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(entry.device_id.as_deref(), Some("lamp"));
+        assert_eq!(
+            Message::from_json(&entry.text).unwrap().payload,
+            Payload::Command {
+                entity: management::ENTITY,
+                channel: HEARTBEAT_INTERVAL.channel.into(),
+                op: CommandOp::Set(Value::Int(60)),
+            }
+        );
     }
 
     #[tokio::test]

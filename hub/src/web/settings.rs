@@ -20,7 +20,6 @@ use crate::components::card::{card, card_content, card_description, card_header,
 use crate::components::textarea::textarea;
 use crate::config::FILES;
 use crate::hub::Hub;
-use crate::node::{hardware, parameters};
 
 path_param!(file);
 
@@ -176,10 +175,6 @@ pub async fn reload(cx: &Cx) -> Result<ViewHandle> {
     let hub: &Arc<Hub> = app_context(cx);
     let result = hub.reload_config();
     if let Ok(rule_count) = &result {
-        for device_id in hub.device_ids() {
-            tokio::spawn(parameters::apply(hub.clone(), device_id.clone()));
-            tokio::spawn(hardware::apply(hub.clone(), device_id));
-        }
         hub.notify(
             "Config reloaded".into(),
             format!("{rule_count} rules"),
@@ -262,10 +257,6 @@ pub async fn save(cx: &Cx, Form(form): Form<SaveForm>) -> Result<ViewHandle> {
 
     let editor = match result {
         Ok(rule_count) => {
-            for device_id in hub.device_ids() {
-                tokio::spawn(parameters::apply(hub.clone(), device_id.clone()));
-                tokio::spawn(hardware::apply(hub.clone(), device_id));
-            }
             hub.notify(
                 format!("{} saved", form.file),
                 format!("All config reloaded ({rule_count} rules)"),

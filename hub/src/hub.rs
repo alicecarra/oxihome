@@ -22,7 +22,8 @@ use crate::config::{
 };
 use crate::mqtt::Mqtt;
 use crate::node::events::{EventRecord, Events};
-use crate::node::hardware::{HardwareState, HardwareStatus, HardwareSync};
+use crate::node::hardware::{self, HardwareState, HardwareStatus, HardwareSync};
+use crate::node::parameters;
 use crate::node::registry::{NodeEvent, Registry};
 use crate::node::state::{ChannelUpdate, State};
 use crate::notifications::{self, Notification, Notifications};
@@ -478,7 +479,7 @@ impl Hub {
     }
 
     /// Rereads the config directory; on error the current configuration stays.
-    pub fn reload_config(&self) -> anyhow::Result<usize> {
+    pub fn reload_config(self: &Arc<Self>) -> anyhow::Result<usize> {
         let _writing = self.config_writes.lock().unwrap();
         let config = HomeConfig::load(&self.config_directory)?;
         Ok(self.apply_config(config))
@@ -486,7 +487,7 @@ impl Hub {
 
     /// Like `reload_config`, for the file watcher: `None` when the files are as last seen,
     /// which includes the hub's own writes.
-    pub fn reload_config_if_changed(&self) -> Option<anyhow::Result<usize>> {
+    pub fn reload_config_if_changed(self: &Arc<Self>) -> Option<anyhow::Result<usize>> {
         let _writing = self.config_writes.lock().unwrap();
         let texts = match read_texts(&self.config_directory) {
             Ok(texts) => texts,
@@ -511,7 +512,7 @@ impl Hub {
     /// Validates the whole configuration with the new text, then writes and applies it.
     /// Refuses when the file changed on disk since `expected_modified` was read.
     pub fn save_config_file(
-        &self,
+        self: &Arc<Self>,
         file: &str,
         text: &str,
         expected_modified: Option<SystemTime>,
@@ -522,7 +523,7 @@ impl Hub {
 
     /// Like `save_config_file`, with the text made from the current one.
     fn edit_config_file(
-        &self,
+        self: &Arc<Self>,
         file: &str,
         edit: impl FnOnce(&str) -> anyhow::Result<String>,
     ) -> anyhow::Result<()> {
@@ -535,7 +536,7 @@ impl Hub {
 
     /// Only with `config_writes` held.
     fn write_config_file(
-        &self,
+        self: &Arc<Self>,
         file: &str,
         text: &str,
         expected_modified: Option<SystemTime>,
@@ -552,8 +553,9 @@ impl Hub {
         Ok(self.apply_config(config))
     }
 
-    /// Returns the number of rules.
-    fn apply_config(&self, config: HomeConfig) -> usize {
+    /// Returns the number of rules. Nodes get their parameters and hardware sent when they
+    /// differ from the new configuration.
+    fn apply_config(self: &Arc<Self>, config: HomeConfig) -> usize {
         let rule_count = config.rules.len();
         *self.config_seen.lock().unwrap() = config.texts;
         *self.nodes.lock().unwrap() = config.nodes;
@@ -562,6 +564,10 @@ impl Hub {
         *self.remotes.lock().unwrap() = config.remotes;
         *self.dashboards.lock().unwrap() = config.dashboards;
         self.announce(Change::Nodes);
+        for device_id in self.device_ids() {
+            tokio::spawn(parameters::apply(self.clone(), device_id.clone()));
+            tokio::spawn(hardware::apply(self.clone(), device_id));
+        }
         rule_count
     }
 
@@ -721,14 +727,14 @@ impl Hub {
     }
 
     /// Adds a key to `remotes.toml` (keeping its comments), validates and applies the configuration.
-    pub fn learn_key(&self, remote: &str, key: &str, code: &str) -> anyhow::Result<()> {
+    pub fn learn_key(self: &Arc<Self>, remote: &str, key: &str, code: &str) -> anyhow::Result<()> {
         self.edit_config_file("remotes.toml", |text| {
             crate::config::remotes::with_key(text, remote, key, code)
         })
     }
 
     /// Fails when a rule still uses the key.
-    pub fn forget_key(&self, remote: &str, key: &str) -> anyhow::Result<()> {
+    pub fn forget_key(self: &Arc<Self>, remote: &str, key: &str) -> anyhow::Result<()> {
         self.edit_config_file("remotes.toml", |text| {
             crate::config::remotes::without_key(text, remote, key)
         })
@@ -736,7 +742,7 @@ impl Hub {
 
     /// Turns a rule on or off in `rules.toml` (keeping its comments), validates and applies the
     /// configuration.
-    pub fn set_rule_enabled(&self, name: &str, enabled: bool) -> anyhow::Result<()> {
+    pub fn set_rule_enabled(self: &Arc<Self>, name: &str, enabled: bool) -> anyhow::Result<()> {
         self.edit_config_file("rules.toml", |text| {
             crate::config::rules::with_rule_enabled(text, name, enabled)
         })
@@ -744,7 +750,7 @@ impl Hub {
 
     /// Changes a node's names and parameters in `nodes.toml` (keeping its comments), validates
     /// and applies the configuration.
-    pub fn edit_node(&self, device_id: &str, edits: &NodeEdits) -> anyhow::Result<()> {
+    pub fn edit_node(self: &Arc<Self>, device_id: &str, edits: &NodeEdits) -> anyhow::Result<()> {
         self.edit_config_file("nodes.toml", |text| {
             crate::config::nodes::with_node_edits(text, device_id, edits)
         })

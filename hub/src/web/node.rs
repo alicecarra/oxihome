@@ -28,7 +28,6 @@ use crate::config::nodes::{EntityEdit, NameTarget, NodeEdits, parameter_key};
 use crate::config::rules::{RuleRole, RuleUse};
 use crate::hub::{Hub, UpdateStatus};
 use crate::node::hardware::{HardwareState, HardwareStatus};
-use crate::node::parameters;
 use crate::storage::{StoredNotification, StoredUpdate, UpdateOutcome};
 
 /// Rows of the node's history card.
@@ -1030,9 +1029,6 @@ struct EditForm {
 pub async fn edit(cx: &Cx, Form(form): Form<EditForm>) -> Result<ViewHandle> {
     let hub: &Arc<Hub> = app_context(cx);
     let result = edits(&form.fields).and_then(|edits| hub.edit_node(&form.device_id, &edits));
-    if result.is_ok() {
-        tokio::spawn(parameters::apply(hub.clone(), form.device_id.clone()));
-    }
 
     // On success the section comes back shown, out of band; `#status` gets the error otherwise.
     let section = form.section;
