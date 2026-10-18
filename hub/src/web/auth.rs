@@ -207,8 +207,14 @@ fn login_location(next: &str) -> String {
 }
 
 /// A path on this hub, not `//other.host` or `/\other.host`, which browsers read as other sites.
+/// Browsers also drop tabs and line breaks from URLs, so `/<TAB>/other.host` would become one.
 fn is_local(target: &str) -> bool {
-    target.starts_with('/') && !target.starts_with("//") && !target.contains('\\')
+    target.starts_with('/')
+        && !target.starts_with("//")
+        && !target.contains('\\')
+        && !target
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace())
 }
 
 /// Over plain HTTP, except on localhost, the browser drops the session cookie (it is `Secure`),
@@ -355,6 +361,9 @@ mod tests {
         for target in [
             "//evil.example",
             "/\\evil.example",
+            "/\t/evil.example",
+            "/\n/evil.example",
+            "/ /evil.example",
             "https://evil.example",
             "nodes",
         ] {
