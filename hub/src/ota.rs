@@ -18,6 +18,8 @@ const LINK_LIFETIME: Duration = Duration::from_secs(5 * 60);
 /// From the command to the node's `Hello` with the new version.
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// A board takes about 10 s for an image; a stalled transfer is dropped after this.
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const MAX_REQUEST: usize = 4096;
 /// After a failed `accept`, which repeats while the cause lasts (e.g. no file descriptors left).
 const ACCEPT_RETRY: Duration = Duration::from_secs(1);
@@ -174,7 +176,9 @@ async fn answer(mut stream: TcpStream, ota: &Ota) -> anyhow::Result<()> {
         "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n"
     );
     stream.write_all(head.as_bytes()).await?;
-    tokio::io::copy(&mut file, &mut stream).await?;
+    tokio::time::timeout(DOWNLOAD_TIMEOUT, tokio::io::copy(&mut file, &mut stream))
+        .await
+        .context("download timed out")??;
     stream.shutdown().await?;
     println!("OTA: sent {} ({size} bytes)", image.display());
     Ok(())
