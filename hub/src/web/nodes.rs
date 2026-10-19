@@ -10,7 +10,7 @@ use topcoat::{
     view::{Child, View, attributes, component, view},
 };
 
-use super::format::{ago_label, duration_label, entity_label, value_label};
+use super::format::{ago_label, bool_label, duration_label, entity_label, value_label};
 use super::icons;
 use super::layout::layout;
 use super::overview::{self, ChannelOverview, Invocation, NodeOverview, Presence};
@@ -237,7 +237,7 @@ async fn status_dot(active: bool, #[default] child: Child<'_>) -> Result<impl Vi
 pub(super) async fn channel_value(channel: ChannelOverview) -> Result<impl View> {
     Ok(view! {
         match &channel.value {
-            Some(Value::Bool(active)) => status_dot(active: *active, if *active { "on" } else { "off" }),
+            Some(Value::Bool(active)) => status_dot(active: *active, (bool_label(*active, channel.switchable))),
             _ if channel.invocation.is_some() => {}
             _ => <p class="text-sm text-muted-foreground">(channel_state(&channel))</p>,
         }

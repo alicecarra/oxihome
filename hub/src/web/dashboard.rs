@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use jiff::{SignedDuration, Timestamp};
+use oxihome_protocol::{Unit, Value};
 use topcoat::{
     Result,
     context::{Cx, app_context},
@@ -12,7 +13,7 @@ use topcoat::{
 use super::buttons::{RuleButton, rule_button_view, rule_buttons};
 use super::chart::{CHART_BUCKETS, Chart, ChartRange, chart, history_chart, series};
 use super::feeds::{FeedList, feed_list, feeds_block};
-use super::format::{ago_label, rule_anchor, value_label};
+use super::format::{ago_label, bool_label, rule_anchor, value_label};
 use super::layout::layout;
 use super::nodes::{channel_controls, channel_value, presence_badge, protocol_badge};
 use super::overview::{self, Activity, DashboardChannel, NodeOverview, Presence, RulesSummary};
@@ -467,13 +468,17 @@ async fn dashboard_channel_row(
     } else {
         channel.label.clone()
     };
+    let percent = percent(&channel);
     Ok(view! {
         <li class="flex items-center justify-between gap-4 py-3">
-            <div>
+            <div class="min-w-0 flex-1 space-y-1">
                 <p class="text-sm font-medium">(label.clone())</p>
                 match channel.channel.clone() {
                     Ok(overview) => channel_value(channel: overview),
                     Err(reason) => <p class="text-sm text-muted-foreground">(reason)</p>,
+                }
+                if let Some(percent) = percent {
+                    percent_bar(percent: percent)
                 }
             </div>
             if let Ok(overview) = channel.channel {
@@ -486,20 +491,47 @@ async fn dashboard_channel_row(
 /// The channel's current value as text, or why there is none.
 fn current_value(channel: &DashboardChannel) -> String {
     match &channel.channel {
-        Ok(overview) => overview.value.as_ref().map_or_else(
-            || "—".to_string(),
-            |value| value_label(value, overview.unit),
-        ),
+        Ok(overview) => match &overview.value {
+            Some(Value::Bool(on)) => bool_label(*on, overview.switchable).to_string(),
+            Some(value) => value_label(value, overview.unit),
+            None => "—".to_string(),
+        },
         Err(reason) => (*reason).to_string(),
     }
+}
+
+/// From 0 to 100, for a number in percent.
+fn percent(channel: &DashboardChannel) -> Option<f64> {
+    let overview = channel.channel.as_ref().ok()?;
+    if overview.unit != Some(Unit::Percent) {
+        return None;
+    }
+    match overview.value.as_ref()? {
+        Value::Int(number) => Some(f64::from(*number).clamp(0.0, 100.0)),
+        Value::Float(number) => Some(f64::from(*number).clamp(0.0, 100.0)),
+        _ => None,
+    }
+}
+
+#[component]
+async fn percent_bar(percent: f64) -> Result<impl View> {
+    Ok(view! {
+        <div class="h-1.5 w-full max-w-48 overflow-hidden rounded-full bg-muted-foreground/20" role="presentation">
+            <div class="h-full rounded-full bg-foreground/70" style=(format!("width: {percent:.0}%"))></div>
+        </div>
+    })
 }
 
 #[component]
 async fn value_block(channel: DashboardChannel, online: bool) -> Result<impl View> {
     let value = current_value(&channel);
+    let percent = percent(&channel);
     Ok(view! {
         <div class=(if online { "space-y-1" } else { "space-y-1 opacity-60" })>
             <p class="text-4xl font-semibold tracking-tight tabular-nums">(value)</p>
+            if let Some(percent) = percent {
+                percent_bar(percent: percent)
+            }
             <p class="text-sm text-muted-foreground">
                 (channel.label)
                 if !online {

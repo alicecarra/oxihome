@@ -39,11 +39,37 @@ pub fn default_channel_name(channel: u8, quantity: Option<Quantity>) -> String {
     }
 }
 
-/// `22.3 °C`, `30 s`, `on`.
+/// `1 h 30 min`: the two largest units, the smaller left out when zero.
+pub fn long_duration_label(seconds: u64) -> String {
+    let units = [(86400, "d"), (3600, "h"), (60, "min"), (1, "s")];
+    let Some(first) = units.iter().position(|(length, _)| seconds >= *length) else {
+        return "0 s".into();
+    };
+    let (length, symbol) = units[first];
+    let mut label = format!("{} {symbol}", seconds / length);
+    if let Some(&(next_length, next_symbol)) = units.get(first + 1) {
+        let rest = seconds % length / next_length;
+        if rest > 0 {
+            label.push_str(&format!(" {rest} {next_symbol}"));
+        }
+    }
+    label
+}
+
+/// `22.3 °C`, `1 h 30 min`, `on`.
 pub fn value_label(value: &Value, unit: Option<Unit>) -> String {
     let suffix = unit
         .map(|unit| format!(" {}", unit_symbol(unit)))
         .unwrap_or_default();
+    match (value, unit) {
+        (Value::Int(number), Some(Unit::Second)) if *number >= 0 => {
+            return long_duration_label(number.unsigned_abs().into());
+        }
+        (Value::Float(number), Some(Unit::Second)) if *number >= 0.0 => {
+            return long_duration_label(number.round() as u64);
+        }
+        _ => {}
+    }
     match value {
         Value::Bool(on) => if *on { "on" } else { "off" }.into(),
         Value::Int(number) => format!("{number}{suffix}"),
@@ -52,6 +78,16 @@ pub fn value_label(value: &Value, unit: Option<Unit>) -> String {
         Value::Text(text) => text.clone(),
         Value::Color(color) => format!("{color:?}"),
         Value::Bytes(bytes) => format!("{} bytes", bytes.len()),
+    }
+}
+
+/// A switch is on or off; a sensor or flag the node only reports is yes or no.
+pub fn bool_label(on: bool, switchable: bool) -> &'static str {
+    match (switchable, on) {
+        (true, true) => "on",
+        (true, false) => "off",
+        (false, true) => "yes",
+        (false, false) => "no",
     }
 }
 
@@ -126,8 +162,39 @@ mod tests {
     #[test]
     fn value_without_unit_is_just_the_number() {
         assert_eq!(value_label(&Value::Float(1.25), None), "1.2");
-        assert_eq!(value_label(&Value::Int(30), Some(Unit::Second)), "30 s");
         assert_eq!(value_label(&Value::Bool(true), None), "on");
+    }
+
+    #[test]
+    fn only_switches_are_on_or_off() {
+        assert_eq!(bool_label(true, true), "on");
+        assert_eq!(bool_label(false, true), "off");
+        assert_eq!(bool_label(true, false), "yes");
+        assert_eq!(bool_label(false, false), "no");
+    }
+
+    #[test]
+    fn seconds_read_as_a_duration() {
+        assert_eq!(value_label(&Value::Int(30), Some(Unit::Second)), "30 s");
+        assert_eq!(
+            value_label(&Value::Int(5423), Some(Unit::Second)),
+            "1 h 30 min"
+        );
+        assert_eq!(
+            value_label(&Value::Int(312), Some(Unit::Second)),
+            "5 min 12 s"
+        );
+        assert_eq!(
+            value_label(&Value::Int(183_600), Some(Unit::Second)),
+            "2 d 3 h"
+        );
+        assert_eq!(value_label(&Value::Int(7200), Some(Unit::Second)), "2 h");
+        assert_eq!(value_label(&Value::Int(0), Some(Unit::Second)), "0 s");
+        assert_eq!(
+            value_label(&Value::Float(90.4), Some(Unit::Second)),
+            "1 min 30 s"
+        );
+        assert_eq!(value_label(&Value::Int(-5), Some(Unit::Second)), "-5 s");
     }
 
     #[test]
