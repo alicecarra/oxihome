@@ -224,7 +224,7 @@ mod tests {
     use oxihome_protocol::{Build, CommandOp, Value};
 
     use super::*;
-    use crate::hub::CommandOrigin;
+    use crate::hub::{Change, CommandOrigin};
 
     #[tokio::test]
     async fn config_changed_on_disk_is_applied_once_and_only_if_valid() {
@@ -388,6 +388,45 @@ mod tests {
                 entities: Vec::new(),
             },
         )
+    }
+
+    fn state(device_id: &str, on: bool) -> Message {
+        Message::new(
+            device_id,
+            0,
+            Payload::State {
+                entity: 1,
+                values: vec![oxihome_protocol::ChannelValue {
+                    channel: 0,
+                    value: Value::Bool(on),
+                    confidence: oxihome_protocol::Confidence::Confirmed,
+                }],
+            },
+        )
+    }
+
+    fn announced(receiver: &mut tokio::sync::broadcast::Receiver<Change>) -> Vec<String> {
+        std::iter::from_fn(|| receiver.try_recv().ok())
+            .map(|change| change.event_name())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn pages_hear_which_node_changed() {
+        let hub = Hub::for_tests("announce", "").await;
+        let mut receiver = hub.subscribe();
+        on_message(&hub, &hello("lamp"));
+        assert_eq!(announced(&mut receiver), ["presence", "nodes"]);
+        on_message(&hub, &state("lamp", true));
+        assert_eq!(announced(&mut receiver), ["node-lamp", "nodes"]);
+        on_message(&hub, &state("lamp", true));
+        assert!(announced(&mut receiver).is_empty());
+        on_message(&hub, &state("lamp.1", true));
+        let unreadable = announced(&mut receiver);
+        assert!(unreadable.contains(&"nodes".to_string()));
+        assert!(!unreadable.iter().any(|name| name.starts_with("node-")));
+        hub.check_presence(Instant::now() + Duration::from_secs(3600));
+        assert!(announced(&mut receiver).contains(&"presence".to_string()));
     }
 
     fn ack(device_id: &str, message_id: u32) -> Message {

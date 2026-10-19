@@ -57,22 +57,42 @@ const RECENT_CODES: usize = 10;
 /// the new image reveals it).
 const REBOOT_AFTER_UPDATE: Duration = Duration::from_secs(2 * 60);
 
-/// What changed, announced to the pages listening on `/events`.
-#[derive(Debug, Clone, Copy)]
+/// What changed, announced to the pages listening on `/events`. `Node`, `Presence` and `Config`
+/// come along with a `Nodes`, for the pages that only want to hear about one of them.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Change {
     Nodes,
+    /// Values or events of one node; only for ids that can name an event (`node_event`).
+    Node(Arc<str>),
+    /// A node came online, went offline, said hello or was forgotten.
+    Presence,
+    /// A config file was applied.
+    Config,
     Notifications,
     Timeline,
 }
 
 impl Change {
-    pub fn event_name(self) -> &'static str {
+    pub fn event_name(&self) -> String {
         match self {
-            Change::Nodes => "nodes",
-            Change::Notifications => "notifications",
-            Change::Timeline => "timeline",
+            Change::Nodes => "nodes".into(),
+            Change::Node(device_id) => format!("node-{device_id}"),
+            Change::Presence => "presence".into(),
+            Change::Config => "config".into(),
+            Change::Notifications => "notifications".into(),
+            Change::Timeline => "timeline".into(),
         }
     }
+}
+
+/// The event a page listens to for one node: `node-printer`. `None` when the id has characters
+/// htmx would not read in a trigger; such a node is only heard through `nodes`.
+pub fn node_event(device_id: &str) -> Option<String> {
+    let readable = !device_id.is_empty()
+        && device_id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'));
+    readable.then(|| Change::Node(device_id.into()).event_name())
 }
 
 /// Who sends a command. The timeline keeps the ones from the web interface and from rules.
@@ -284,7 +304,14 @@ impl Hub {
             });
             recent.truncate(RECENT_CODES);
         }
-        if !node_events.is_empty() || !updates.is_empty() || event.is_some() {
+        let said_hello = matches!(message.payload, Payload::Hello { .. });
+        if !node_events.is_empty() || said_hello {
+            self.announce(Change::Presence);
+        }
+        if (!updates.is_empty() || event.is_some()) && node_event(&message.src).is_some() {
+            self.announce(Change::Node(message.src.as_str().into()));
+        }
+        if !node_events.is_empty() || !updates.is_empty() || event.is_some() || said_hello {
             self.announce(Change::Nodes);
         }
         (node_events, updates, event)
@@ -293,6 +320,7 @@ impl Hub {
     pub fn check_presence(&self, now: Instant) -> Vec<NodeEvent> {
         let node_events = self.registry.lock().unwrap().check_presence(now);
         if !node_events.is_empty() {
+            self.announce(Change::Presence);
             self.announce(Change::Nodes);
         }
         node_events
@@ -470,6 +498,7 @@ impl Hub {
             .unwrap()
             .retain(|(known, _)| known != device_id);
         self.storage.write(Write::Forget(device_id.to_string()));
+        self.announce(Change::Presence);
         self.announce(Change::Nodes);
         Ok(())
     }

@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,37 +19,49 @@ use crate::hub::{Change, Hub};
 /// After an event goes out, more of the same kind wait this long and leave as one.
 const QUIET: Duration = Duration::from_secs(3);
 
-const KINDS: [Change; 3] = [Change::Nodes, Change::Notifications, Change::Timeline];
+/// What a page that missed changes is told, so it refreshes everything.
+const EVERYTHING: [Change; 5] = [
+    Change::Nodes,
+    Change::Presence,
+    Change::Config,
+    Change::Notifications,
+    Change::Timeline,
+];
 
 /// Sends the first change of a kind at once and holds the ones that follow within `QUIET`, so a
 /// node sending a value every second does not make the pages reload every second; the held ones
-/// leave together when the quiet time ends, so the last value always shows.
+/// leave together when the quiet time ends, so the last value always shows. Each node's changes
+/// are a kind of their own.
 #[derive(Default)]
 struct Coalescer {
-    /// By kind, in `KINDS` order.
-    quiet_until: [Option<Instant>; 3],
-    held: [bool; 3],
+    kinds: HashMap<Change, Quiet>,
 }
 
-fn kind_index(change: Change) -> usize {
-    match change {
-        Change::Nodes => 0,
-        Change::Notifications => 1,
-        Change::Timeline => 2,
-    }
+struct Quiet {
+    until: Instant,
+    held: bool,
 }
 
 impl Coalescer {
     /// Whether the change goes out now.
     fn receive(&mut self, change: Change, now: Instant) -> bool {
-        let index = kind_index(change);
-        match self.quiet_until[index] {
-            Some(until) if now < until => {
-                self.held[index] = true;
+        // Kinds whose quiet time ended with nothing held are forgotten, so a node that went
+        // away does not stay in the map.
+        self.kinds
+            .retain(|_, quiet| quiet.held || now < quiet.until);
+        match self.kinds.get_mut(&change) {
+            Some(quiet) => {
+                quiet.held = true;
                 false
             }
-            _ => {
-                self.quiet_until[index] = Some(now + QUIET);
+            None => {
+                self.kinds.insert(
+                    change,
+                    Quiet {
+                        until: now + QUIET,
+                        held: false,
+                    },
+                );
                 true
             }
         }
@@ -57,20 +69,21 @@ impl Coalescer {
 
     /// When the next held change is due.
     fn next_due(&self) -> Option<Instant> {
-        (0..KINDS.len())
-            .filter(|&index| self.held[index])
-            .filter_map(|index| self.quiet_until[index])
+        self.kinds
+            .values()
+            .filter(|quiet| quiet.held)
+            .map(|quiet| quiet.until)
             .min()
     }
 
     /// The held changes whose quiet time is over; each starts a new quiet time.
     fn due(&mut self, now: Instant) -> Vec<Change> {
         let mut due = Vec::new();
-        for (index, change) in KINDS.into_iter().enumerate() {
-            if self.held[index] && self.quiet_until[index].is_some_and(|until| until <= now) {
-                self.held[index] = false;
-                self.quiet_until[index] = Some(now + QUIET);
-                due.push(change);
+        for (change, quiet) in &mut self.kinds {
+            if quiet.held && quiet.until <= now {
+                quiet.held = false;
+                quiet.until = now + QUIET;
+                due.push(change.clone());
             }
         }
         due
@@ -96,7 +109,7 @@ pub async fn events(cx: &Cx) -> Result<Sse<impl Stream<Item = Result<Event>> + u
                     let name = change.event_name();
                     // Browsers drop events with empty data.
                     return Some((
-                        Ok(Event::new().event(name).data(name)),
+                        Ok(Event::new().event(name.clone()).data(name)),
                         (receiver, shutdown, coalescer, ready),
                     ));
                 }
@@ -112,14 +125,14 @@ pub async fn events(cx: &Cx) -> Result<Sse<impl Stream<Item = Result<Event>> + u
                 let received = match received {
                     Ok(change) => vec![change],
                     // Some changes were dropped; refreshing everything covers them.
-                    Err(RecvError::Lagged(_)) => KINDS.to_vec(),
+                    Err(RecvError::Lagged(_)) => EVERYTHING.to_vec(),
                     Err(RecvError::Closed) => return None,
                 };
                 let now = Instant::now();
                 ready.extend(
                     received
                         .into_iter()
-                        .filter(|change| coalescer.receive(*change, now)),
+                        .filter(|change| coalescer.receive(change.clone(), now)),
                 );
             }
         },
@@ -131,8 +144,8 @@ pub async fn events(cx: &Cx) -> Result<Sse<impl Stream<Item = Result<Event>> + u
 mod tests {
     use super::*;
 
-    fn names(changes: Vec<Change>) -> Vec<&'static str> {
-        changes.into_iter().map(Change::event_name).collect()
+    fn names(changes: Vec<Change>) -> Vec<String> {
+        changes.iter().map(Change::event_name).collect()
     }
 
     #[test]
@@ -166,6 +179,27 @@ mod tests {
         assert!(coalescer.receive(Change::Notifications, start));
         assert!(!coalescer.receive(Change::Nodes, start + Duration::from_secs(1)));
         assert_eq!(names(coalescer.due(start + QUIET)), ["nodes"]);
+    }
+
+    #[test]
+    fn each_node_is_held_apart() {
+        let start = Instant::now();
+        let mut coalescer = Coalescer::default();
+        let printer = Change::Node("printer".into());
+        let weather = Change::Node("weather".into());
+        assert!(coalescer.receive(printer.clone(), start));
+        assert!(coalescer.receive(weather, start + Duration::from_secs(1)));
+        assert!(!coalescer.receive(printer, start + Duration::from_secs(1)));
+        assert_eq!(names(coalescer.due(start + QUIET)), ["node-printer"]);
+    }
+
+    #[test]
+    fn quiet_kinds_are_forgotten() {
+        let start = Instant::now();
+        let mut coalescer = Coalescer::default();
+        assert!(coalescer.receive(Change::Node("printer".into()), start));
+        assert!(coalescer.receive(Change::Nodes, start + QUIET));
+        assert_eq!(coalescer.kinds.len(), 1);
     }
 
     #[test]

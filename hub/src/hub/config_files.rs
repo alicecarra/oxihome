@@ -124,6 +124,7 @@ impl Hub {
         *self.remotes.lock().unwrap() = config.remotes;
         *self.dashboards.lock().unwrap() = config.dashboards;
         self.forget_runs_of_removed_rules();
+        self.announce(Change::Config);
         self.announce(Change::Nodes);
         for device_id in self.device_ids() {
             tokio::spawn(parameters::apply(self.clone(), device_id.clone()));
