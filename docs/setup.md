@@ -630,6 +630,7 @@ cargo install topcoat-cli --version 0.10.0 --locked
 cd hub
 topcoat ui list                  # available and installed components
 topcoat ui add badge button card # copy components into src/components
+topcoat ui add select checkbox   # for the rule editor
 ```
 
 Avoid `dialog`, `alert_dialog`, `sheet`, `sidebar` and `tabs`: they need Topcoat's JavaScript
