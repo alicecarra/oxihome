@@ -6,7 +6,7 @@ use oxihome_protocol::{Unit, Value};
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::{page, parse_query_params},
+    router::{page, parse_query_params, path_param},
     view::{View, attributes, component, view},
 };
 
@@ -19,13 +19,16 @@ use super::nodes::{channel_controls, channel_value, presence_badge, protocol_bad
 use super::overview::{self, Activity, DashboardChannel, NodeOverview, Presence, RulesSummary};
 use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::card::{card, card_content, card_header, card_title};
-use crate::config::dashboard::{Block, BlockKind, ChannelReference, DEFAULT_EVENTS};
-use crate::hub::Hub;
+use crate::config::dashboard::{Block, BlockKind, ChannelReference, DEFAULT_EVENTS, Dashboard};
+use crate::hub::{Hub, node_event};
 
 /// A block with what it shows, read before rendering.
 struct BlockView {
+    index: usize,
     title: String,
     width: u8,
+    /// What makes the block fetch itself again.
+    trigger: String,
     content: BlockContent,
 }
 
@@ -62,6 +65,8 @@ enum BlockContent {
 
 const UPCOMING_RULES: usize = 5;
 
+path_param!(index);
+
 #[page("/")]
 pub async fn dashboard_page(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
@@ -79,6 +84,29 @@ pub async fn dashboard_fragment(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
     let (blocks, query) = block_views(hub, &Picked::from_query(cx)).await;
     Ok(view! { dashboard_root(blocks: blocks, query: query) })
+}
+
+/// One block, refreshed alone when what it shows changes.
+#[page("/dashboard/block/{index}")]
+pub async fn dashboard_block_fragment(cx: &Cx) -> Result<impl View> {
+    let hub: &Arc<Hub> = app_context(cx);
+    let index = path_param::<Index>(cx).to_string().parse::<usize>().ok();
+    let picked = Picked::from_query(cx);
+    let (block, query) = match (index, hub.dashboard()) {
+        (Some(index), Some(dashboard)) if index < dashboard.blocks.len() => {
+            let state = PageState::new(&dashboard, &picked);
+            let block = state.block_view(hub, &dashboard.blocks[index], index).await;
+            (Some(block), state.query())
+        }
+        _ => (None, String::new()),
+    };
+    Ok(view! {
+        match block {
+            Some(block) => dashboard_block(block: block, query: query),
+            // dashboard.toml changed under the page: reload all of it.
+            None => <div hx-get=(format!("/dashboard/fragment?{query}")) hx-trigger="load" hx-target="#dashboard" hx-swap="outerHTML"></div>,
+        }
+    })
 }
 
 /// What was picked on the page, by block index: `range<block>=6h` for a chart's range,
@@ -122,36 +150,47 @@ fn dashboard_query(ranges: &[(usize, ChartRange)], read_shown: &[usize]) -> Stri
         .join("&")
 }
 
-/// The blocks and the query that keeps what was picked on them.
-async fn block_views(hub: &Hub, picked: &Picked) -> (Vec<BlockView>, String) {
-    let Some(dashboard) = hub.dashboard() else {
-        return (Vec::new(), String::new());
-    };
-    let ranges: Vec<(usize, ChartRange)> = dashboard
-        .blocks
-        .iter()
-        .enumerate()
-        .filter(|(_, block)| block.kind == BlockKind::History)
-        .map(|(index, block)| {
-            let key = picked
-                .ranges
-                .get(&index)
-                .map(String::as_str)
-                .or(block.range.as_deref())
-                .unwrap_or("24h");
-            (index, ChartRange::from_key(Some(key)))
-        })
-        .collect();
-    let read_shown: Vec<usize> = dashboard
-        .blocks
-        .iter()
-        .enumerate()
-        .filter(|(index, block)| block.kind == BlockKind::Feeds && picked.read.contains(index))
-        .map(|(index, _)| index)
-        .collect();
-    let mut views = Vec::new();
-    for (index, block) in dashboard.blocks.iter().enumerate() {
-        let range = ranges
+/// What every block shows, from what was picked on the page.
+struct PageState {
+    ranges: Vec<(usize, ChartRange)>,
+    read_shown: Vec<usize>,
+}
+
+impl PageState {
+    fn new(dashboard: &Dashboard, picked: &Picked) -> Self {
+        let ranges = dashboard
+            .blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, block)| block.kind == BlockKind::History)
+            .map(|(index, block)| {
+                let key = picked
+                    .ranges
+                    .get(&index)
+                    .map(String::as_str)
+                    .or(block.range.as_deref())
+                    .unwrap_or("24h");
+                (index, ChartRange::from_key(Some(key)))
+            })
+            .collect();
+        let read_shown = dashboard
+            .blocks
+            .iter()
+            .enumerate()
+            .filter(|(index, block)| block.kind == BlockKind::Feeds && picked.read.contains(index))
+            .map(|(index, _)| index)
+            .collect();
+        PageState { ranges, read_shown }
+    }
+
+    /// The query that keeps what was picked on every block.
+    fn query(&self) -> String {
+        dashboard_query(&self.ranges, &self.read_shown)
+    }
+
+    async fn block_view(&self, hub: &Hub, block: &Block, index: usize) -> BlockView {
+        let range = self
+            .ranges
             .iter()
             .find(|(history, _)| *history == index)
             .map(|(_, range)| *range)
@@ -159,32 +198,90 @@ async fn block_views(hub: &Hub, picked: &Picked) -> (Vec<BlockView>, String) {
         let choices = ChartRange::ALL
             .into_iter()
             .map(|choice| {
-                let changed: Vec<(usize, ChartRange)> = ranges
+                let changed: Vec<(usize, ChartRange)> = self
+                    .ranges
                     .iter()
                     .map(|&(history, range)| {
                         (history, if history == index { choice } else { range })
                     })
                     .collect();
-                (choice, dashboard_query(&changed, &read_shown))
+                (choice, dashboard_query(&changed, &self.read_shown))
             })
             .collect();
-        let show_read = read_shown.contains(&index);
+        let show_read = self.read_shown.contains(&index);
         let toggled: Vec<usize> = if show_read {
-            read_shown
+            self.read_shown
                 .iter()
                 .copied()
                 .filter(|shown| *shown != index)
                 .collect()
         } else {
-            read_shown.iter().copied().chain([index]).collect()
+            self.read_shown.iter().copied().chain([index]).collect()
         };
         let read = ReadToggle {
             shown: show_read,
-            query: dashboard_query(&ranges, &toggled),
+            query: dashboard_query(&self.ranges, &toggled),
         };
-        views.push(block_view(hub, block, range, choices, read).await);
+        let mut view = block_view(hub, block, range, choices, read).await;
+        view.index = index;
+        view.trigger = block_trigger(block, range);
+        view
     }
-    (views, dashboard_query(&ranges, &read_shown))
+}
+
+/// The blocks and the query that keeps what was picked on them.
+async fn block_views(hub: &Hub, picked: &Picked) -> (Vec<BlockView>, String) {
+    let Some(dashboard) = hub.dashboard() else {
+        return (Vec::new(), String::new());
+    };
+    let state = PageState::new(&dashboard, picked);
+    let mut views = Vec::new();
+    for (index, block) in dashboard.blocks.iter().enumerate() {
+        views.push(state.block_view(hub, block, index).await);
+    }
+    (views, state.query())
+}
+
+/// Every block also refreshes after one of its controls and once a minute, in case an event was
+/// missed. A chart refreshes at most once per bucket (from 6 s to a minute): it does not change
+/// sooner.
+fn block_trigger(block: &Block, range: ChartRange) -> String {
+    let node = |device_id: &str| {
+        node_event(device_id).map_or_else(|| "sse:nodes".to_string(), |name| format!("sse:{name}"))
+    };
+    let mut triggers: Vec<String> = match block.kind {
+        BlockKind::Nodes => vec!["sse:presence".into()],
+        BlockKind::Channels => {
+            let mut triggers = Vec::new();
+            for channel in &block.channels {
+                let trigger = node(&channel.device);
+                if !triggers.contains(&trigger) {
+                    triggers.push(trigger);
+                }
+            }
+            triggers
+        }
+        BlockKind::Value => block
+            .channel
+            .iter()
+            .map(|channel| node(&channel.device))
+            .collect(),
+        BlockKind::History => {
+            let throttle = range.bucket_length().as_secs().clamp(6, 60);
+            block
+                .channel
+                .iter()
+                .map(|channel| format!("{} throttle:{throttle}s", node(&channel.device)))
+                .collect()
+        }
+        BlockKind::Feeds => block.device.iter().map(|device| node(device)).collect(),
+        BlockKind::Buttons | BlockKind::Rules => {
+            vec!["sse:config".into(), "sse:timeline".into()]
+        }
+        BlockKind::Events => vec!["sse:timeline".into(), "sse:notifications".into()],
+    };
+    triggers.extend(["every 60s".into(), "refresh".into()]);
+    triggers.join(", ")
 }
 
 /// Whether a feeds block shows its read items, and the query that flips it.
@@ -237,8 +334,10 @@ async fn block_view(
         BlockKind::Value | BlockKind::History => {
             let Some(channel) = single_channel(hub, block.channel.as_ref()) else {
                 return BlockView {
+                    index: 0,
                     title: block.title.clone().unwrap_or_default(),
                     width: block.width,
+                    trigger: String::new(),
                     content: BlockContent::Events(Vec::new()),
                 };
             };
@@ -300,31 +399,34 @@ async fn block_view(
         }
     };
     BlockView {
+        index: 0,
         title: block.title.clone().unwrap_or(default_title),
         width: block.width,
+        trigger: String::new(),
         content,
     }
 }
 
-/// Refreshes itself with the same query, so picked chart ranges stay.
+/// Each block refreshes itself; the whole dashboard only when a config file changes, since
+/// dashboard.toml may have moved its blocks. Both keep the query, so picked chart ranges stay.
 #[component]
 async fn dashboard_root(blocks: Vec<BlockView>, query: String) -> Result<impl View> {
     Ok(view! {
         <div
             id="dashboard"
             hx-get=(format!("/dashboard/fragment?{query}"))
-            hx-trigger="sse:nodes, sse:notifications, every 30s, refresh"
+            hx-trigger="sse:config"
             hx-swap="outerHTML"
             // Buttons and controls inside would swap `#status` out with outerHTML.
             hx-disinherit="*"
         >
-            dashboard_blocks(blocks: blocks)
+            dashboard_blocks(blocks: blocks, query: query)
         </div>
     })
 }
 
 #[component]
-async fn dashboard_blocks(blocks: Vec<BlockView>) -> Result<impl View> {
+async fn dashboard_blocks(blocks: Vec<BlockView>, query: String) -> Result<impl View> {
     Ok(view! {
         if blocks.is_empty() {
             <p class="text-muted-foreground">
@@ -338,46 +440,59 @@ async fn dashboard_blocks(blocks: Vec<BlockView>) -> Result<impl View> {
         // Cards of a row share its height.
         <div class="grid gap-4 lg:grid-cols-3">
             for block in blocks {
-                <div class=(width_class(block.width))>
-                    card(
-                        attrs: attributes! { class="h-full" },
-                        card_header(card_title((block.title)))
-                        card_content(
-                            match block.content {
-                                BlockContent::Nodes(nodes) => node_status(nodes: nodes),
-                                BlockContent::Channels { channels, several_nodes } => {
-                                    <ul class="divide-y divide-border">
-                                        for channel in channels {
-                                            dashboard_channel_row(channel: channel, several_nodes: several_nodes)
-                                        }
-                                    </ul>
-                                },
-                                BlockContent::Value { channel, online } => value_block(channel: channel, online: online),
-                                BlockContent::History { channel, chart, range, choices } => history_block(channel: channel, chart: chart, range: range, choices: choices),
-                                BlockContent::Rules(summary) => rules_block(summary: summary),
-                                BlockContent::Events(items) => events_block(items: items),
-                                BlockContent::Feeds { list, device_id, limit, show_read, toggle_query } => feeds_block(
-                                    list: list,
-                                    device_id: device_id,
-                                    limit: limit,
-                                    show_read: show_read,
-                                    toggle_query: toggle_query
-                                ),
-                                BlockContent::Buttons(buttons) => {
-                                    // In one row while they fit, sharing the width.
-                                    <div class="flex flex-wrap gap-3">
-                                        for rule_button in buttons {
-                                            <div class="min-w-32 flex-1">
-                                                rule_button_view(rule_button: rule_button)
-                                            </div>
-                                        }
-                                    </div>
-                                },
-                            }
-                        )
-                    )
-                </div>
+                dashboard_block(block: block, query: query.clone())
             }
+        </div>
+    })
+}
+
+#[component]
+async fn dashboard_block(block: BlockView, query: String) -> Result<impl View> {
+    Ok(view! {
+        <div
+            class=(width_class(block.width))
+            hx-get=(format!("/dashboard/block/{}?{query}", block.index))
+            hx-trigger=(block.trigger)
+            hx-swap="outerHTML"
+            hx-disinherit="*"
+        >
+            card(
+                attrs: attributes! { class="h-full" },
+                card_header(card_title((block.title)))
+                card_content(
+                    match block.content {
+                        BlockContent::Nodes(nodes) => node_status(nodes: nodes),
+                        BlockContent::Channels { channels, several_nodes } => {
+                            <ul class="divide-y divide-border">
+                                for channel in channels {
+                                    dashboard_channel_row(channel: channel, several_nodes: several_nodes)
+                                }
+                            </ul>
+                        },
+                        BlockContent::Value { channel, online } => value_block(channel: channel, online: online),
+                        BlockContent::History { channel, chart, range, choices } => history_block(channel: channel, chart: chart, range: range, choices: choices),
+                        BlockContent::Rules(summary) => rules_block(summary: summary),
+                        BlockContent::Events(items) => events_block(items: items),
+                        BlockContent::Feeds { list, device_id, limit, show_read, toggle_query } => feeds_block(
+                            list: list,
+                            device_id: device_id,
+                            limit: limit,
+                            show_read: show_read,
+                            toggle_query: toggle_query
+                        ),
+                        BlockContent::Buttons(buttons) => {
+                            // In one row while they fit, sharing the width.
+                            <div class="flex flex-wrap gap-3">
+                                for rule_button in buttons {
+                                    <div class="min-w-32 flex-1">
+                                        rule_button_view(rule_button: rule_button)
+                                    </div>
+                                }
+                            </div>
+                        },
+                    }
+                )
+            )
         </div>
     })
 }
@@ -645,4 +760,54 @@ async fn events_block(items: Vec<Activity>) -> Result<impl View> {
             }
         </ul>
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn block(text: &str) -> Block {
+        toml::from_str(text).unwrap()
+    }
+
+    #[test]
+    fn blocks_listen_to_what_they_show() {
+        let channels = block(
+            "type = \"channels\"\nchannels = [\
+             { device = \"printer\", entity = 1, channel = 0 },\
+             { device = \"weather\", entity = 1, channel = 0 },\
+             { device = \"printer\", entity = 2, channel = 0 },\
+             { device = \"lamp.1\", entity = 1, channel = 0 }]",
+        );
+        assert_eq!(
+            block_trigger(&channels, ChartRange::Day),
+            "sse:node-printer, sse:node-weather, sse:nodes, every 60s, refresh"
+        );
+        assert_eq!(
+            block_trigger(&block("type = \"nodes\""), ChartRange::Day),
+            "sse:presence, every 60s, refresh"
+        );
+        assert_eq!(
+            block_trigger(&block("type = \"events\""), ChartRange::Day),
+            "sse:timeline, sse:notifications, every 60s, refresh"
+        );
+        assert_eq!(
+            block_trigger(
+                &block("type = \"feeds\"\ndevice = \"youtube\""),
+                ChartRange::Day
+            ),
+            "sse:node-youtube, every 60s, refresh"
+        );
+    }
+
+    #[test]
+    fn charts_refresh_at_most_once_per_bucket() {
+        let history = block(
+            "type = \"history\"\nchannel = { device = \"weather\", entity = 1, channel = 0 }",
+        );
+        let trigger = |range| block_trigger(&history, range);
+        assert!(trigger(ChartRange::FifteenMinutes).starts_with("sse:node-weather throttle:6s,"));
+        assert!(trigger(ChartRange::Hour).starts_with("sse:node-weather throttle:25s,"));
+        assert!(trigger(ChartRange::Day).starts_with("sse:node-weather throttle:60s,"));
+    }
 }
