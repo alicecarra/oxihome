@@ -159,6 +159,26 @@ impl Hub {
         })
     }
 
+    /// Puts a rule in `rules.toml` in place of the one named `previous`, or adds it (keeping
+    /// comments), validates and applies the configuration.
+    pub fn save_rule(
+        self: &Arc<Self>,
+        previous: Option<&str>,
+        rule: toml_edit::Table,
+    ) -> anyhow::Result<()> {
+        self.edit_config_file("rules.toml", |text| {
+            crate::config::rules::with_rule_saved(text, previous, rule)
+        })
+    }
+
+    /// What `save_rule` would refuse, without saving: the whole configuration is validated.
+    pub fn check_rule(&self, previous: Option<&str>, rule: toml_edit::Table) -> anyhow::Result<()> {
+        let current = self.config_file("rules.toml")?;
+        let text = crate::config::rules::with_rule_saved(&current.text, previous, rule)?;
+        HomeConfig::load_with(&self.config_directory, Some(("rules.toml", &text)))?;
+        Ok(())
+    }
+
     /// Changes a node's names and parameters in `nodes.toml` (keeping its comments), validates
     /// and applies the configuration.
     pub fn edit_node(self: &Arc<Self>, device_id: &str, edits: &NodeEdits) -> anyhow::Result<()> {

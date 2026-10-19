@@ -12,7 +12,7 @@ use oxihome_protocol::{Confidence, EventKind, Value};
 use serde::{Deserialize, Deserializer};
 
 pub use condition::{ChannelCondition, Condition, Expected, HomeState, ValueTest};
-pub use editing::with_rule_enabled;
+pub use editing::{with_rule_enabled, with_rule_saved};
 pub use run::{
     Action, Cooldowns, Holds, Running, Start, Subject, has_placeholders, run_triggered, start,
 };
