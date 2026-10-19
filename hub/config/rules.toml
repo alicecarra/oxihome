@@ -190,6 +190,7 @@ then = [
 
 [[rules]]
 name = "Node stopped reporting: Telegram"
+enabled = false
 when = { stopped = "*" }
 cooldown = "1h"
 then = [
@@ -249,3 +250,10 @@ then = [
 name = "Telegram echo"
 when = { device = "telegram", entity = 2, channel = 0, event = "Received" }
 then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Got /{value}" } }]
+
+[[rules]]
+name = "buzz when potentiometer above 50"
+when = { device = "esp32-08d1f9ca41e4", entity = 7, channel = 0, above = 50.0 }
+then = [
+    { invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Short" } },
+]

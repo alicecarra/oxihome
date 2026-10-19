@@ -16,7 +16,10 @@ use crate::node::registry::{Node, Registry};
 
 mod rules;
 
-pub use rules::{activity, condition, failing_rules, rules, rules_summary};
+pub use rules::{
+    action_warning, activity, condition, cron_description, failing_rules, next_run_description,
+    rules, rules_summary, schedule_description,
+};
 
 #[derive(Clone)]
 pub struct NodeOverview {

@@ -28,7 +28,13 @@ pub async fn rules(cx: &Cx) -> Result<impl View> {
             <div class="space-y-4">
                 <div class="flex items-center justify-between gap-4">
                     <p class="text-sm text-muted-foreground">"Rules run when their event happens or at their time, if their conditions hold. They come from rules.toml."</p>
-                    <a href="/settings/rules.toml" class="text-sm font-medium whitespace-nowrap hover:underline">"Edit in Settings"</a>
+                    <div class="flex items-center gap-4">
+                        <a href="/settings/rules.toml" class="text-sm font-medium whitespace-nowrap hover:underline">"Edit in Settings"</a>
+                        <a
+                            href="/rules/new"
+                            class="inline-flex h-8 items-center rounded-lg bg-primary px-3 text-sm font-medium whitespace-nowrap text-primary-foreground hover:bg-primary/90"
+                        >"New rule"</a>
+                    </div>
                 </div>
                 if rules.is_empty() {
                     <p class="text-muted-foreground">"No rules yet."</p>
@@ -180,10 +186,12 @@ async fn rule_card(rule: RuleOverview) -> Result<impl View> {
                 for error in errors {
                     <p class="mt-3 text-sm text-destructive">(error)</p>
                 }
-                <div class="mt-3 flex justify-end">
+                <div class="mt-3 flex gap-4 text-sm font-medium">
+                    <a href=(format!("/rules/edit?name={}", query_value(&rule.name))) class="hover:underline">"Edit"</a>
+                    <a href=(format!("/rules/new?copy={}", query_value(&rule.name))) class="hover:underline">"Duplicate"</a>
                     <a
                         href=(format!("/timeline?rule={}", query_value(&rule.name)))
-                        class="text-sm font-medium text-muted-foreground hover:text-foreground hover:underline"
+                        class="ml-auto text-muted-foreground hover:text-foreground hover:underline"
                     >
                         "History"
                     </a>

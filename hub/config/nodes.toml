@@ -67,8 +67,5 @@ entities.53 = { name = "Portainer" }
 name = "Telegram"
 entities.1 = { channels.0 = "With sound", channels.1 = "Silent" }
 
-[nodes.sim-living-room]
-name = "Living room (sim)"
-
 [nodes.printer]
 name = "K1C"

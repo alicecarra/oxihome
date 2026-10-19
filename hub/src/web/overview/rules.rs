@@ -361,7 +361,7 @@ fn days_description(days: &[Day]) -> String {
     }
 }
 
-fn schedule_description(trigger: &ScheduleTrigger) -> String {
+pub fn schedule_description(trigger: &ScheduleTrigger) -> String {
     format!(
         "{} at {}",
         days_description(&trigger.days),
@@ -370,13 +370,13 @@ fn schedule_description(trigger: &ScheduleTrigger) -> String {
 }
 
 /// Croner's English text, e.g. `At 07:00, on Monday, Tuesday.`, with the expression after it.
-fn cron_description(trigger: &CronTrigger) -> String {
+pub fn cron_description(trigger: &CronTrigger) -> String {
     let text = trigger.cron.describe();
     format!("{} ({})", text.trim_end_matches('.'), trigger.expression)
 }
 
 /// `today 23:00`, `tomorrow 07:00` or `Monday 07:00`.
-fn next_run_description(now: &Zoned, run: &Zoned) -> String {
+pub fn next_run_description(now: &Zoned, run: &Zoned) -> String {
     let day = if run.date() == now.date() {
         "today".to_string()
     } else if now
@@ -430,7 +430,7 @@ fn action_description(nodes: &Nodes, registry: &Registry, action: &Action) -> St
 
 /// Checks an invoke's value as the rule would send it, with the placeholders filled with the
 /// stand-ins of a run by hand.
-fn action_warning(registry: &Registry, action: &Action, subject: &Subject) -> Option<String> {
+pub fn action_warning(registry: &Registry, action: &Action, subject: &Subject) -> Option<String> {
     let Action::Invoke {
         device,
         entity,
