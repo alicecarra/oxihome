@@ -33,6 +33,15 @@ use super::rules::Rules;
 /// [[dashboards.blocks]]
 /// type = "feeds"
 /// device = "rss"
+///
+/// [[dashboards.blocks]]
+/// type = "job"
+/// device = "printer"
+/// state = { entity = 2, channel = 0 }
+/// active = ["printing", "paused"]
+/// progress = { entity = 2, channel = 1 }
+/// left = { entity = 2, channel = 5 }
+/// details = [{ entity = 2, channel = 6 }, { entity = 1, channel = 0 }]
 /// ```
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -70,8 +79,28 @@ pub struct Block {
     pub range: Option<String>,
     /// `events` and `feeds` blocks only: how many to show, 1 to 50 (default 10).
     pub limit: Option<usize>,
-    /// `feeds` blocks only: a node laid out like the rss node.
+    /// `feeds` blocks: a node laid out like the rss node; `job` blocks: the node doing the job.
     pub device: Option<String>,
+    /// `job` blocks only: the channel naming what the node is doing.
+    pub state: Option<JobChannel>,
+    /// `job` blocks only: the states in which the job runs and the card shows all of it.
+    #[serde(default)]
+    pub active: Vec<String>,
+    /// `job` blocks only, in percent.
+    pub progress: Option<JobChannel>,
+    /// `job` blocks only: the time left, in seconds.
+    pub left: Option<JobChannel>,
+    /// `job` blocks only: shown small while the job runs.
+    #[serde(default)]
+    pub details: Vec<JobChannel>,
+}
+
+/// A channel of the block's `device`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JobChannel {
+    pub entity: u8,
+    pub channel: u8,
 }
 
 pub const HISTORY_RANGES: [&str; 4] = ["15m", "1h", "6h", "24h"];
@@ -97,6 +126,9 @@ pub enum BlockKind {
     Events,
     /// The items of an rss node, every feed in one list.
     Feeds,
+    /// What a node is doing, like a print: progress and time left while it runs, one line
+    /// otherwise.
+    Job,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -122,6 +154,7 @@ impl BlockKind {
             BlockKind::Rules => "rules",
             BlockKind::Events => "events",
             BlockKind::Feeds => "feeds",
+            BlockKind::Job => "job",
         }
     }
 }
@@ -159,6 +192,16 @@ impl Dashboards {
                         bail!("{place}: a feeds block needs device")
                     }
                     BlockKind::Feeds => {}
+                    BlockKind::Job if block.device.is_none() => {
+                        bail!("{place}: a job block needs device")
+                    }
+                    BlockKind::Job if block.state.is_none() => {
+                        bail!("{place}: a job block needs state")
+                    }
+                    BlockKind::Job if block.active.is_empty() => {
+                        bail!("{place}: a job block needs active, the states in which it runs")
+                    }
+                    BlockKind::Job => {}
                     BlockKind::Buttons => {
                         if let Some(button) = block
                             .buttons
@@ -175,8 +218,21 @@ impl Dashboards {
                 if block.kind != BlockKind::Buttons && !block.buttons.is_empty() {
                     bail!("{place}: only a buttons block has buttons");
                 }
-                if block.kind != BlockKind::Feeds && block.device.is_some() {
-                    bail!("{place}: only a feeds block has device");
+                if !matches!(block.kind, BlockKind::Feeds | BlockKind::Job)
+                    && block.device.is_some()
+                {
+                    bail!("{place}: only feeds and job blocks have device");
+                }
+                if block.kind != BlockKind::Job
+                    && (block.state.is_some()
+                        || !block.active.is_empty()
+                        || block.progress.is_some()
+                        || block.left.is_some()
+                        || !block.details.is_empty())
+                {
+                    bail!(
+                        "{place}: only a job block has state, active, progress, left and details"
+                    );
                 }
                 if !matches!(block.kind, BlockKind::Value | BlockKind::History)
                     && block.channel.is_some()
@@ -251,6 +307,15 @@ mod tests {
         type = "feeds"
         device = "rss"
         limit = 20
+
+        [[dashboards.blocks]]
+        type = "job"
+        device = "printer"
+        state = { entity = 2, channel = 0 }
+        active = ["printing", "paused"]
+        progress = { entity = 2, channel = 1 }
+        left = { entity = 2, channel = 5 }
+        details = [{ entity = 2, channel = 6 }]
     "#;
 
     fn rules() -> Rules {
@@ -282,7 +347,16 @@ mod tests {
                 BlockKind::Rules,
                 BlockKind::Events,
                 BlockKind::Feeds,
+                BlockKind::Job,
             ]
+        );
+        assert_eq!(blocks[8].active, ["printing", "paused"]);
+        assert_eq!(
+            blocks[8].details,
+            [JobChannel {
+                entity: 2,
+                channel: 6
+            }]
         );
         assert_eq!(blocks[4].range.as_deref(), Some("6h"));
         assert_eq!(blocks[6].limit, Some(5));
@@ -340,8 +414,22 @@ mod tests {
                 .contains("limit must be")
         );
         assert!(
-            error(&block("type = \"events\"\ndevice = \"rss\"")).contains("only a feeds block")
+            error(&block("type = \"events\"\ndevice = \"rss\"")).contains("only feeds and job")
         );
+        let state = "state = { entity = 2, channel = 0 }";
+        assert!(
+            error(&block(&format!("type = \"job\"\n{state}"))).contains("job block needs device")
+        );
+        assert!(
+            error(&block("type = \"job\"\ndevice = \"printer\"")).contains("job block needs state")
+        );
+        assert!(
+            error(&block(&format!(
+                "type = \"job\"\ndevice = \"printer\"\n{state}"
+            )))
+            .contains("needs active")
+        );
+        assert!(error(&block(&format!("type = \"nodes\"\n{state}"))).contains("only a job block"));
         assert!(
             error("[[dashboards]]\nname = \"A\"\n[[dashboards]]\nname = \"A\"")
                 .contains("two dashboards")

@@ -10,7 +10,7 @@ use topcoat::{
     view::{Child, View, attributes, component, view},
 };
 
-use super::format::{ago_label, bool_label, duration_label, entity_label, value_label};
+use super::format::{ago_label, bool_label, css_color, duration_label, entity_label, value_label};
 use super::icons;
 use super::layout::layout;
 use super::overview::{self, ChannelOverview, Invocation, NodeOverview, Presence};
@@ -232,12 +232,26 @@ async fn status_dot(active: bool, #[default] child: Child<'_>) -> Result<impl Vi
     })
 }
 
+/// A dot filled with the color, before its text.
+#[component]
+pub(super) async fn color_dot(color: String, #[default] child: Child<'_>) -> Result<impl View> {
+    Ok(view! {
+        <span class="inline-flex items-center gap-1.5">
+            <span class="size-3 shrink-0 rounded-full border border-border" style=(format!("background-color: {color}"))></span>
+            (child)
+        </span>
+    })
+}
+
 /// The value, the on/off dot or the last event; nothing for actions, whose controls say it all.
 #[component]
 pub(super) async fn channel_value(channel: ChannelOverview) -> Result<impl View> {
     Ok(view! {
         match &channel.value {
             Some(Value::Bool(active)) => status_dot(active: *active, (bool_label(*active, channel.switchable))),
+            Some(value) if css_color(value).is_some() => <p class="text-sm text-muted-foreground">
+                color_dot(color: css_color(value).unwrap_or_default(), (value_label(value, None)))
+            </p>,
             _ if channel.invocation.is_some() => {}
             _ => <p class="text-sm text-muted-foreground">(channel_state(&channel))</p>,
         }

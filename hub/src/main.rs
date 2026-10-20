@@ -147,6 +147,7 @@ async fn main() -> anyhow::Result<()> {
 
     let time_zone =
         TimeZone::get(&config.time.zone).with_context(|| format!("{path}: time.zone"))?;
+    web::format::set_time_zone(time_zone.clone());
 
     let home_config = HomeConfig::load(&config.config.dir)?;
     println!(

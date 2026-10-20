@@ -9,6 +9,7 @@ mod home;
 mod host;
 mod icons;
 mod install;
+mod job;
 mod lab;
 mod layout;
 mod network;

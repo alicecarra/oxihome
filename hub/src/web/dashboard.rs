@@ -14,6 +14,7 @@ use super::buttons::{RuleButton, rule_button_view, rule_buttons};
 use super::chart::{CHART_BUCKETS, Chart, ChartRange, chart, history_chart, series};
 use super::feeds::{FeedList, feed_list, feeds_block};
 use super::format::{ago_label, bool_label, rule_anchor, value_label};
+use super::job::{JobView, job_block, job_view};
 use super::layout::layout;
 use super::nodes::{channel_controls, channel_value, presence_badge, protocol_badge};
 use super::overview::{self, Activity, DashboardChannel, NodeOverview, Presence, RulesSummary};
@@ -61,6 +62,7 @@ enum BlockContent {
         /// The dashboard query that shows or hides the read items of this block.
         toggle_query: String,
     },
+    Job(JobView),
 }
 
 const UPCOMING_RULES: usize = 5;
@@ -274,7 +276,9 @@ fn block_trigger(block: &Block, range: ChartRange) -> String {
                 .map(|channel| format!("{} throttle:{throttle}s", node(&channel.device)))
                 .collect()
         }
-        BlockKind::Feeds => block.device.iter().map(|device| node(device)).collect(),
+        BlockKind::Feeds | BlockKind::Job => {
+            block.device.iter().map(|device| node(device)).collect()
+        }
         BlockKind::Buttons | BlockKind::Rules => {
             vec!["sse:config".into(), "sse:timeline".into()]
         }
@@ -397,6 +401,10 @@ async fn block_view(
                 },
             )
         }
+        BlockKind::Job => {
+            let (title, job) = job_view(hub, block);
+            (title, BlockContent::Job(job))
+        }
     };
     BlockView {
         index: 0,
@@ -480,6 +488,7 @@ async fn dashboard_block(block: BlockView, query: String) -> Result<impl View> {
                             show_read: show_read,
                             toggle_query: toggle_query
                         ),
+                        BlockContent::Job(job) => job_block(job: job),
                         BlockContent::Buttons(buttons) => {
                             // In one row while they fit, sharing the width.
                             <div class="flex flex-wrap gap-3">

@@ -5,7 +5,8 @@
 # range "15m", "1h", "6h" or "24h" sets the default, "24h" when missing), "rules" (next scheduled
 # runs and failed rules), "events" (latest node events and notifications; limit 1-50, default 10),
 # "feeds" (items of an rss node, device = "rss", unread first with "Show read"; limit 1-50,
-# default 10).
+# default 10), "job" (what a node is doing: device, state = { entity, channel } and the active
+# states, optional progress, left in seconds and details; one line when not active).
 # Optional: title, width (1-3 columns, default 1). Only the first dashboard is shown for now.
 
 [[dashboards]]
@@ -74,17 +75,32 @@ width = 1
 channel = { device = "weather", entity = 1, channel = 4 }
 
 [[dashboards.blocks]]
-type = "channels"
+type = "job"
 title = "K1C"
 width = 1
+device = "printer"
+state = { entity = 2, channel = 0 }
+active = ["printing", "paused"]
+progress = { entity = 2, channel = 1 }
+left = { entity = 2, channel = 5 }
+details = [
+    { entity = 2, channel = 6 },
+    { entity = 2, channel = 2 },
+    { entity = 2, channel = 3 },
+    { entity = 1, channel = 0 },
+    { entity = 1, channel = 2 },
+]
+
+[[dashboards.blocks]]
+type = "channels"
+title = "CFS"
+width = 1
 channels = [
-    { device = "printer", entity = 2, channel = 0 },
-    { device = "printer", entity = 2, channel = 1 },
-    { device = "printer", entity = 2, channel = 2 },
-    { device = "printer", entity = 2, channel = 3 },
-    { device = "printer", entity = 2, channel = 5 },
-    { device = "printer", entity = 1, channel = 0 },
-    { device = "printer", entity = 1, channel = 2 },
+    { device = "printer", entity = 5, channel = 10 },
+    { device = "printer", entity = 5, channel = 20 },
+    { device = "printer", entity = 5, channel = 30 },
+    { device = "printer", entity = 5, channel = 40 },
+    { device = "printer", entity = 5, channel = 1 },
 ]
 
 

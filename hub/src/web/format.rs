@@ -1,7 +1,8 @@
+use std::sync::OnceLock;
 use std::time::Duration;
 
-use jiff::Timestamp;
-use oxihome_protocol::{Quantity, Unit, Value};
+use jiff::{Timestamp, tz::TimeZone};
+use oxihome_protocol::{Color, Quantity, Unit, Value};
 
 /// Zero when `at` is in the future (clock adjusted).
 pub fn elapsed(at: Timestamp, now: Timestamp) -> Duration {
@@ -39,6 +40,32 @@ pub fn default_channel_name(channel: u8, quantity: Option<Quantity>) -> String {
     }
 }
 
+/// The hub's, for `UnixTime` values; UTC until set at startup.
+static TIME_ZONE: OnceLock<TimeZone> = OnceLock::new();
+
+pub fn set_time_zone(time_zone: TimeZone) {
+    let _ = TIME_ZONE.set(time_zone);
+}
+
+/// `14:02` today, `Mon 14:02` within a week, `2026-10-19 14:02` further; `—` for zero, which
+/// nodes send for "not yet".
+pub fn moment_label(seconds: i64, now: Timestamp) -> String {
+    let time_zone = TIME_ZONE.get().cloned().unwrap_or(TimeZone::UTC);
+    let Some(moment) = Timestamp::from_second(seconds).ok().filter(|_| seconds > 0) else {
+        return "—".into();
+    };
+    let moment = moment.to_zoned(time_zone.clone());
+    let now = now.to_zoned(time_zone);
+    let format = if moment.date() == now.date() {
+        "%H:%M"
+    } else if (now.date() - moment.date()).get_days().abs() <= 6 {
+        "%a %H:%M"
+    } else {
+        "%Y-%m-%d %H:%M"
+    };
+    moment.strftime(format).to_string()
+}
+
 /// `1 h 30 min`: the two largest units, the smaller left out when zero.
 pub fn long_duration_label(seconds: u64) -> String {
     let units = [(86400, "d"), (3600, "h"), (60, "min"), (1, "s")];
@@ -68,6 +95,12 @@ pub fn value_label(value: &Value, unit: Option<Unit>) -> String {
         (Value::Float(number), Some(Unit::Second)) if *number >= 0.0 => {
             return long_duration_label(number.round() as u64);
         }
+        (Value::Int(number), Some(Unit::UnixTime)) => {
+            return moment_label(i64::from(*number), Timestamp::now());
+        }
+        (Value::Float(number), Some(Unit::UnixTime)) => {
+            return moment_label(*number as i64, Timestamp::now());
+        }
         _ => {}
     }
     match value {
@@ -76,7 +109,10 @@ pub fn value_label(value: &Value, unit: Option<Unit>) -> String {
         Value::Float(number) => format!("{number:.1}{suffix}"),
         Value::Enum(option) => option.clone(),
         Value::Text(text) => text.clone(),
-        Value::Color(color) => format!("{color:?}"),
+        Value::Color(Color::Rgb { r, g, b }) => format!("#{r:02x}{g:02x}{b:02x}"),
+        Value::Color(Color::Hsv { h, s, v }) => {
+            format!("hsv {h:.0}° {:.0} % {:.0} %", s * 100.0, v * 100.0)
+        }
         Value::Bytes(bytes) => format!("{} bytes", bytes.len()),
     }
 }
@@ -88,6 +124,28 @@ pub fn bool_label(on: bool, switchable: bool) -> &'static str {
         (true, false) => "off",
         (false, true) => "yes",
         (false, false) => "no",
+    }
+}
+
+/// For a CSS `background-color`: `#b2a1e1`, `hsl(...)`; `None` for other values.
+pub fn css_color(value: &Value) -> Option<String> {
+    match value {
+        Value::Color(Color::Rgb { .. }) => Some(value_label(value, None)),
+        Value::Color(Color::Hsv { h, s, v }) => {
+            // HSV to HSL: same hue, the lightness and saturation recomputed.
+            let lightness = v * (1.0 - s / 2.0);
+            let saturation = if lightness == 0.0 || lightness == 1.0 {
+                0.0
+            } else {
+                (v - lightness) / lightness.min(1.0 - lightness)
+            };
+            Some(format!(
+                "hsl({h:.0} {:.0}% {:.0}%)",
+                saturation * 100.0,
+                lightness * 100.0
+            ))
+        }
+        _ => None,
     }
 }
 
@@ -172,6 +230,41 @@ mod tests {
         assert_eq!(bool_label(false, true), "off");
         assert_eq!(bool_label(true, false), "yes");
         assert_eq!(bool_label(false, false), "no");
+    }
+
+    #[test]
+    fn moments_read_as_a_time_of_day() {
+        set_time_zone(TimeZone::get("America/Sao_Paulo").unwrap());
+        let now: Timestamp = "2026-10-19T20:00:00Z".parse().unwrap();
+        let at = |text: &str| text.parse::<Timestamp>().unwrap().as_second();
+        assert_eq!(moment_label(at("2026-10-19T17:02:00Z"), now), "14:02");
+        assert_eq!(moment_label(at("2026-10-17T17:02:00Z"), now), "Sat 14:02");
+        assert_eq!(
+            moment_label(at("2026-09-01T17:02:00Z"), now),
+            "2026-09-01 14:02"
+        );
+        assert_eq!(moment_label(0, now), "—");
+    }
+
+    #[test]
+    fn colors_fill_a_dot() {
+        let red = Value::Color(Color::Hsv {
+            h: 0.0,
+            s: 1.0,
+            v: 1.0,
+        });
+        assert_eq!(css_color(&red).as_deref(), Some("hsl(0 100% 50%)"));
+        assert_eq!(css_color(&Value::Int(1)), None);
+    }
+
+    #[test]
+    fn colors_read_as_hex() {
+        let color = Value::Color(Color::Rgb {
+            r: 178,
+            g: 161,
+            b: 225,
+        });
+        assert_eq!(value_label(&color, None), "#b2a1e1");
     }
 
     #[test]
