@@ -19,10 +19,6 @@ use topcoat::{
     view::{View, ViewExt, component, view},
 };
 
-use super::format::query_value;
-use super::icons;
-use super::layout::layout;
-use super::overview::{self, channel_description};
 use crate::components::badge::{BadgeVariant, badge};
 use crate::config::nodes::NameTarget;
 use crate::hub::Hub;
@@ -30,6 +26,10 @@ use crate::node::registry::Registry;
 use crate::traffic::{
     BOARD_LIMIT, BROKER_LIMIT, Direction, MessageKind, Reading, TrafficEntry, is_large,
 };
+use crate::web::format::query_value;
+use crate::web::icons;
+use crate::web::layout::layout;
+use crate::web::overview::{self, channel_description};
 
 mod map;
 

@@ -7,9 +7,7 @@ mod home;
 mod host;
 mod icons;
 mod install;
-mod lab;
 mod layout;
-mod network;
 mod node;
 mod nodes;
 mod overview;
@@ -19,7 +17,6 @@ mod settings;
 mod timeline;
 mod toasts;
 mod tools;
-mod traffic;
 
 use std::sync::Arc;
 
@@ -81,12 +78,12 @@ pub fn router(hub: Arc<Hub>, auth: Auth, listen_host: &str, allowed_hosts: &[Str
         .page(remotes::remotes_fragment)
         .page(settings::settings)
         .page(settings::settings_file)
-        .page(lab::lab)
+        .page(tools::lab::lab)
         .page(tools::tools)
-        .page(network::network_page)
-        .page(network::network_fragment)
-        .page(traffic::traffic_page)
-        .page(traffic::traffic_map_fragment)
+        .page(tools::network_page)
+        .page(tools::network_fragment)
+        .page(tools::traffic_page)
+        .page(tools::traffic_map_fragment)
         .route(auth::login)
         .route(auth::logout)
         .route(home::set)
@@ -107,7 +104,7 @@ pub fn router(hub: Arc<Hub>, auth: Auth, listen_host: &str, allowed_hosts: &[Str
         .route(settings::save)
         .route(toasts::toasts)
         .route(changes::events)
-        .route(traffic::traffic_events)
+        .route(tools::traffic_events)
         .route(htmx_script)
         .route(htmx_sse_script)
         .route(config_editor_script)

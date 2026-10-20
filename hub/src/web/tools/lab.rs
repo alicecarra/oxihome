@@ -6,7 +6,7 @@ use topcoat::{
     view::{View, view},
 };
 
-use super::layout::layout;
+use crate::web::layout::layout;
 
 #[page("/lab")]
 pub async fn lab() -> Result<impl View> {

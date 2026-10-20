@@ -11,14 +11,14 @@ use topcoat::{
     view::{View, component, view},
 };
 
-use super::format::{ago_label, duration_label, elapsed};
-use super::layout::layout;
-use super::nodes::presence_badge;
-use super::overview::{self, Presence};
 use crate::components::badge::{BadgeVariant, badge};
 use crate::config::nodes::NameTarget;
 use crate::hub::Hub;
 use crate::node::network::Connection;
+use crate::web::format::{ago_label, duration_label, elapsed};
+use crate::web::layout::layout;
+use crate::web::nodes::presence_badge;
+use crate::web::overview::{self, Presence};
 
 /// Usual Wi-Fi rules of thumb: from -67 dBm the link is solid, below -75 dBm it drops.
 const GOOD_SIGNAL: i8 = -67;

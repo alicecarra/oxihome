@@ -9,6 +9,13 @@ use topcoat::{
 use super::layout::layout;
 use crate::components::card::{card, card_content};
 
+pub(super) mod lab;
+mod network;
+mod traffic;
+
+pub use network::{network_fragment, network_page};
+pub use traffic::{traffic_events, traffic_map_fragment, traffic_page};
+
 pub(super) const TOOLS: [(&str, &str, &str); 3] = [
     (
         "/network",
