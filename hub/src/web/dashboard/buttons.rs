@@ -35,7 +35,21 @@ pub(super) fn rule_buttons(hub: &Hub, buttons: &[String]) -> Vec<RuleButton> {
 }
 
 #[component]
-pub(super) async fn rule_button_view(rule_button: RuleButton) -> Result<impl View> {
+pub(super) async fn buttons_block(buttons: Vec<RuleButton>) -> Result<impl View> {
+    Ok(view! {
+        // In one row while they fit, sharing the width.
+        <div class="flex flex-wrap gap-3">
+            for rule_button in buttons {
+                <div class="min-w-32 flex-1">
+                    rule_button_view(rule_button: rule_button)
+                </div>
+            }
+        </div>
+    })
+}
+
+#[component]
+async fn rule_button_view(rule_button: RuleButton) -> Result<impl View> {
     let tooltip = if rule_button.enabled {
         rule_button.rule
     } else {

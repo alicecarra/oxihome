@@ -11,10 +11,10 @@ use topcoat::{
     view::{View, attributes, component, view},
 };
 
-use super::format::{ago_label, elapsed};
-use super::overview;
 use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::hub::Hub;
+use crate::web::format::{ago_label, elapsed};
+use crate::web::overview;
 
 // The rss node's entities and channels; the protocol has no lists, so the block knows them.
 const ALL_FEEDS_ENTITY: u8 = 1;

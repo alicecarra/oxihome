@@ -1,15 +1,12 @@
 mod auth;
-mod buttons;
 mod changes;
 mod chart;
 mod dashboard;
-mod feeds;
 pub(crate) mod format;
 mod home;
 mod host;
 mod icons;
 mod install;
-mod job;
 mod lab;
 mod layout;
 mod network;
@@ -105,7 +102,7 @@ pub fn router(hub: Arc<Hub>, auth: Auth, listen_host: &str, allowed_hosts: &[Str
         .route(remotes::learn_key)
         .route(remotes::forget_key)
         .route(remotes::send_code)
-        .route(buttons::press)
+        .route(dashboard::press)
         .route(settings::reload)
         .route(settings::save)
         .route(toasts::toasts)

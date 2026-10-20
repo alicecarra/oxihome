@@ -7,11 +7,11 @@ use topcoat::{
     view::{View, component, view},
 };
 
-use super::format::{bool_label, css_color, long_duration_label, value_label};
-use super::nodes::color_dot;
-use super::overview::{self, DashboardChannel};
 use crate::config::dashboard::{Block, ChannelReference, JobChannel};
 use crate::hub::Hub;
+use crate::web::format::{bool_label, css_color, long_duration_label, value_label};
+use crate::web::nodes::color_dot;
+use crate::web::overview::{self, DashboardChannel};
 
 /// States shown in red whatever the block says.
 const FAILED: [&str; 2] = ["failed", "error"];
