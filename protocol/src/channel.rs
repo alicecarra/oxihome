@@ -125,4 +125,5 @@ pub enum Unit {
     KilobytePerSecond,
     Megahertz,
     Megabyte,
+    UnixTime,
 }

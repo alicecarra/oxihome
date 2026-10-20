@@ -106,6 +106,7 @@ pub fn unit_symbol(unit: Unit) -> &'static str {
         Unit::KilobytePerSecond => "kB/s",
         Unit::Megahertz => "MHz",
         Unit::Megabyte => "MB",
+        Unit::UnixTime => "",
     }
 }
 
