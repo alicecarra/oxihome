@@ -61,6 +61,7 @@ pub fn router(hub: Arc<Hub>, auth: Auth, listen_host: &str, allowed_hosts: &[Str
         .page(auth::login_page)
         .page(dashboard::dashboard_page)
         .page(dashboard::dashboard_fragment)
+        .page(dashboard::dashboard_block_fragment)
         .page(nodes::nodes_page)
         .page(nodes::nodes_fragment)
         .page(node::node_page)
