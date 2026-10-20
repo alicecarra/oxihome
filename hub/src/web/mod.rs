@@ -14,7 +14,6 @@ mod node;
 mod nodes;
 mod overview;
 mod remotes;
-mod rule_editor;
 mod rules;
 mod settings;
 mod timeline;
@@ -73,8 +72,8 @@ pub fn router(hub: Arc<Hub>, auth: Auth, listen_host: &str, allowed_hosts: &[Str
         .page(node::hardware_fragment)
         .page(rules::rules)
         .page(rules::indicator_fragment)
-        .page(rule_editor::new_rule)
-        .page(rule_editor::edit_rule)
+        .page(rules::new_rule)
+        .page(rules::edit_rule)
         .page(timeline::timeline)
         .page(timeline::timeline_fragment)
         .page(timeline::timeline_more)
@@ -93,8 +92,8 @@ pub fn router(hub: Arc<Hub>, auth: Auth, listen_host: &str, allowed_hosts: &[Str
         .route(home::set)
         .route(rules::set_enabled)
         .route(rules::run_now)
-        .route(rule_editor::redraw)
-        .route(rule_editor::save)
+        .route(rules::redraw)
+        .route(rules::save)
         .route(node::edit)
         .route(node::start_update)
         .route(node::forget)

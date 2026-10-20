@@ -18,6 +18,10 @@ use crate::components::switch::switch;
 use crate::config::rules::{Action, Start, Subject, start};
 use crate::hub::Hub;
 
+mod editor;
+
+pub use editor::{edit_rule, new_rule, redraw, save};
+
 #[page("/rules")]
 pub async fn rules(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
