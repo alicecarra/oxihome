@@ -47,6 +47,22 @@ pub enum Driver {
         #[serde(default = "default_minimum_change")]
         minimum_change: u8,
     },
+    /// AHT20 (temperature, humidity) and BMP280 (pressure) on one I2C module; `pin` is SDA.
+    Aht20Bmp280 {
+        clock_pin: u8,
+        #[serde(default = "default_read_interval")]
+        read_interval_seconds: u16,
+    },
+}
+
+impl HardwareEntity {
+    /// `pin`, plus the clock pin of an I2C driver.
+    pub fn pins(&self) -> Vec<u8> {
+        match self.driver {
+            Driver::Aht20Bmp280 { clock_pin, .. } => vec![self.pin, clock_pin],
+            _ => vec![self.pin],
+        }
+    }
 }
 
 fn enabled() -> bool {
@@ -61,7 +77,7 @@ fn default_minimum_change() -> u8 {
     2
 }
 
-const DHT11_READ_INTERVAL_RANGE: std::ops::RangeInclusive<u16> = 2..=3600;
+const READ_INTERVAL_RANGE: std::ops::RangeInclusive<u16> = 2..=3600;
 const MINIMUM_CHANGE_RANGE: std::ops::RangeInclusive<u8> = 1..=50;
 
 impl Driver {
@@ -74,13 +90,18 @@ impl Driver {
             Driver::IrReceiver => "ir_receiver",
             Driver::IrTransmitter => "ir_transmitter",
             Driver::Potentiometer { .. } => "potentiometer",
+            Driver::Aht20Bmp280 { .. } => "aht20_bmp280",
         }
     }
 
     fn drives_pin(&self) -> bool {
         matches!(
             self,
-            Driver::Output { .. } | Driver::Dht11 { .. } | Driver::Buzzer | Driver::IrTransmitter
+            Driver::Output { .. }
+                | Driver::Dht11 { .. }
+                | Driver::Buzzer
+                | Driver::IrTransmitter
+                | Driver::Aht20Bmp280 { .. }
         )
     }
 }
@@ -234,11 +255,18 @@ impl Hardware {
             } else if earlier.iter().any(|other| other.id == entity.id) {
                 problems.push(HardwareProblem::RepeatedEntity(entity.id));
             }
-            if let Some(other) = earlier.iter().find(|other| other.pin == entity.pin) {
-                problems.push(HardwareProblem::RepeatedPin {
-                    pin: entity.pin,
-                    entities: (other.id, entity.id),
-                });
+            let pins = entity.pins();
+            for (pin_index, &pin) in pins.iter().enumerate() {
+                let other = earlier
+                    .iter()
+                    .find(|other| other.pins().contains(&pin))
+                    .or_else(|| pins[..pin_index].contains(&pin).then_some(entity));
+                if let Some(other) = other {
+                    problems.push(HardwareProblem::RepeatedPin {
+                        pin,
+                        entities: (other.id, entity.id),
+                    });
+                }
             }
             problems.extend(self.entity_problems(chip, entity));
         }
@@ -247,19 +275,27 @@ impl Hardware {
 
     fn entity_problems(&self, chip: Target, entity: &HardwareEntity) -> Vec<HardwareProblem> {
         let (id, pin) = (entity.id, entity.pin);
-        match chip.pin_problem(pin) {
-            Some(PinProblem::Missing) => {
-                return vec![HardwareProblem::MissingPin { entity: id, pin }];
+        for pin in entity.pins() {
+            match chip.pin_problem(pin) {
+                Some(PinProblem::Missing) => {
+                    return vec![HardwareProblem::MissingPin { entity: id, pin }];
+                }
+                Some(PinProblem::Reserved) => {
+                    return vec![HardwareProblem::ReservedPin { entity: id, pin }];
+                }
+                None => {}
             }
-            Some(PinProblem::Reserved) => {
-                return vec![HardwareProblem::ReservedPin { entity: id, pin }];
-            }
-            None => {}
         }
 
         let mut problems = Vec::new();
-        if entity.driver.drives_pin() && chip.input_only(pin) {
-            problems.push(HardwareProblem::InputOnlyPin { entity: id, pin });
+        if entity.driver.drives_pin() {
+            for pin in entity
+                .pins()
+                .into_iter()
+                .filter(|&pin| chip.input_only(pin))
+            {
+                problems.push(HardwareProblem::InputOnlyPin { entity: id, pin });
+            }
         }
         match &entity.driver {
             Driver::Button { pull_up, toggles } => {
@@ -281,7 +317,11 @@ impl Hardware {
             }
             Driver::Dht11 {
                 read_interval_seconds,
-            } if !DHT11_READ_INTERVAL_RANGE.contains(read_interval_seconds) => {
+            }
+            | Driver::Aht20Bmp280 {
+                read_interval_seconds,
+                ..
+            } if !READ_INTERVAL_RANGE.contains(read_interval_seconds) => {
                 problems.push(HardwareProblem::OutOfRange {
                     entity: id,
                     option: "read_interval_seconds",
@@ -457,6 +497,53 @@ mod tests {
         assert_eq!(
             check(25, Driver::Potentiometer { minimum_change: 2 }),
             vec![HardwareProblem::NotAnalog { entity: 1, pin: 25 }]
+        );
+    }
+
+    #[test]
+    fn i2c_checks_both_pins() {
+        let sensor = |pin, clock_pin| {
+            entity(
+                8,
+                pin,
+                Driver::Aht20Bmp280 {
+                    clock_pin,
+                    read_interval_seconds: 30,
+                },
+            )
+        };
+        let mut hardware = test_board();
+        hardware.entities.push(sensor(21, 22));
+        assert_eq!(hardware.validate("esp32"), vec![]);
+        assert_eq!(Hardware::from_json(&hardware.to_json()).unwrap(), hardware);
+
+        hardware.entities.pop();
+        hardware.entities.push(sensor(21, 19));
+        assert_eq!(
+            hardware.validate("esp32"),
+            vec![HardwareProblem::RepeatedPin {
+                pin: 19,
+                entities: (5, 8)
+            }]
+        );
+
+        let alone = |sensor| Hardware {
+            entities: vec![sensor],
+        };
+        assert_eq!(
+            alone(sensor(6, 6)).validate("esp32c6"),
+            vec![HardwareProblem::RepeatedPin {
+                pin: 6,
+                entities: (8, 8)
+            }]
+        );
+        assert_eq!(
+            alone(sensor(6, 24)).validate("esp32c6"),
+            vec![HardwareProblem::ReservedPin { entity: 8, pin: 24 }]
+        );
+        assert_eq!(
+            alone(sensor(21, 35)).validate("esp32"),
+            vec![HardwareProblem::InputOnlyPin { entity: 8, pin: 35 }]
         );
     }
 

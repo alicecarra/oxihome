@@ -108,6 +108,7 @@ pub enum Quantity {
     DataSize,
     DataRate,
     Frequency,
+    Pressure,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,4 +127,5 @@ pub enum Unit {
     Megahertz,
     Megabyte,
     UnixTime,
+    Hectopascal,
 }
