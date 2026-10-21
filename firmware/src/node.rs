@@ -20,9 +20,10 @@ use crate::transport::{Transport, TransportEvent};
 const MAIN_CHANNEL: u8 = 0;
 const TEMPERATURE_CHANNEL: u8 = 0;
 const HUMIDITY_CHANNEL: u8 = 1;
+const PRESSURE_CHANNEL: u8 = 2;
 /// Time for the `Ack` to leave before a restart.
 const RESTART_DELAY: Duration = Duration::from_secs(1);
-/// After a failed DHT11 read, the next try comes this soon instead of after the read interval.
+/// After a failed climate read, the next try comes this soon instead of after the read interval.
 const CLIMATE_RETRY: Duration = Duration::from_secs(2);
 /// Failed reads in a row before the hub hears of it; the tries go back to the read interval.
 const CLIMATE_FAILURES_REPORTED: u8 = 5;
@@ -142,7 +143,8 @@ impl<T: Transport> Node<T> {
                             *next_read = Instant::now() + retry;
                             if *failures == CLIMATE_FAILURES_REPORTED {
                                 outcomes.push(Outcome::Error(format!(
-                                    "entity {id}: DHT11 not responding ({failures} reads failed)"
+                                    "entity {id}: {} not responding ({failures} reads failed)",
+                                    climate.name()
                                 )));
                             }
                         }
@@ -355,16 +357,14 @@ impl Device for Board {
                 )]),
                 // Nothing before the first good reading.
                 Peripheral::Climate { climate, .. } => climate.last().map(|reading| {
-                    vec![
-                        confirmed(
-                            TEMPERATURE_CHANNEL,
-                            Value::Float(reading.temperature.into()),
-                        ),
-                        confirmed(
-                            HUMIDITY_CHANNEL,
-                            Value::Float(reading.relative_humidity.into()),
-                        ),
-                    ]
+                    let mut values = vec![
+                        confirmed(TEMPERATURE_CHANNEL, Value::Float(reading.temperature)),
+                        confirmed(HUMIDITY_CHANNEL, Value::Float(reading.humidity)),
+                    ];
+                    if let Some(pressure) = reading.pressure {
+                        values.push(confirmed(PRESSURE_CHANNEL, Value::Float(pressure)));
+                    }
+                    values
                 }),
                 Peripheral::Potentiometer { potentiometer, .. } => potentiometer
                     .percent()
@@ -459,34 +459,37 @@ fn descriptor(id: u8, peripheral: &Peripheral) -> EntityDescriptor {
             Some(ValueType::Bool),
         )],
         Peripheral::Button { .. } => vec![channel(MAIN_CHANNEL, Access::Event, None)],
-        Peripheral::Climate { .. } => vec![
-            Channel {
-                quantity: Some(Quantity::Temperature),
-                unit: Some(Unit::Celsius),
-                ..channel(
+        Peripheral::Climate { climate, .. } => {
+            let (temperature, humidity, pressure) = climate.ranges();
+            let measured = |id, quantity, unit, range| Channel {
+                quantity: Some(quantity),
+                unit: Some(unit),
+                ..channel(id, Access::Read, Some(range))
+            };
+            let mut channels = vec![
+                measured(
                     TEMPERATURE_CHANNEL,
-                    Access::Read,
-                    Some(ValueType::Float {
-                        min: 0.0,
-                        max: 50.0,
-                        step: 1.0,
-                    }),
-                )
-            },
-            Channel {
-                quantity: Some(Quantity::Humidity),
-                unit: Some(Unit::Percent),
-                ..channel(
+                    Quantity::Temperature,
+                    Unit::Celsius,
+                    temperature,
+                ),
+                measured(
                     HUMIDITY_CHANNEL,
-                    Access::Read,
-                    Some(ValueType::Float {
-                        min: 20.0,
-                        max: 90.0,
-                        step: 1.0,
-                    }),
-                )
-            },
-        ],
+                    Quantity::Humidity,
+                    Unit::Percent,
+                    humidity,
+                ),
+            ];
+            if let Some(pressure) = pressure {
+                channels.push(measured(
+                    PRESSURE_CHANNEL,
+                    Quantity::Pressure,
+                    Unit::Hectopascal,
+                    pressure,
+                ));
+            }
+            channels
+        }
         Peripheral::Buzzer(_) => vec![channel(
             MAIN_CHANNEL,
             Access::Trigger,

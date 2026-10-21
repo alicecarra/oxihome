@@ -256,6 +256,22 @@ pins. Reserved: 12 and 13 (USB), 16 and 17 (UART0), 24 to 30 (flash). The releas
 The device id comes from the Wi-Fi station MAC (the one `espflash` prints): the C6 factory MAC in
 eFuse is 8 bytes (EUI-64), so it would give another id.
 
+Wired to it, from the hub's `nodes.toml`:
+
+| Entity | What | Pin |
+|---|---|---|
+| 2 | BOOT button, events `Press`, `LongPress` | GPIO9 |
+| 3 | AHT20 + BMP280 module (I2C), temperature (°C), humidity (%) and pressure (hPa) | SDA GPIO6, SCL GPIO7 |
+
+The module goes on 3V3 and has its own pull-ups. Its driver, `aht20_bmp280`, is the only one with
+two pins: `pin` is SDA and `clock_pin` is SCL, both checked like any pin; it reads every
+`read_interval_seconds` (30 by default, 2 to 3600) and takes about 80 ms. The bus runs at 100 kHz
+(esp-idf-hal's default is 1 MHz, too fast for the AHT20). When a chip does not answer, the error
+lists the addresses that do (`nothing answers on the bus` is the wiring). Temperature and humidity
+come from the AHT20 (0x38) and pressure from the BMP280 (0x77, or 0x76); the BMP280's own
+temperature is not reported, because the chip warms itself. A board has one I2C bus for it, so a
+second such entity fails to mount.
+
 ## MQTT broker
 
 Mosquitto 2 in Docker on port 1883 (see `infra/`), with a password per client and no anonymous

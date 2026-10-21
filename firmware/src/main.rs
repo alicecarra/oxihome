@@ -1,3 +1,4 @@
+mod aht20_bmp280;
 mod button;
 mod buzzer;
 mod climate;
@@ -56,7 +57,8 @@ fn run() -> anyhow::Result<()> {
     let mut settings = Settings::load(nvs.clone())?;
     recovery::erase_on_boot_hold(&mut settings)?;
     let selection = recovery::select(&mut settings, factory)?;
-    let (entities, failures) = peripheral::mount(&selection.hardware, peripherals.adc1);
+    let (entities, failures) =
+        peripheral::mount(&selection.hardware, peripherals.adc1, peripherals.i2c0);
     let mut problems = selection.problems;
     for problem in &problems {
         log::warn!("{problem}");

@@ -3,8 +3,11 @@ use std::time::{Duration, Instant};
 use esp_idf_svc::hal::adc::oneshot::AdcDriver;
 use esp_idf_svc::hal::adc::{ADC1, ADCU1};
 use esp_idf_svc::hal::gpio::{AnyIOPin, Output, PinDriver, Pull};
+use esp_idf_svc::hal::i2c::{I2C0, I2cConfig, I2cDriver};
+use esp_idf_svc::hal::units::FromValueType;
 use oxihome_protocol::hardware::{Driver, Hardware, HardwareEntity};
 
+use crate::aht20_bmp280::Aht20Bmp280;
 use crate::button::Button;
 use crate::buzzer::Buzzer;
 use crate::climate::Climate;
@@ -45,13 +48,18 @@ pub enum Peripheral {
 
 /// Mounts the entities of an already validated `hardware`. An entity that fails is left out, and
 /// its error comes back as a message.
-pub fn mount(hardware: &Hardware, adc: ADC1<'static>) -> (Vec<Entity>, Vec<String>) {
+pub fn mount(
+    hardware: &Hardware,
+    adc: ADC1<'static>,
+    i2c: I2C0<'static>,
+) -> (Vec<Entity>, Vec<String>) {
     let mut adc = Some(adc);
+    let mut i2c = Some(i2c);
     let mut shared_adc: Option<&'static AdcDriver<'static, ADCU1>> = None;
     let mut entities = Vec::new();
     let mut failures = Vec::new();
     for entity in &hardware.entities {
-        match mount_one(entity, &mut adc, &mut shared_adc) {
+        match mount_one(entity, &mut adc, &mut shared_adc, &mut i2c) {
             Ok(peripheral) => entities.push(Entity {
                 id: entity.id,
                 peripheral,
@@ -75,6 +83,7 @@ fn mount_one(
     entity: &HardwareEntity,
     adc: &mut Option<ADC1<'static>>,
     shared_adc: &mut Option<&'static AdcDriver<'static, ADCU1>>,
+    i2c: &mut Option<I2C0<'static>>,
 ) -> anyhow::Result<Peripheral> {
     // Validation keeps pins unique and away from the flash, so no other driver holds this one.
     let pin = || unsafe { AnyIOPin::steal(entity.pin) };
@@ -99,11 +108,29 @@ fn mount_one(
         Driver::Dht11 {
             read_interval_seconds,
         } => Peripheral::Climate {
-            climate: Climate::new(PinDriver::input_output_od(pin(), Pull::Floating)?)?,
+            climate: Climate::dht11(PinDriver::input_output_od(pin(), Pull::Floating)?)?,
             read_interval: Duration::from_secs((*read_interval_seconds).into()),
             next_read: Instant::now(),
             failures: 0,
         },
+        Driver::Aht20Bmp280 {
+            clock_pin,
+            read_interval_seconds,
+        } => {
+            let unit = i2c
+                .take()
+                .ok_or_else(|| anyhow::anyhow!("the I2C bus is taken by another entity"))?;
+            let clock = unsafe { AnyIOPin::steal(*clock_pin) };
+            // The default is 1 MHz; the AHT20 takes up to 400 kHz.
+            let config = I2cConfig::new().baudrate(100.kHz().into());
+            let driver = I2cDriver::new(unit, pin(), clock, &config)?;
+            Peripheral::Climate {
+                climate: Climate::aht20_bmp280(Aht20Bmp280::new(driver)?),
+                read_interval: Duration::from_secs((*read_interval_seconds).into()),
+                next_read: Instant::now(),
+                failures: 0,
+            }
+        }
         Driver::Buzzer => Peripheral::Buzzer(Buzzer::new(PinDriver::output(pin())?)?),
         Driver::IrReceiver => Peripheral::IrReceiver(IrReceiver::new(pin())?),
         Driver::IrTransmitter => Peripheral::IrTransmitter(IrTransmitter::new(pin())?),
