@@ -23,9 +23,18 @@ impl Hub {
             .collect()
     }
 
-    /// The one the home page shows.
-    pub fn dashboard(&self) -> Option<Dashboard> {
-        self.dashboards.lock().unwrap().first().cloned()
+    /// The dashboard of that name, or the first one, which `/` shows.
+    pub fn dashboard(&self, name: Option<&str>) -> Option<Dashboard> {
+        let dashboards = self.dashboards.lock().unwrap();
+        match name {
+            Some(name) => dashboards.named(name).cloned(),
+            None => dashboards.first().cloned(),
+        }
+    }
+
+    /// Every dashboard, one per tab, in file order.
+    pub fn dashboards(&self) -> Vec<Dashboard> {
+        self.dashboards.lock().unwrap().all().to_vec()
     }
 
     pub fn rules_involving(&self, device_id: &str) -> Vec<RuleUse> {

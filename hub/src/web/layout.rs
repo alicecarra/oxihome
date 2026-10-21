@@ -26,6 +26,8 @@ pub(super) const MENU: [(&str, &str, IconData); 7] = [
     ("/settings", "Settings", icons::SETTINGS),
 ];
 
+const HTMX_CONFIG: &str = r#"{"historyCacheSize":0,"refreshOnHistoryMiss":true}"#;
+
 /// The document around every page.
 #[component]
 pub async fn layout(cx: &Cx, title: &str, #[default] child: Child<'_>) -> Result<impl View> {
@@ -33,9 +35,13 @@ pub async fn layout(cx: &Cx, title: &str, #[default] child: Child<'_>) -> Result
     let since = hub.last_notification_id();
     let failing_rules = overview::failing_rules(hub);
     let path = uri(cx).path().to_string();
-    // A section's own pages, like `/nodes/<id>` or each tool, light up its item too.
-    let current =
-        |href: &str| path == href || (href != "/" && path.starts_with(&format!("{href}/")));
+    // A section's own pages, like `/nodes/<id>` or each tool, light up its item too; the
+    // dashboard's tabs, `/d/<name>`, light up the Dashboard item.
+    let current = |href: &str| {
+        path == href
+            || (href != "/" && path.starts_with(&format!("{href}/")))
+            || (href == "/" && path.starts_with("/d/"))
+    };
     let menu: Vec<(&str, &str, IconData, bool)> = MENU
         .into_iter()
         .map(|(href, label, data)| {
@@ -53,6 +59,8 @@ pub async fn layout(cx: &Cx, title: &str, #[default] child: Child<'_>) -> Result
                 <title>(title)</title>
                 <link rel="icon" type="image/svg+xml" href=(icons::FAVICON)>
                 <link rel="stylesheet" href="/static/app.css">
+                // Back and forward load the page again instead of showing a stale copy.
+                <meta name="htmx-config" content=(HTMX_CONFIG)>
                 <script src="/static/htmx.min.js"></script>
                 <script src="/static/htmx-ext-sse.min.js"></script>
                 install_links()

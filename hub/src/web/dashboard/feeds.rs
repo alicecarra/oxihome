@@ -11,6 +11,7 @@ use topcoat::{
     view::{View, attributes, component, view},
 };
 
+use super::Link;
 use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::hub::Hub;
 use crate::web::format::{ago_label, elapsed};
@@ -135,14 +136,14 @@ pub async fn feed_list(hub: &Hub, device_id: &str) -> Option<FeedList> {
     })
 }
 
-/// Unread items only, unless `show_read`; `toggle_query` is the dashboard query that flips it.
+/// Unread items only, unless `show_read`; `toggle` flips it.
 #[component]
 pub async fn feeds_block(
     list: Option<FeedList>,
     device_id: String,
     limit: usize,
     show_read: bool,
-    toggle_query: String,
+    toggle: Link,
 ) -> Result<impl View> {
     let shown = list.map(|list| {
         let read_count = list.items.iter().filter(|item| !item.unread).count();
@@ -163,7 +164,7 @@ pub async fn feeds_block(
                 read_count: read_count,
                 items: items,
                 show_read: show_read,
-                toggle_query: toggle_query
+                toggle: toggle
             ),
         }
     })
@@ -176,7 +177,7 @@ async fn feeds_content(
     read_count: usize,
     items: Vec<FeedItem>,
     show_read: bool,
-    toggle_query: String,
+    toggle: Link,
 ) -> Result<impl View> {
     Ok(view! {
         <div class="space-y-3">
@@ -186,10 +187,10 @@ async fn feeds_content(
                     size: ButtonSize::Sm,
                     attrs: attributes! {
                         type="button"
-                        hx-get=(format!("/dashboard/fragment?{toggle_query}"))
+                        hx-get=(toggle.fragment)
                         hx-target="#dashboard"
                         hx-swap="outerHTML"
-                        hx-push-url=(format!("/?{toggle_query}"))
+                        hx-push-url=(toggle.page)
                     },
                     (if show_read { "Hide read".to_string() } else { format!("Show read ({read_count})") })
                 )

@@ -5,8 +5,8 @@ use serde::Deserialize;
 
 use super::rules::Rules;
 
-/// The home page, from `dashboard.toml`: blocks in file order on a grid of three columns. Only
-/// the first dashboard is shown for now.
+/// The home page, from `dashboard.toml`: each dashboard is a tab, in file order, the first at `/`
+/// and the others at `/d/<name>`; its blocks in file order on a grid of three columns.
 ///
 /// ```toml
 /// [[dashboards]]
@@ -93,6 +93,9 @@ pub struct Block {
     /// `job` blocks only: shown small while the job runs.
     #[serde(default)]
     pub details: Vec<JobChannel>,
+    /// Whether the block can mark its tab when it needs attention, like a failed print.
+    #[serde(default = "default_attention")]
+    pub attention: bool,
 }
 
 /// A channel of the block's `device`.
@@ -143,6 +146,10 @@ fn default_width() -> u8 {
     1
 }
 
+fn default_attention() -> bool {
+    true
+}
+
 impl BlockKind {
     fn name(self) -> &'static str {
         match self {
@@ -164,9 +171,28 @@ impl Dashboards {
         self.dashboards.first()
     }
 
+    pub fn named(&self, name: &str) -> Option<&Dashboard> {
+        self.dashboards
+            .iter()
+            .find(|dashboard| dashboard.name == name)
+    }
+
+    pub fn all(&self) -> &[Dashboard] {
+        &self.dashboards
+    }
+
     pub fn validate(&self, rules: &Rules) -> anyhow::Result<()> {
         let mut names = HashSet::new();
         for dashboard in &self.dashboards {
+            if dashboard.name.trim().is_empty() {
+                bail!("a dashboard has no name");
+            }
+            if dashboard.name.contains('/') {
+                bail!(
+                    "dashboard \"{}\": the name goes in the address, so it cannot have /",
+                    dashboard.name
+                );
+            }
             if !names.insert(&dashboard.name) {
                 bail!("two dashboards are named \"{}\"", dashboard.name);
             }
@@ -375,6 +401,23 @@ mod tests {
     }
 
     #[test]
+    fn dashboards_are_found_by_name() {
+        let dashboards: Dashboards = toml::from_str(
+            "[[dashboards]]\nname = \"Home\"\n[[dashboards]]\nname = \"Printer\"\n\
+             [[dashboards.blocks]]\ntype = \"rules\"\nattention = false",
+        )
+        .unwrap();
+        assert!(dashboards.validate(&rules()).is_ok());
+        assert_eq!(dashboards.first().unwrap().name, "Home");
+        let printer = dashboards.named("Printer").unwrap();
+        assert!(!printer.blocks[0].attention);
+        assert!(dashboards.named("Servers").is_none());
+        assert_eq!(dashboards.all().len(), 2);
+        let blocks: Dashboards = toml::from_str(EXAMPLE).unwrap();
+        assert!(blocks.first().unwrap().blocks[0].attention);
+    }
+
+    #[test]
     fn invalid_blocks_are_refused() {
         let block = |fields: &str| {
             format!("[[dashboards]]\nname = \"Home\"\n[[dashboards.blocks]]\n{fields}")
@@ -434,6 +477,8 @@ mod tests {
             error("[[dashboards]]\nname = \"A\"\n[[dashboards]]\nname = \"A\"")
                 .contains("two dashboards")
         );
+        assert!(error("[[dashboards]]\nname = \" \"").contains("no name"));
+        assert!(error("[[dashboards]]\nname = \"Home/Printer\"").contains("cannot have /"));
         assert!(toml::from_str::<Dashboards>(&block("type = \"clock\"")).is_err());
         assert!(toml::from_str::<Dashboards>(&block("type = \"nodes\"\ncolor = \"red\"")).is_err());
     }

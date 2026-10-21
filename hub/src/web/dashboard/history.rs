@@ -4,6 +4,7 @@ use topcoat::{
     view::{View, attributes, component, view},
 };
 
+use super::Link;
 use super::value::current_value;
 use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::config::dashboard::ChannelReference;
@@ -41,7 +42,7 @@ pub(super) async fn history_block(
     channel: DashboardChannel,
     chart: Option<Chart>,
     range: ChartRange,
-    choices: Vec<(ChartRange, String)>,
+    choices: Vec<(ChartRange, Link)>,
 ) -> Result<impl View> {
     let value = current_value(&channel);
     let unit = channel
@@ -56,17 +57,17 @@ pub(super) async fn history_block(
                 <p class="text-xl font-semibold tabular-nums">(value)</p>
             </div>
             <div class="inline-flex gap-0.5 rounded-lg border border-border p-0.5" role="group" aria-label="Chart range">
-                for (choice, query) in choices {
+                for (choice, link) in choices {
                     button(
                         variant: if choice == range { ButtonVariant::Secondary } else { ButtonVariant::Ghost },
                         size: ButtonSize::Sm,
                         attrs: attributes! {
                             type="button"
                             aria-pressed=(if choice == range { "true" } else { "false" })
-                            hx-get=(format!("/dashboard/fragment?{query}"))
+                            hx-get=(link.fragment)
                             hx-target="#dashboard"
                             hx-swap="outerHTML"
-                            hx-push-url=(format!("/?{query}"))
+                            hx-push-url=(link.page)
                         },
                         (choice.label())
                     )

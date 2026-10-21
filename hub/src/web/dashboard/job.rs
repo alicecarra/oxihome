@@ -92,6 +92,21 @@ pub fn job_view(hub: &Hub, block: &Block) -> (String, JobView) {
     (title, view)
 }
 
+/// Whether the node says the job failed, like `failed` or `error`.
+pub fn failed(hub: &Hub, block: &Block) -> bool {
+    let (Some(device), Some(state)) = (&block.device, block.state) else {
+        return false;
+    };
+    let reference = ChannelReference {
+        device: device.clone(),
+        entity: state.entity,
+        channel: state.channel,
+    };
+    overview::dashboard_channels(hub, &[reference])
+        .first()
+        .is_some_and(|state| phase(&text(state), &block.active) == Phase::Failed)
+}
+
 fn phase(state: &str, active: &[String]) -> Phase {
     if active
         .iter()

@@ -544,6 +544,14 @@ previous configuration stays in use.
   ones. Notifications are stored in the database too (table `notifications`, same retention as
   events), so they survive a restart.
 
+  Each `[[dashboards]]` is a tab, in file order: the first one at `/` (where the installed app
+  opens), every one at `/d/<name>`; the name cannot be empty or have `/`. With a single dashboard
+  there are no tabs. The tab row stays under the header while scrolling; a tab swaps the page in
+  place and back works. A dot on another tab says it needs a look: red when a `job` block's state
+  is `failed` or `error` or a `rules` block has a rule whose last run failed, amber when a node a
+  `channels`, `value`, `history`, `feeds` or `job` block shows is offline. `attention = false` on a
+  block leaves it out.
+
   ```toml
   [[dashboards]]
   name = "Home"

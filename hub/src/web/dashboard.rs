@@ -9,12 +9,14 @@ use topcoat::{
 };
 
 use super::chart::{Chart, ChartRange};
+use super::format::query_value;
 use super::layout::layout;
 use super::overview::{self, Activity, DashboardChannel, NodeOverview, RulesSummary};
 use crate::components::card::{card, card_content, card_header, card_title};
 use crate::config::dashboard::{Block, BlockKind, ChannelReference, DEFAULT_EVENTS, Dashboard};
 use crate::hub::{Hub, node_event};
 
+mod attention;
 mod buttons;
 mod channels;
 mod events;
@@ -23,6 +25,7 @@ mod history;
 mod job;
 mod nodes;
 mod rules;
+mod tabs;
 mod value;
 
 use buttons::{RuleButton, buttons_block, rule_buttons};
@@ -33,9 +36,11 @@ use history::{history, history_block};
 use job::{JobView, job_block, job_view};
 use nodes::node_status;
 use rules::rules_block;
+use tabs::{TabRow, dashboard_tabs, tab_row};
 use value::value_block;
 
 pub use buttons::press;
+pub use tabs::dashboard_tabs_fragment;
 
 /// A block with what it shows, read before rendering.
 struct BlockView {
@@ -63,8 +68,8 @@ enum BlockContent {
         channel: DashboardChannel,
         chart: Option<Chart>,
         range: ChartRange,
-        /// Each range with the dashboard query that picks it for this block.
-        choices: Vec<(ChartRange, String)>,
+        /// Each range with where it shows this block's chart in it.
+        choices: Vec<(ChartRange, Link)>,
     },
     Rules(RulesSummary),
     Events(Vec<Activity>),
@@ -73,8 +78,8 @@ enum BlockContent {
         device_id: String,
         limit: usize,
         show_read: bool,
-        /// The dashboard query that shows or hides the read items of this block.
-        toggle_query: String,
+        /// Where this block shows or hides its read items.
+        toggle: Link,
     },
     Job(JobView),
 }
@@ -82,15 +87,34 @@ enum BlockContent {
 const UPCOMING_RULES: usize = 5;
 
 path_param!(index);
+path_param!(name);
 
+/// The first dashboard.
 #[page("/")]
 pub async fn dashboard_page(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
-    let (blocks, query) = block_views(hub, &Picked::from_query(cx)).await;
+    let shown = shown_dashboard(hub, None, &Picked::from_query(cx)).await;
     Ok(view! {
         layout(
             title: "Oxihome",
-            dashboard_root(blocks: blocks, query: query)
+            dashboard_root(shown: shown)
+            <script src="/static/sticky-header.js"></script>
+        )
+    })
+}
+
+/// Any dashboard by name, the first one too.
+#[page("/d/{name}")]
+pub async fn named_dashboard_page(cx: &Cx) -> Result<impl View> {
+    let hub: &Arc<Hub> = app_context(cx);
+    let name = path_param::<Name>(cx).to_string();
+    let title = format!("{name} · Oxihome");
+    let shown = shown_dashboard(hub, Some(name), &Picked::from_query(cx)).await;
+    Ok(view! {
+        layout(
+            title: &title,
+            dashboard_root(shown: shown)
+            <script src="/static/sticky-header.js"></script>
         )
     })
 }
@@ -98,8 +122,9 @@ pub async fn dashboard_page(cx: &Cx) -> Result<impl View> {
 #[page("/dashboard/fragment")]
 pub async fn dashboard_fragment(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
-    let (blocks, query) = block_views(hub, &Picked::from_query(cx)).await;
-    Ok(view! { dashboard_root(blocks: blocks, query: query) })
+    let picked = Picked::from_query(cx);
+    let shown = shown_dashboard(hub, picked.dashboard.clone(), &picked).await;
+    Ok(view! { dashboard_root(shown: shown) })
 }
 
 /// One block, refreshed alone when what it shows changes.
@@ -108,26 +133,108 @@ pub async fn dashboard_block_fragment(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
     let index = path_param::<Index>(cx).to_string().parse::<usize>().ok();
     let picked = Picked::from_query(cx);
-    let (block, query) = match (index, hub.dashboard()) {
-        (Some(index), Some(dashboard)) if index < dashboard.blocks.len() => {
-            let state = PageState::new(&dashboard, &picked);
+    let place = Place::of(hub, picked.dashboard.clone());
+    let dashboard = place
+        .as_ref()
+        .and_then(|place| hub.dashboard(Some(&place.name)));
+    let (block, query) = match (index, &place, dashboard) {
+        (Some(index), Some(place), Some(dashboard)) if index < dashboard.blocks.len() => {
+            let state = PageState::new(&dashboard, place.clone(), &picked);
             let block = state.block_view(hub, &dashboard.blocks[index], index).await;
             (Some(block), state.query())
         }
         _ => (None, String::new()),
     };
     Ok(view! {
-        match block {
-            Some(block) => dashboard_block(block: block, query: query),
+        match (block, place) {
+            (Some(block), Some(place)) => dashboard_block(block: block, place: place, query: query),
             // dashboard.toml changed under the page: reload all of it.
-            None => <div hx-get=(format!("/dashboard/fragment?{query}")) hx-trigger="load" hx-target="#dashboard" hx-swap="outerHTML"></div>,
+            (_, place) => <div
+                hx-get=(place.map_or_else(|| "/dashboard/fragment".to_string(), |place| place.fragment("")))
+                hx-trigger="load"
+                hx-target="#dashboard"
+                hx-swap="outerHTML"
+            ></div>,
         }
     })
 }
 
+/// Where a dashboard lives: `/` for the first one, `/d/<name>` for the others, and its fragments.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Place {
+    name: String,
+    first: bool,
+}
+
+impl Place {
+    /// The named dashboard's place, or the first one's; `None` without dashboards.
+    fn of(hub: &Hub, name: Option<String>) -> Option<Self> {
+        let first = hub.dashboard(None)?.name;
+        let name = name.unwrap_or_else(|| first.clone());
+        Some(Place {
+            first: name == first,
+            name,
+        })
+    }
+
+    fn page(&self, query: &str) -> String {
+        let path = if self.first {
+            "/".to_string()
+        } else {
+            format!("/d/{}", query_value(&self.name))
+        };
+        with_query(path, query)
+    }
+
+    fn fragment(&self, query: &str) -> String {
+        with_query(
+            format!("/dashboard/fragment?dashboard={}", query_value(&self.name)),
+            query,
+        )
+    }
+
+    fn block(&self, index: usize, query: &str) -> String {
+        with_query(
+            format!(
+                "/dashboard/block/{index}?dashboard={}",
+                query_value(&self.name)
+            ),
+            query,
+        )
+    }
+
+    fn tabs(&self) -> String {
+        format!("/dashboard/tabs?dashboard={}", query_value(&self.name))
+    }
+
+    /// What swaps the dashboard to `query` and the address to go with it.
+    fn link(&self, query: &str) -> Link {
+        Link {
+            fragment: self.fragment(query),
+            page: self.page(query),
+        }
+    }
+}
+
+fn with_query(path: String, query: &str) -> String {
+    match (query.is_empty(), path.contains('?')) {
+        (true, _) => path,
+        (false, true) => format!("{path}&{query}"),
+        (false, false) => format!("{path}?{query}"),
+    }
+}
+
+/// A choice on the page: the fragment that shows it and the address pushed for it.
+pub struct Link {
+    pub fragment: String,
+    pub page: String,
+}
+
 /// What was picked on the page, by block index: `range<block>=6h` for a chart's range,
-/// `read<block>=1` for a feeds block showing its read items.
+/// `read<block>=1` for a feeds block showing its read items. `dashboard=<name>` names the
+/// dashboard for the fragments.
 struct Picked {
+    dashboard: Option<String>,
     ranges: HashMap<usize, String>,
     read: HashSet<usize>,
 }
@@ -135,11 +242,14 @@ struct Picked {
 impl Picked {
     fn from_query(cx: &Cx) -> Self {
         let mut picked = Picked {
+            dashboard: None,
             ranges: HashMap::new(),
             read: HashSet::new(),
         };
         for (key, value) in parse_query_params::<HashMap<String, String>>(cx).unwrap_or_default() {
-            if let Some(index) = key
+            if key == "dashboard" {
+                picked.dashboard = Some(value);
+            } else if let Some(index) = key
                 .strip_prefix("range")
                 .and_then(|index| index.parse().ok())
             {
@@ -168,12 +278,13 @@ fn dashboard_query(ranges: &[(usize, ChartRange)], read_shown: &[usize]) -> Stri
 
 /// What every block shows, from what was picked on the page.
 struct PageState {
+    place: Place,
     ranges: Vec<(usize, ChartRange)>,
     read_shown: Vec<usize>,
 }
 
 impl PageState {
-    fn new(dashboard: &Dashboard, picked: &Picked) -> Self {
+    fn new(dashboard: &Dashboard, place: Place, picked: &Picked) -> Self {
         let ranges = dashboard
             .blocks
             .iter()
@@ -196,7 +307,11 @@ impl PageState {
             .filter(|(index, block)| block.kind == BlockKind::Feeds && picked.read.contains(index))
             .map(|(index, _)| index)
             .collect();
-        PageState { ranges, read_shown }
+        PageState {
+            place,
+            ranges,
+            read_shown,
+        }
     }
 
     /// The query that keeps what was picked on every block.
@@ -221,7 +336,8 @@ impl PageState {
                         (history, if history == index { choice } else { range })
                     })
                     .collect();
-                (choice, dashboard_query(&changed, &self.read_shown))
+                let query = dashboard_query(&changed, &self.read_shown);
+                (choice, self.place.link(&query))
             })
             .collect();
         let show_read = self.read_shown.contains(&index);
@@ -236,7 +352,7 @@ impl PageState {
         };
         let read = ReadToggle {
             shown: show_read,
-            query: dashboard_query(&self.ranges, &toggled),
+            link: self.place.link(&dashboard_query(&self.ranges, &toggled)),
         };
         let mut view = block_view(hub, block, range, choices, read).await;
         view.index = index;
@@ -245,32 +361,62 @@ impl PageState {
     }
 }
 
-/// The blocks and the query that keeps what was picked on them.
-async fn block_views(hub: &Hub, picked: &Picked) -> (Vec<BlockView>, String) {
-    let Some(dashboard) = hub.dashboard() else {
-        return (Vec::new(), String::new());
+/// A dashboard as the page shows it.
+struct Shown {
+    /// `None` without any dashboard.
+    place: Option<Place>,
+    /// The name asked for is not in dashboard.toml.
+    missing: bool,
+    /// `None` with a single dashboard.
+    tabs: Option<TabRow>,
+    blocks: Vec<BlockView>,
+    /// What was picked on the blocks, kept by every refresh.
+    query: String,
+}
+
+async fn shown_dashboard(hub: &Hub, name: Option<String>, picked: &Picked) -> Shown {
+    let place = Place::of(hub, name);
+    let dashboard = place
+        .as_ref()
+        .and_then(|place| hub.dashboard(Some(&place.name)));
+    let tabs = place.as_ref().and_then(|place| tab_row(hub, place));
+    let (Some(place), Some(dashboard)) = (&place, dashboard) else {
+        return Shown {
+            missing: place.is_some(),
+            place,
+            tabs,
+            blocks: Vec::new(),
+            query: String::new(),
+        };
     };
-    let state = PageState::new(&dashboard, picked);
-    let mut views = Vec::new();
+    let state = PageState::new(&dashboard, place.clone(), picked);
+    let mut blocks = Vec::new();
     for (index, block) in dashboard.blocks.iter().enumerate() {
-        views.push(state.block_view(hub, block, index).await);
+        blocks.push(state.block_view(hub, block, index).await);
     }
-    (views, state.query())
+    Shown {
+        place: Some(place.clone()),
+        missing: false,
+        tabs,
+        blocks,
+        query: state.query(),
+    }
+}
+
+fn node_trigger(device_id: &str) -> String {
+    node_event(device_id).map_or_else(|| "sse:nodes".to_string(), |name| format!("sse:{name}"))
 }
 
 /// Every block also refreshes after one of its controls and once a minute, in case an event was
 /// missed. A chart refreshes at most once per bucket (from 6 s to a minute): it does not change
 /// sooner.
 fn block_trigger(block: &Block, range: ChartRange) -> String {
-    let node = |device_id: &str| {
-        node_event(device_id).map_or_else(|| "sse:nodes".to_string(), |name| format!("sse:{name}"))
-    };
     let mut triggers: Vec<String> = match block.kind {
         BlockKind::Nodes => vec!["sse:presence".into()],
         BlockKind::Channels => {
             let mut triggers = Vec::new();
             for channel in &block.channels {
-                let trigger = node(&channel.device);
+                let trigger = node_trigger(&channel.device);
                 if !triggers.contains(&trigger) {
                     triggers.push(trigger);
                 }
@@ -280,19 +426,21 @@ fn block_trigger(block: &Block, range: ChartRange) -> String {
         BlockKind::Value => block
             .channel
             .iter()
-            .map(|channel| node(&channel.device))
+            .map(|channel| node_trigger(&channel.device))
             .collect(),
         BlockKind::History => {
             let throttle = range.bucket_length().as_secs().clamp(6, 60);
             block
                 .channel
                 .iter()
-                .map(|channel| format!("{} throttle:{throttle}s", node(&channel.device)))
+                .map(|channel| format!("{} throttle:{throttle}s", node_trigger(&channel.device)))
                 .collect()
         }
-        BlockKind::Feeds | BlockKind::Job => {
-            block.device.iter().map(|device| node(device)).collect()
-        }
+        BlockKind::Feeds | BlockKind::Job => block
+            .device
+            .iter()
+            .map(|device| node_trigger(device))
+            .collect(),
         BlockKind::Buttons | BlockKind::Rules => {
             vec!["sse:config".into(), "sse:timeline".into()]
         }
@@ -302,10 +450,10 @@ fn block_trigger(block: &Block, range: ChartRange) -> String {
     triggers.join(", ")
 }
 
-/// Whether a feeds block shows its read items, and the query that flips it.
+/// Whether a feeds block shows its read items, and where it flips.
 struct ReadToggle {
     shown: bool,
-    query: String,
+    link: Link,
 }
 
 /// Validation makes sure `value` and `history` blocks have a channel.
@@ -319,7 +467,7 @@ async fn block_view(
     hub: &Hub,
     block: &Block,
     range: ChartRange,
-    choices: Vec<(ChartRange, String)>,
+    choices: Vec<(ChartRange, Link)>,
     read: ReadToggle,
 ) -> BlockView {
     let (default_title, content) = match block.kind {
@@ -411,7 +559,7 @@ async fn block_view(
                     device_id,
                     limit: block.limit.unwrap_or(DEFAULT_EVENTS),
                     show_read: read.shown,
-                    toggle_query: read.query,
+                    toggle: read.link,
                 },
             )
         }
@@ -430,50 +578,84 @@ async fn block_view(
 }
 
 /// Each block refreshes itself; the whole dashboard only when a config file changes, since
-/// dashboard.toml may have moved its blocks. Both keep the query, so picked chart ranges stay.
+/// dashboard.toml may have moved its blocks or renamed the tabs. Both keep the query, so picked
+/// chart ranges stay.
 #[component]
-async fn dashboard_root(blocks: Vec<BlockView>, query: String) -> Result<impl View> {
+async fn dashboard_root(shown: Shown) -> Result<impl View> {
+    let Shown {
+        place,
+        missing,
+        tabs,
+        blocks,
+        query,
+    } = shown;
+    let refresh = place.as_ref().map_or_else(
+        || "/dashboard/fragment".to_string(),
+        |place| place.fragment(&query),
+    );
     Ok(view! {
         <div
             id="dashboard"
-            hx-get=(format!("/dashboard/fragment?{query}"))
+            hx-get=(refresh)
             hx-trigger="sse:config"
             hx-swap="outerHTML"
             // Buttons and controls inside would swap `#status` out with outerHTML.
             hx-disinherit="*"
         >
-            dashboard_blocks(blocks: blocks, query: query)
-        </div>
-    })
-}
-
-#[component]
-async fn dashboard_blocks(blocks: Vec<BlockView>, query: String) -> Result<impl View> {
-    Ok(view! {
-        if blocks.is_empty() {
-            <p class="text-muted-foreground">
-                "No dashboard yet: add blocks to dashboard.toml in "
-                <a href="/settings/dashboard.toml" class="font-medium hover:underline">"Settings"</a>
-                ", or see all nodes in "
-                <a href="/nodes" class="font-medium hover:underline">"Nodes"</a>
-                "."
-            </p>
-        }
-        // Cards of a row share its height.
-        <div class="grid gap-4 lg:grid-cols-3">
-            for block in blocks {
-                dashboard_block(block: block, query: query.clone())
+            if let Some(tabs) = tabs {
+                dashboard_tabs(tabs: tabs)
+            }
+            match place {
+                Some(place) if missing => <p class="text-muted-foreground">(format!("No dashboard named \"{}\".", place.name))</p>,
+                Some(place) => dashboard_blocks(blocks: blocks, place: place, query: query),
+                None => no_dashboard(),
             }
         </div>
     })
 }
 
 #[component]
-async fn dashboard_block(block: BlockView, query: String) -> Result<impl View> {
+async fn no_dashboard() -> Result<impl View> {
+    Ok(view! {
+        <p class="text-muted-foreground">
+            "No dashboard yet: add blocks to dashboard.toml in "
+            <a href="/settings/dashboard.toml" class="font-medium hover:underline">"Settings"</a>
+            ", or see all nodes in "
+            <a href="/nodes" class="font-medium hover:underline">"Nodes"</a>
+            "."
+        </p>
+    })
+}
+
+#[component]
+async fn dashboard_blocks(
+    blocks: Vec<BlockView>,
+    place: Place,
+    query: String,
+) -> Result<impl View> {
+    Ok(view! {
+        if blocks.is_empty() {
+            <p class="text-muted-foreground">
+                "No blocks in this dashboard yet: add some to dashboard.toml in "
+                <a href="/settings/dashboard.toml" class="font-medium hover:underline">"Settings"</a>
+                "."
+            </p>
+        }
+        // Cards of a row share its height.
+        <div class="grid gap-4 lg:grid-cols-3">
+            for block in blocks {
+                dashboard_block(block: block, place: place.clone(), query: query.clone())
+            }
+        </div>
+    })
+}
+
+#[component]
+async fn dashboard_block(block: BlockView, place: Place, query: String) -> Result<impl View> {
     Ok(view! {
         <div
             class=(width_class(block.width))
-            hx-get=(format!("/dashboard/block/{}?{query}", block.index))
+            hx-get=(place.block(block.index, &query))
             hx-trigger=(block.trigger)
             hx-swap="outerHTML"
             hx-disinherit="*"
@@ -489,12 +671,12 @@ async fn dashboard_block(block: BlockView, query: String) -> Result<impl View> {
                         BlockContent::History { channel, chart, range, choices } => history_block(channel: channel, chart: chart, range: range, choices: choices),
                         BlockContent::Rules(summary) => rules_block(summary: summary),
                         BlockContent::Events(items) => events_block(items: items),
-                        BlockContent::Feeds { list, device_id, limit, show_read, toggle_query } => feeds_block(
+                        BlockContent::Feeds { list, device_id, limit, show_read, toggle } => feeds_block(
                             list: list,
                             device_id: device_id,
                             limit: limit,
                             show_read: show_read,
-                            toggle_query: toggle_query
+                            toggle: toggle
                         ),
                         BlockContent::Job(job) => job_block(job: job),
                         BlockContent::Buttons(buttons) => buttons_block(buttons: buttons),
@@ -549,6 +731,134 @@ mod tests {
             ),
             "sse:node-youtube, every 60s, refresh"
         );
+    }
+
+    #[test]
+    fn places_name_their_dashboard() {
+        let home = Place {
+            name: "Home".into(),
+            first: true,
+        };
+        let printer = Place {
+            name: "3D printer".into(),
+            first: false,
+        };
+        assert_eq!(home.page(""), "/");
+        assert_eq!(home.page("range4=6h"), "/?range4=6h");
+        assert_eq!(printer.page(""), "/d/3D%20printer");
+        assert_eq!(
+            printer.fragment("read2=1"),
+            "/dashboard/fragment?dashboard=3D%20printer&read2=1"
+        );
+        assert_eq!(
+            printer.block(3, ""),
+            "/dashboard/block/3?dashboard=3D%20printer"
+        );
+        assert_eq!(printer.tabs(), "/dashboard/tabs?dashboard=3D%20printer");
+    }
+
+    /// A fetch without the dashboard's name would fall back to the first dashboard.
+    #[tokio::test]
+    async fn every_fetch_names_the_dashboard() {
+        use super::attention::Attention;
+        use super::tabs::{Tab, tabs_trigger};
+        use topcoat::view::ViewExt;
+
+        let place = Place {
+            name: "Printer".into(),
+            first: false,
+        };
+        let channel = DashboardChannel {
+            device_id: "weather".into(),
+            node_label: "Weather".into(),
+            label: "Outside · Temperature".into(),
+            channel: Err("not seen yet"),
+        };
+        let picked = Picked {
+            dashboard: Some("Printer".into()),
+            ranges: HashMap::new(),
+            read: HashSet::from([1]),
+        };
+        let dashboard: Dashboard = toml::from_str(
+            "name = \"Printer\"\n\
+             [[blocks]]\ntype = \"history\"\nchannel = { device = \"weather\", entity = 1, channel = 0 }\n\
+             [[blocks]]\ntype = \"feeds\"\ndevice = \"rss\"",
+        )
+        .unwrap();
+        let state = PageState::new(&dashboard, place.clone(), &picked);
+        let choices = ChartRange::ALL
+            .into_iter()
+            .map(|range| (range, place.link(&format!("range0={}", range.key()))))
+            .collect();
+        let block = |index, content| BlockView {
+            index,
+            title: String::new(),
+            width: 1,
+            trigger: "refresh".into(),
+            content,
+        };
+        let shown = Shown {
+            place: Some(place.clone()),
+            missing: false,
+            tabs: Some(TabRow {
+                tabs: vec![Tab {
+                    name: "Home".into(),
+                    link: Place {
+                        name: "Home".into(),
+                        first: true,
+                    }
+                    .link(""),
+                    current: false,
+                    attention: Attention::Alert,
+                }],
+                refresh: place.tabs(),
+                trigger: tabs_trigger(&[]),
+            }),
+            blocks: vec![
+                block(
+                    0,
+                    BlockContent::History {
+                        channel,
+                        chart: None,
+                        range: ChartRange::Day,
+                        choices,
+                    },
+                ),
+                block(
+                    1,
+                    BlockContent::Feeds {
+                        list: Some(FeedList {
+                            node_label: "RSS".into(),
+                            total_unread: 0,
+                            items: Vec::new(),
+                        }),
+                        device_id: "rss".into(),
+                        limit: 10,
+                        show_read: true,
+                        toggle: place.link(&dashboard_query(&state.ranges, &[])),
+                    },
+                ),
+            ],
+            query: state.query(),
+        };
+        let cx = Cx::default();
+        let html = view! { cx => dashboard_root(shown: shown) }
+            .first()
+            .await
+            .unwrap()
+            .render(&cx);
+        let fetches: Vec<&str> = html
+            .split("hx-get=\"")
+            .skip(1)
+            .map(|rest| rest.split('"').next().unwrap())
+            .collect();
+        // The dashboard, the tab row, a tab, 4 chart ranges, 2 blocks and the feeds toggle.
+        assert_eq!(fetches.len(), 10, "{html}");
+        for fetch in fetches {
+            assert!(fetch.contains("dashboard="), "{fetch}");
+        }
+        assert!(html.contains("hx-push-url=\"/d/Printer?"), "{html}");
+        assert!(html.contains("bg-destructive"), "{html}");
     }
 
     #[test]

@@ -1,4 +1,5 @@
-# The home page: blocks in this order on a grid of three columns (one on phones).
+# The home page: each [[dashboards]] is a tab, in this order (the first at /, every one at
+# /d/<name>); its blocks in this order on a grid of three columns (one on phones).
 # Block types: "nodes" (nodes by presence), "channels" (chosen channels with value and controls,
 # like rules: { device, entity, channel }), "buttons" (buttons of rules, when = { button = "..." }),
 # "value" (one channel, large), "history" (a chart of one channel with 15m/1h/6h/24h buttons;
@@ -7,7 +8,8 @@
 # "feeds" (items of an rss node, device = "rss", unread first with "Show read"; limit 1-50,
 # default 10), "job" (what a node is doing: device, state = { entity, channel } and the active
 # states, optional progress, left in seconds and details; one line when not active).
-# Optional: title, width (1-3 columns, default 1). Only the first dashboard is shown for now.
+# Optional: title, width (1-3 columns, default 1), attention = false (the block never puts a dot
+# on its tab: red for a failed job or rule, amber for a node it shows being offline).
 
 [[dashboards]]
 name = "Home"
@@ -26,14 +28,6 @@ width = 1
 type = "rules"
 width = 1
 
-
-#[[dashboards.blocks]]
-#type = "value"
-#title = "Input"
-#channel = { device = "esp32-08d1f9ca41e4", entity = 7, channel = 0 }
-
-
-# inside / outside min max
 [[dashboards.blocks]]
 type = "history"
 title = "Inside temperature"
@@ -54,8 +48,6 @@ channels = [
     { device = "weather", entity = 1, channel = 4 },
 ]
 
-
-# outside
 [[dashboards.blocks]]
 type = "history"
 title = "Outside temperature"
@@ -64,15 +56,18 @@ channel = { device = "weather", entity = 1, channel = 0 }
 
 [[dashboards.blocks]]
 type = "history"
-title = "Outside humididty"
+title = "Outside humidity"
 width = 1
 channel = { device = "weather", entity = 1, channel = 1 }
 
 [[dashboards.blocks]]
-type = "value"
-title = "Raining"
-width = 1
-channel = { device = "weather", entity = 1, channel = 4 }
+type = "events"
+limit = 15
+width = 2
+
+
+[[dashboards]]
+name = "Printer"
 
 [[dashboards.blocks]]
 type = "job"
@@ -104,11 +99,8 @@ channels = [
 ]
 
 
-
-[[dashboards.blocks]]
-type = "events"
-limit = 15
-width = 2
+[[dashboards]]
+name = "Reading"
 
 [[dashboards.blocks]]
 type = "feeds"
