@@ -43,6 +43,18 @@ hardware = [
     { id = 4, pin = 14, driver = "buzzer" },
 ]
 
+[nodes."esp32-e8f60af8b410"]
+name = "C6 board"
+entities.2 = { name = "BOOT button", channels.0 = "Press" }
+entities.3 = { name = "Climate sensor" }
+entities.4 = { name = "IR transmitter", channels.0 = "Code" }
+parameters = { heartbeat_interval = 30, wifi_check_interval = 5 }
+hardware = [
+    { id = 2, pin = 9, driver = "button" },
+    { id = 3, pin = 6, driver = "aht20_bmp280", clock_pin = 7, read_interval_seconds = 30 },
+    { id = 4, pin = 18, driver = "ir_transmitter" },
+]
+
 [nodes.weather]
 name = "Weather"
 

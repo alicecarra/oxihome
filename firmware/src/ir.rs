@@ -113,6 +113,15 @@ impl IrReceiver {
             self.last_sony = Some((code.clone(), now));
             return Some(if held { format!("{code} repeat") } else { code });
         }
+        // The receiver can miss the start of a repeated Sony frame, and the rest reads as
+        // `RC5 1F 3F` or raw; a frame that is no code this soon after a Sony one is that tail.
+        if self
+            .last_sony
+            .as_ref()
+            .is_some_and(|(_, at)| at.elapsed() <= SONY_REPEAT_WINDOW)
+        {
+            return None;
+        }
         if let Some(code) = rc5(&merged) {
             return Some(code);
         }
