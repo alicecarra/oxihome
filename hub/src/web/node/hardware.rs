@@ -209,5 +209,11 @@ fn driver_label(driver: &Driver) -> String {
         Driver::Potentiometer { minimum_change } => {
             format!("potentiometer, changes of {minimum_change}% or more")
         }
+        Driver::Aht20Bmp280 {
+            clock_pin,
+            read_interval_seconds,
+        } => format!(
+            "AHT20 + BMP280, SDA on this pin, SCL on {clock_pin}, read every {read_interval_seconds} s"
+        ),
     }
 }

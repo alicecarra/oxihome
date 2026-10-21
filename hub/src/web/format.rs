@@ -165,6 +165,7 @@ pub fn unit_symbol(unit: Unit) -> &'static str {
         Unit::Megahertz => "MHz",
         Unit::Megabyte => "MB",
         Unit::UnixTime => "",
+        Unit::Hectopascal => "hPa",
     }
 }
 
