@@ -2,7 +2,7 @@ use esp_idf_svc::hal::adc::ADCU1;
 use esp_idf_svc::hal::adc::attenuation::DB_12;
 use esp_idf_svc::hal::adc::oneshot::config::AdcChannelConfig;
 use esp_idf_svc::hal::adc::oneshot::{AdcChannelDriver, AdcDriver};
-use esp_idf_svc::hal::gpio::{Gpio32, Gpio33, Gpio34, Gpio35, Gpio36, Gpio37, Gpio38, Gpio39};
+use esp_idf_svc::hal::gpio;
 use esp_idf_svc::sys::EspError;
 
 const SAMPLES: u32 = 16;
@@ -33,16 +33,21 @@ impl Potentiometer {
                 match pin {
                     $($number => {
                         let mut channel =
-                            AdcChannelDriver::new(adc, unsafe { $gpio::steal() }, &config)?;
+                            AdcChannelDriver::new(adc, unsafe { gpio::$gpio::steal() }, &config)?;
                         Box::new(move || channel.read_raw()) as Reader
                     })*
                     _ => anyhow::bail!("pin {pin} is not an ADC1 pin"),
                 }
             };
         }
+        #[cfg(esp32)]
         let read_raw = reader!(
             32 => Gpio32, 33 => Gpio33, 34 => Gpio34, 35 => Gpio35,
             36 => Gpio36, 37 => Gpio37, 38 => Gpio38, 39 => Gpio39
+        );
+        #[cfg(esp32c6)]
+        let read_raw = reader!(
+            0 => Gpio0, 1 => Gpio1, 2 => Gpio2, 3 => Gpio3, 4 => Gpio4, 5 => Gpio5, 6 => Gpio6
         );
         Ok(Self {
             read_raw,

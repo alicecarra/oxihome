@@ -109,6 +109,9 @@ firmware/build-images.sh                      # every board
 firmware/build-images.sh esp32-14335c2e7270   # or some of them
 ```
 
+A board with another chip has a `chip` line in its file (`chip = "esp32c6"`); without it the
+script builds for the classic ESP32. The firmware ignores the line.
+
 The script builds a release image per board into `hub/firmware/<device id>/<version>.bin` (ignored
 by git and readable only by the owner: the images hold the passwords) and puts `cfg.toml` back as
 it was. The hub serves them when `hub.toml` has an `[ota]` section:
@@ -229,6 +232,29 @@ times 45 ms apart, as Sony remotes do), `RC5 00 0C` and `RC6 00 0C` (36 kHz; the
 each send, so the device sees a new press), and `raw 9000 4500 560 …` (38 kHz, marks and spaces in
 µs, up to 512). A trailing `repeat` is ignored. A code it does not know is refused with
 `InvalidValue`. Sending blocks the board's main loop for the frame (under 200 ms).
+
+## ESP32-C6 board
+
+The NanoESP32-C6 v1.0 (`esp32-e8f60af8b410`, 16 MB of flash) is a RISC-V chip. The same `esp`
+toolchain builds it; only the target and `MCU` change (the default in `.cargo/config.toml` stays the
+classic ESP32). It has two USB-C ports: the native one (`303a:1001`, USB Serial/JTAG) shows up as
+`/dev/ttyACM0` and is enough to flash and monitor. From `firmware/`:
+
+```sh
+MCU=esp32c6 cargo build --release --target riscv32imac-esp-espidf
+./flash.sh --port /dev/ttyACM0 target/riscv32imac-esp-espidf/release/firmware
+espflash monitor --port /dev/ttyACM0
+```
+
+`build-images.sh esp32-e8f60af8b410` builds its image (its board file has `chip = "esp32c6"`).
+Differences from the classic board in the factory hardware: BOOT is GPIO9 and toggles nothing,
+there is no onboard LED entity (the LED is a WS2812 on GPIO8, not a plain output), and the
+potentiometer goes on GPIO2 (the ADC1 pins are GPIO0 to GPIO6). The other peripherals keep their
+pins. Reserved: 12 and 13 (USB), 16 and 17 (UART0), 24 to 30 (flash). The release image fills
+85% of an app slot (the classic one, about 70%).
+
+The device id comes from the Wi-Fi station MAC (the one `espflash` prints): the C6 factory MAC in
+eFuse is 8 bytes (EUI-64), so it would give another id.
 
 ## MQTT broker
 

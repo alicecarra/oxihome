@@ -8,3 +8,5 @@ mqtt_password = "the board's broker password"
 # What is wired besides the onboard LED and BOOT button: climate, external_led, buzzer, ir,
 # potentiometer. Without this line, all of them; "" for none.
 peripherals = "climate, external_led, buzzer, ir, potentiometer"
+# Read only by build-images.sh: esp32 (default) or esp32c6.
+#chip = "esp32c6"

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds a release image per board for over-the-air updates: boards/<device id>.toml (the board's
 # cfg.toml) becomes <images>/<device id>/<version>.bin, served by the hub ([ota] images).
+# A `chip = "esp32c6"` line in the board's file picks the chip; esp32 without it.
 # Usage: build-images.sh [device id...]   (all boards when none given)
 set -euo pipefail
 umask 077
@@ -19,11 +20,18 @@ cp cfg.toml "$backup"
 trap 'cp "$backup" cfg.toml; rm -f "$backup"' EXIT
 
 for device_id in "$@"; do
+    chip="$(sed -n 's/^chip = "\(.*\)"/\1/p' "boards/$device_id.toml")"
+    chip="${chip:-esp32}"
+    case "$chip" in
+        esp32) target=xtensa-esp32-espidf ;;
+        esp32c6) target=riscv32imac-esp-espidf ;;
+        *) echo "$device_id: unknown chip \"$chip\"" >&2; exit 1 ;;
+    esac
     cp "boards/$device_id.toml" cfg.toml
     touch src/config.rs
-    cargo build --release
+    MCU="$chip" cargo build --release --target "$target"
     mkdir -p "$images/$device_id"
-    espflash save-image --chip esp32 target/xtensa-esp32-espidf/release/firmware \
+    espflash save-image --chip "$chip" "target/$target/release/firmware" \
         "$images/$device_id/$version.bin"
     echo "$device_id: $images/$device_id/$version.bin"
 done

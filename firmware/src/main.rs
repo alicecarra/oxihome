@@ -121,11 +121,15 @@ fn run() -> anyhow::Result<()> {
     }
 }
 
-/// `esp32-<factory MAC>`, stable across reboots.
+/// `esp32-<factory MAC>`, stable across reboots. The Wi-Fi station MAC, because the ESP32-C6
+/// factory MAC in eFuse is 8 bytes (EUI-64).
 fn device_id() -> anyhow::Result<String> {
     let mut mac = [0u8; 6];
     esp_idf_svc::sys::esp!(unsafe {
-        esp_idf_svc::sys::esp_efuse_mac_get_default(mac.as_mut_ptr())
+        esp_idf_svc::sys::esp_read_mac(
+            mac.as_mut_ptr(),
+            esp_idf_svc::sys::esp_mac_type_t_ESP_MAC_WIFI_STA,
+        )
     })?;
     let hex: String = mac.iter().map(|byte| format!("{byte:02x}")).collect();
     Ok(format!("esp32-{hex}"))
