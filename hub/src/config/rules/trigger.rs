@@ -5,7 +5,7 @@ use jiff::{SignedDuration, ToSpan, Zoned};
 use oxihome_protocol::{EventKind, Value};
 use serde::Deserialize;
 
-use super::number;
+use super::{Expected, ValueTest};
 use crate::node::events::EventRecord;
 use crate::traffic::{Alert, AlertKind};
 
@@ -15,7 +15,7 @@ pub enum Trigger {
     Event(EventTrigger),
     Schedule(ScheduleTrigger),
     Cron(CronTrigger),
-    Threshold(ThresholdTrigger),
+    State(StateTrigger),
     Offline(OfflineTrigger),
     Traffic(TrafficTrigger),
     RemoteKey(RemoteKeyTrigger),
@@ -28,7 +28,7 @@ impl Trigger {
     pub fn next_run(&self, now: &Zoned) -> Option<Zoned> {
         match self {
             Trigger::Event(_)
-            | Trigger::Threshold(_)
+            | Trigger::State(_)
             | Trigger::Offline(_)
             | Trigger::Traffic(_)
             | Trigger::RemoteKey(_)
@@ -46,7 +46,7 @@ impl Trigger {
                 &["node", "channel", "value"]
             }
             Trigger::Event(_) => &["node", "channel"],
-            Trigger::Threshold(_) => &["node", "channel", "value"],
+            Trigger::State(_) => &["node", "channel", "value"],
             Trigger::Offline(_) => &["node"],
             Trigger::Traffic(TrafficTrigger {
                 kind: AlertKind::Stopped | AlertKind::Noisy,
@@ -64,7 +64,7 @@ impl Trigger {
     pub(super) fn is_due(&self, minute: DateTime) -> bool {
         match self {
             Trigger::Event(_)
-            | Trigger::Threshold(_)
+            | Trigger::State(_)
             | Trigger::Offline(_)
             | Trigger::Traffic(_)
             | Trigger::RemoteKey(_)
@@ -85,6 +85,7 @@ struct TriggerFields {
     channel: Option<u8>,
     event: Option<EventKind>,
     data: Option<String>,
+    equals: Option<Expected>,
     above: Option<f32>,
     below: Option<f32>,
     #[serde(rename = "for")]
@@ -113,6 +114,7 @@ impl TriggerFields {
             ("channel", self.channel.is_some()),
             ("event", self.event.is_some()),
             ("data", self.data.is_some()),
+            ("equals", self.equals.is_some()),
             ("above", self.above.is_some()),
             ("below", self.below.is_some()),
             ("for", self.lasting.is_some()),
@@ -146,7 +148,7 @@ impl TryFrom<TriggerFields> for Trigger {
         let traffic_alone = fields.has_only(&["stopped", "noisy", "unanswered", "reported"]);
         let button_alone = fields.has_only(&["button"]);
         let remote_key_alone = fields.has_only(&["remote", "key"]);
-        let offline_alone = fields.has_only(&["offline"]);
+        let offline_alone = fields.has_only(&["offline", "for"]);
         let notice_alone = fields.has_only(&["notice"]);
         let traffic: Vec<(AlertKind, String)> = [
             (AlertKind::Stopped, fields.stopped),
@@ -191,13 +193,15 @@ impl TryFrom<TriggerFields> for Trigger {
         }
         if let Some(device) = fields.offline {
             if !offline_alone {
-                return Err("`offline` goes alone in `when`".into());
+                return Err("`offline` goes alone in `when`, or with `for`".into());
             }
             let device = (device != "*").then_some(device);
-            return Ok(Trigger::Offline(OfflineTrigger { device }));
+            let lasting = fields.lasting.as_deref().map(lasting).transpose()?;
+            return Ok(Trigger::Offline(OfflineTrigger { device, lasting }));
         }
         let channel_kinds = [
             fields.event.is_some(),
+            fields.equals.is_some(),
             fields.above.is_some(),
             fields.below.is_some(),
         ]
@@ -213,21 +217,21 @@ impl TryFrom<TriggerFields> for Trigger {
                 return Err("a channel trigger cannot have `at`, `days` or `cron`".into());
             }
             if channel_kinds > 1 {
-                return Err("use only one of `event`, `above` and `below`".into());
+                return Err("use only one of `event`, `equals`, `above` and `below`".into());
             }
             if fields.data.is_some() && fields.event.is_none() {
                 return Err("`data` goes with `event`".into());
             }
             if fields.lasting.is_some() && fields.event.is_some() {
-                return Err("`for` goes with `above` or `below`".into());
+                return Err(FOR_GOES_WITH.into());
             }
             let (Some(device), Some(entity), Some(channel)) =
                 (fields.device, fields.entity, fields.channel)
             else {
                 return Err("a channel trigger needs `device`, `entity` and `channel`".into());
             };
-            let limit = match (fields.event, fields.above, fields.below) {
-                (Some(event), _, _) => {
+            let test = match (fields.event, fields.equals, fields.above, fields.below) {
+                (Some(event), _, _, _) => {
                     return Ok(Trigger::Event(EventTrigger {
                         device,
                         entity,
@@ -236,21 +240,26 @@ impl TryFrom<TriggerFields> for Trigger {
                         data: fields.data,
                     }));
                 }
-                (_, Some(above), _) => Limit::Above(above),
-                (_, _, Some(below)) => Limit::Below(below),
-                _ => return Err("a channel trigger needs `event`, `above` or `below`".into()),
+                (_, Some(expected), _, _) => ValueTest::Equals(expected),
+                (_, _, Some(above), _) => ValueTest::Above(above),
+                (_, _, _, Some(below)) => ValueTest::Below(below),
+                _ => {
+                    return Err(
+                        "a channel trigger needs `event`, `equals`, `above` or `below`".into(),
+                    );
+                }
             };
             let lasting = fields.lasting.as_deref().map(lasting).transpose()?;
-            return Ok(Trigger::Threshold(ThresholdTrigger {
+            return Ok(Trigger::State(StateTrigger {
                 device,
                 entity,
                 channel,
-                limit,
+                test,
                 lasting,
             }));
         }
         if fields.lasting.is_some() {
-            return Err("`for` goes with `above` or `below`".into());
+            return Err(FOR_GOES_WITH.into());
         }
         if fields.at.is_some() && fields.cron.is_some() {
             return Err("use either `at` or `cron`, not both".into());
@@ -268,20 +277,22 @@ impl TryFrom<TriggerFields> for Trigger {
         if !fields.days.is_empty() {
             return Err("`days` needs `at`".into());
         }
-        Err("`when` needs an event or a limit on a channel (`device`, `entity`, `channel`), `at`, `cron`, `offline` or `notice`".into())
+        Err("`when` needs an event, a value or a limit on a channel (`device`, `entity`, `channel`), `at`, `cron`, `offline` or `notice`".into())
     }
 }
 
-/// Runs when a confirmed numeric value crosses the limit, not again while it stays past it.
-/// The first known value of the channel counts as a crossing.
+const FOR_GOES_WITH: &str = "`for` goes with `equals`, `above`, `below` or `offline`";
+
+/// Runs when a confirmed value starts passing the test, not again while it keeps passing.
+/// The first known value of the channel counts as a start.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ThresholdTrigger {
+pub struct StateTrigger {
     pub device: String,
     pub entity: u8,
     pub channel: u8,
-    pub limit: Limit,
-    /// `for = "5m"`: runs only if no confirmed value back within the limit comes in this long
-    /// after the crossing.
+    pub test: ValueTest,
+    /// `for = "5m"`: runs only if no confirmed value that fails the test comes in this long
+    /// after the start.
     pub lasting: Option<SignedDuration>,
 }
 
@@ -297,28 +308,6 @@ fn lasting(text: &str) -> Result<SignedDuration, String> {
         ));
     }
     Ok(duration)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Limit {
-    Above(f32),
-    Below(f32),
-}
-
-impl Limit {
-    pub(super) fn crossed(self, previous: Option<&Value>, value: &Value) -> bool {
-        number(value).is_some_and(|now| self.passed(now))
-            && previous
-                .and_then(number)
-                .is_none_or(|before| !self.passed(before))
-    }
-
-    pub(super) fn passed(self, value: f32) -> bool {
-        match self {
-            Limit::Above(limit) => value > limit,
-            Limit::Below(limit) => value < limit,
-        }
-    }
 }
 
 /// A button on the dashboard or the `/rules` page; its name is unique among rules.
@@ -339,6 +328,8 @@ pub struct RemoteKeyTrigger {
 #[derive(Debug, Clone, PartialEq)]
 pub struct OfflineTrigger {
     pub device: Option<String>,
+    /// `for = "30m"`: runs only if the node does not come back this long after going offline.
+    pub lasting: Option<SignedDuration>,
 }
 
 /// Runs when the node sends a `Notice`; `None` for any node (`notice = "*"`).
@@ -544,10 +535,25 @@ mod tests {
     }
 
     #[test]
-    fn offline_trigger_goes_alone() {
+    fn offline_trigger_goes_alone_or_with_for() {
         assert_eq!(
             when(r#"{ offline = "*" }"#),
-            Ok(Trigger::Offline(OfflineTrigger { device: None }))
+            Ok(Trigger::Offline(OfflineTrigger {
+                device: None,
+                lasting: None,
+            }))
+        );
+        assert_eq!(
+            when(r#"{ offline = "tv", for = "30m" }"#),
+            Ok(Trigger::Offline(OfflineTrigger {
+                device: Some("tv".into()),
+                lasting: Some(SignedDuration::from_mins(30)),
+            }))
+        );
+        assert!(
+            when(r#"{ offline = "tv", for = "25h" }"#)
+                .unwrap_err()
+                .contains("at most 24 hours")
         );
         assert!(
             when(r#"{ offline = "sim-bedroom", at = "07:00" }"#)
@@ -584,21 +590,39 @@ mod tests {
     }
 
     #[test]
-    fn threshold_triggers_parse_and_reject_mixtures() {
+    fn state_triggers_parse_and_reject_mixtures() {
         assert_eq!(
             when(r#"{ device = "sim-living-room", entity = 3, channel = 1, below = 40.5 }"#),
-            Ok(Trigger::Threshold(ThresholdTrigger {
+            Ok(Trigger::State(StateTrigger {
                 device: "sim-living-room".into(),
                 entity: 3,
                 channel: 1,
-                limit: Limit::Below(40.5),
+                test: ValueTest::Below(40.5),
                 lasting: None,
             }))
         );
         assert_eq!(
+            when(r#"{ device = "door", entity = 7, channel = 0, equals = true, for = "10m" }"#),
+            Ok(Trigger::State(StateTrigger {
+                device: "door".into(),
+                entity: 7,
+                channel: 0,
+                test: ValueTest::Equals(Expected::Bool(true)),
+                lasting: Some(SignedDuration::from_mins(10)),
+            }))
+        );
+        assert!(matches!(
+            when(r#"{ device = "tv", entity = 1, channel = 2, equals = "Standby" }"#),
+            Ok(Trigger::State(StateTrigger {
+                test: ValueTest::Equals(Expected::Text(_)),
+                lasting: None,
+                ..
+            }))
+        ));
+        assert_eq!(
             when(r#"{ device = "a", entity = 3, channel = 0, above = 90, for = "5m" }"#).map(
                 |trigger| match trigger {
-                    Trigger::Threshold(trigger) => trigger.lasting,
+                    Trigger::State(trigger) => trigger.lasting,
                     _ => None,
                 }
             ),
@@ -615,6 +639,18 @@ mod tests {
         );
         assert!(error(r#"{ above = 28 }"#).contains("needs `device`"));
         assert!(
+            error(r#"{ device = "a", entity = 3, channel = 0, equals = true, above = 1 }"#)
+                .contains("only one of")
+        );
+        assert!(
+            error(r#"{ device = "a", entity = 3, channel = 0, equals = true, event = "Press" }"#)
+                .contains("only one of")
+        );
+        assert!(
+            error(r#"{ device = "a", entity = 3, channel = 0, equals = true, data = "x" }"#)
+                .contains("`data` goes with `event`")
+        );
+        assert!(
             error(r#"{ device = "a", entity = 3, channel = 0, event = "Press", for = "5m" }"#)
                 .contains("`for` goes with")
         );
@@ -625,7 +661,7 @@ mod tests {
         );
         assert!(
             error(r#"{ device = "a", entity = 3, channel = 0 }"#)
-                .contains("needs `event`, `above` or `below`")
+                .contains("needs `event`, `equals`, `above` or `below`")
         );
     }
 

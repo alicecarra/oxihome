@@ -71,7 +71,22 @@ impl fmt::Display for Expected {
 }
 
 impl ValueTest {
-    fn passes(&self, value: &Value) -> bool {
+    /// A value that passes, to show in a run by hand.
+    pub fn example(&self) -> Value {
+        match self {
+            ValueTest::Equals(Expected::Bool(expected)) => Value::Bool(*expected),
+            ValueTest::Equals(Expected::Number(expected)) => Value::Float(*expected),
+            ValueTest::Equals(Expected::Text(expected)) => Value::Text(expected.clone()),
+            ValueTest::Above(limit) | ValueTest::Below(limit) => Value::Float(*limit),
+        }
+    }
+
+    /// Passes now and did not before; a missing value before counts as not passing.
+    pub(super) fn crossed(&self, previous: Option<&Value>, value: &Value) -> bool {
+        self.passes(value) && previous.is_none_or(|before| !self.passes(before))
+    }
+
+    pub(super) fn passes(&self, value: &Value) -> bool {
         match self {
             ValueTest::Equals(expected) => expected.matches(value),
             ValueTest::Above(limit) => number(value).is_some_and(|number| number > *limit),

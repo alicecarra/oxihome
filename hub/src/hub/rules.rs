@@ -72,7 +72,22 @@ impl Hub {
             .collect()
         };
         for name in names {
-            self.holds.end(&name);
+            self.holds.end(&name, device_id);
+        }
+    }
+
+    /// Ends the waits of offline rules with `for` about the node, which is back.
+    pub fn end_offline_holds(&self, device_id: &str) {
+        let names: Vec<String> = self
+            .rules
+            .lock()
+            .unwrap()
+            .waiting_for_offline(device_id)
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        for name in names {
+            self.holds.end(&name, device_id);
         }
     }
 

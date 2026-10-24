@@ -53,7 +53,7 @@ pub(super) fn list(items: Vec<InlineTable>) -> Array {
     array
 }
 
-fn trigger_table(trigger: &TriggerDraft) -> Built<InlineTable> {
+fn trigger_table(trigger: &TriggerDraft, catalog: &Catalog) -> Built<InlineTable> {
     let mut table = InlineTable::new();
     match trigger.kind {
         TriggerKind::Event => {
@@ -66,12 +66,14 @@ fn trigger_table(trigger: &TriggerDraft) -> Built<InlineTable> {
         }
         TriggerKind::Threshold => {
             insert_channel(&mut table, &trigger.channel)?;
-            let limit = number(&trigger.limit, "the limit")?;
-            table.insert(trigger.direction.as_str(), limit.into());
-            let lasting = trigger.lasting.trim();
-            if !lasting.is_empty() {
-                table.insert("for", lasting.into());
+            if trigger.direction == "equals" {
+                let control = Control::for_condition(catalog.declared(&trigger.channel));
+                table.insert("equals", expected(&control, &trigger.limit)?);
+            } else {
+                let limit = number(&trigger.limit, "the limit")?;
+                table.insert(trigger.direction.as_str(), limit.into());
             }
+            insert_lasting(&mut table, &trigger.lasting);
         }
         TriggerKind::Schedule => {
             table.insert("at", required(&trigger.at, "choose the time")?.into());
@@ -88,6 +90,7 @@ fn trigger_table(trigger: &TriggerDraft) -> Built<InlineTable> {
                 "offline",
                 required(&trigger.device, "choose the node")?.into(),
             );
+            insert_lasting(&mut table, &trigger.lasting);
         }
         TriggerKind::Notice => {
             table.insert(
@@ -114,6 +117,13 @@ fn trigger_table(trigger: &TriggerDraft) -> Built<InlineTable> {
         }
     }
     Ok(table)
+}
+
+fn insert_lasting(table: &mut InlineTable, lasting: &str) {
+    let lasting = lasting.trim();
+    if !lasting.is_empty() {
+        table.insert("for", lasting.into());
+    }
 }
 
 fn condition_table(condition: &ConditionDraft, catalog: &Catalog) -> Built<InlineTable> {
@@ -219,7 +229,7 @@ pub(super) fn rule_table(draft: &Draft, catalog: &Catalog) -> Built<Table> {
     if !draft.enabled {
         table.insert("enabled", value(false));
     }
-    let when = trigger_table(&draft.trigger).map_err(|error| format!("When: {error}"))?;
+    let when = trigger_table(&draft.trigger, catalog).map_err(|error| format!("When: {error}"))?;
     table.insert("when", value(when));
     let cooldown = draft.cooldown.trim();
     if !cooldown.is_empty() && draft.trigger.kind != TriggerKind::Button {

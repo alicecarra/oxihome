@@ -222,13 +222,20 @@ pub fn on_clock_tick(hub: &Arc<Hub>, schedule: &mut Schedule) {
 fn on_node_event(hub: &Arc<Hub>, node_event: &NodeEvent) {
     println!("{node_event}");
     hub.notify_node_event(node_event);
-    if let NodeEvent::Offline(device_id) = node_event {
-        hub.end_holds(device_id, None);
-        let subject = Subject {
-            node: Some(hub.node_name(device_id)),
-            ..Subject::default()
-        };
-        spawn_rules(hub, hub.offline_rules(device_id), subject);
+    match node_event {
+        NodeEvent::Offline(device_id) => {
+            hub.end_holds(device_id, None);
+            let subject = Subject {
+                node: Some(hub.node_name(device_id)),
+                device_id: Some(device_id.clone()),
+                ..Subject::default()
+            };
+            spawn_rules(hub, hub.offline_rules(device_id), subject);
+        }
+        NodeEvent::Online(device_id) | NodeEvent::Registered { device_id, .. } => {
+            hub.end_offline_holds(device_id);
+        }
+        _ => {}
     }
 }
 
@@ -352,23 +359,60 @@ mod tests {
             "lasting",
             r#"
             [[rules]]
-            name = "Hot for a while"
-            when = { device = "sim-living-room", entity = 3, channel = 0, above = 28, for = "100ms" }
-            then = [{ notify = { title = "Hot", message = "" } }]
+            name = "Door open"
+            when = { device = "door", entity = 1, channel = 0, equals = true, for = "100ms" }
+            then = [{ notify = { title = "Open", message = "" } }]
             "#,
         )
         .await;
-        let rule = hub.rules().remove(0);
-        rules::run_triggered(hub.clone(), rule.clone(), Subject::default());
-        assert!(hub.holds().includes("Hot for a while"));
-        hub.end_holds("sim-living-room", None);
+        on_message(&hub, &hello("door"));
+        on_message(&hub, &state("door", true));
+        assert!(hub.holds().includes("Door open"));
+        on_message(&hub, &state("door", false));
+        assert!(!hub.holds().includes("Door open"));
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(titles_of(&hub).is_empty());
 
-        rules::run_triggered(hub.clone(), rule, Subject::default());
+        on_message(&hub, &state("door", true));
+        on_message(&hub, &state("door", true));
         tokio::time::sleep(Duration::from_millis(200)).await;
-        assert_eq!(titles_of(&hub), ["Hot"]);
-        assert!(!hub.holds().includes("Hot for a while"));
+        assert_eq!(titles_of(&hub), ["Open"]);
+        assert!(!hub.holds().includes("Door open"));
+
+        on_message(&hub, &state("door", false));
+        on_message(&hub, &state("door", true));
+        for node_event in hub.check_presence(Instant::now() + Duration::from_secs(3600)) {
+            on_node_event(&hub, &node_event);
+        }
+        assert!(!hub.holds().includes("Door open"), "offline ends the wait");
+    }
+
+    #[tokio::test]
+    async fn an_offline_rule_with_for_waits_for_each_node() {
+        let hub = Hub::for_tests(
+            "offline-lasting",
+            r#"
+            [[rules]]
+            name = "Offline a while"
+            when = { offline = "*", for = "100ms" }
+            then = [{ notify = { title = "{node}", message = "" } }]
+            "#,
+        )
+        .await;
+        let go_offline = || {
+            for node_event in hub.check_presence(Instant::now() + Duration::from_secs(3600)) {
+                on_node_event(&hub, &node_event);
+            }
+        };
+        on_message(&hub, &hello("tv"));
+        on_message(&hub, &hello("lamp"));
+        go_offline();
+        assert_eq!(hub.holds().pending().len(), 2);
+        on_message(&hub, &hello("tv"));
+        assert_eq!(hub.holds().pending().len(), 1, "the TV is back");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(titles_of(&hub).last().map(String::as_str), Some("lamp"));
+        assert!(!titles_of(&hub).contains(&"tv".to_string()));
     }
 
     #[tokio::test]

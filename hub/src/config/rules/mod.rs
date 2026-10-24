@@ -14,11 +14,12 @@ use serde::{Deserialize, Deserializer};
 pub use condition::{ChannelCondition, Condition, Expected, HomeState, ValueTest};
 pub use editing::{with_rule_enabled, with_rule_saved};
 pub use run::{
-    Action, Cooldowns, Holds, Running, Start, Subject, has_placeholders, run_triggered, start,
+    Action, Cooldowns, Holds, Pending, Running, Start, Subject, has_placeholders, run_triggered,
+    start,
 };
 pub use trigger::{
-    CronTrigger, Day, EventTrigger, Limit, NoticeTrigger, OfflineTrigger, ScheduleTrigger,
-    ThresholdTrigger, TrafficTrigger, Trigger,
+    CronTrigger, Day, EventTrigger, NoticeTrigger, OfflineTrigger, ScheduleTrigger, StateTrigger,
+    TrafficTrigger, Trigger,
 };
 
 use super::remotes::Remotes;
@@ -141,10 +142,10 @@ impl Rules {
                 Trigger::Event(trigger) if trigger.device == device_id => {
                     add(RuleRole::RunsOn, Some((trigger.entity, trigger.channel)));
                 }
-                Trigger::Threshold(trigger) if trigger.device == device_id => {
+                Trigger::State(trigger) if trigger.device == device_id => {
                     add(RuleRole::RunsOn, Some((trigger.entity, trigger.channel)));
                 }
-                Trigger::Offline(OfflineTrigger { device })
+                Trigger::Offline(OfflineTrigger { device, .. })
                 | Trigger::Traffic(TrafficTrigger { device, .. })
                     if device.as_deref().is_none_or(|device| device == device_id) =>
                 {
@@ -273,45 +274,55 @@ impl Rules {
             .iter()
             .filter(|rule| {
                 rule.enabled
-                    && matches!(&rule.when, Trigger::Threshold(trigger)
+                    && matches!(&rule.when, Trigger::State(trigger)
                         if trigger.device == update.device_id
                             && trigger.entity == update.entity
                             && trigger.channel == update.channel
-                            && trigger.limit.crossed(update.previous.as_ref(), &update.value))
+                            && trigger.test.crossed(update.previous.as_ref(), &update.value))
             })
             .collect()
     }
 
-    /// Threshold rules with `for` whose wait the update ends: a confirmed number back within the
-    /// limit.
+    /// Rules with `for` whose wait about the node the update ends: a confirmed value that fails
+    /// the test.
     pub fn released(&self, update: &ChannelUpdate) -> Vec<&str> {
         if update.confidence != Confidence::Confirmed {
             return Vec::new();
         }
-        let Some(value) = number(&update.value) else {
-            return Vec::new();
-        };
         self.rules
             .iter()
             .filter(|rule| {
-                matches!(&rule.when, Trigger::Threshold(trigger)
+                matches!(&rule.when, Trigger::State(trigger)
                     if trigger.lasting.is_some()
                         && trigger.device == update.device_id
                         && trigger.entity == update.entity
                         && trigger.channel == update.channel
-                        && !trigger.limit.passed(value))
+                        && !trigger.test.passes(&update.value))
             })
             .map(|rule| rule.name.as_str())
             .collect()
     }
 
-    /// Threshold rules with `for` on the node's channels; its going offline ends their wait.
+    /// Rules with `for` on the node's channels; its going offline ends their wait.
     pub fn waiting_on(&self, device_id: &str) -> Vec<&str> {
         self.rules
             .iter()
             .filter(|rule| {
-                matches!(&rule.when, Trigger::Threshold(trigger)
+                matches!(&rule.when, Trigger::State(trigger)
                     if trigger.lasting.is_some() && trigger.device == device_id)
+            })
+            .map(|rule| rule.name.as_str())
+            .collect()
+    }
+
+    /// Offline rules with `for` about the node; its coming back ends their wait.
+    pub fn waiting_for_offline(&self, device_id: &str) -> Vec<&str> {
+        self.rules
+            .iter()
+            .filter(|rule| {
+                matches!(&rule.when, Trigger::Offline(trigger)
+                    if trigger.lasting.is_some()
+                        && trigger.device.as_deref().is_none_or(|device| device == device_id))
             })
             .map(|rule| rule.name.as_str())
             .collect()
@@ -995,6 +1006,42 @@ mod tests {
         assert!(rules.released(&assumed).is_empty());
         assert_eq!(rules.waiting_on("sim-living-room"), ["Hot for a while"]);
         assert!(rules.waiting_on("board").is_empty());
+    }
+
+    #[test]
+    fn equals_starts_once_and_ends_on_another_confirmed_value() {
+        let rules: Rules = toml::from_str(
+            r#"
+            [[rules]]
+            name = "Door open"
+            when = { device = "sim-living-room", entity = 3, channel = 0, equals = true, for = "10m" }
+            then = []
+
+            [[rules]]
+            name = "TV offline"
+            when = { offline = "tv", for = "30m" }
+            then = []
+            "#,
+        )
+        .unwrap();
+        let open = |value: bool, previous: Option<bool>| {
+            reading(Value::Bool(value), previous.map(Value::Bool))
+        };
+        assert_eq!(
+            names(rules.crossed(&open(true, Some(false)))),
+            ["Door open"]
+        );
+        assert_eq!(names(rules.crossed(&open(true, None))), ["Door open"]);
+        assert!(rules.crossed(&open(true, Some(true))).is_empty());
+        assert!(rules.crossed(&open(false, Some(true))).is_empty());
+        assert_eq!(rules.released(&open(false, Some(true))), ["Door open"]);
+        assert!(rules.released(&open(true, Some(false))).is_empty());
+        let mut assumed = open(false, Some(true));
+        assumed.confidence = Confidence::Assumed;
+        assert!(rules.released(&assumed).is_empty());
+        assert_eq!(rules.waiting_for_offline("tv"), ["TV offline"]);
+        assert!(rules.waiting_for_offline("lamp").is_empty());
+        assert_eq!(names(rules.offline("tv")), ["TV offline"]);
     }
 
     const CONDITIONS: &str = r#"

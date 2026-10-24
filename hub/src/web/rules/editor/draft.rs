@@ -7,9 +7,7 @@ use jiff::civil::Time;
 use oxihome_protocol::EventKind;
 
 use super::catalog::{Catalog, Choice, ChoiceGroup, Control, ungrouped};
-use crate::config::rules::{
-    Action, Condition, Expected, Limit, Rule, TrafficTrigger, Trigger, ValueTest,
-};
+use crate::config::rules::{Action, Condition, Expected, Rule, TrafficTrigger, Trigger, ValueTest};
 use crate::traffic::AlertKind;
 
 pub(super) const DAYS: [(&str, &str); 7] = [
@@ -129,7 +127,7 @@ impl Kind for TriggerKind {
     fn label(self) -> &'static str {
         match self {
             Self::Event => "An event of a channel",
-            Self::Threshold => "A value crossing a limit",
+            Self::Threshold => "A channel value",
             Self::Schedule => "At a time of day",
             Self::Cron => "A cron expression",
             Self::Offline => "A node going offline",
@@ -242,10 +240,11 @@ pub(super) struct TriggerDraft {
     pub(super) channel: String,
     pub(super) event: String,
     pub(super) data: String,
-    /// `above` or `below`.
+    /// `equals`, `above` or `below`.
     pub(super) direction: String,
+    /// The value to equal, or the limit.
     pub(super) limit: String,
-    /// The `for` of a threshold; empty for none.
+    /// The `for` of a channel value or an offline node; empty for none.
     pub(super) lasting: String,
     pub(super) at: String,
     pub(super) days: Vec<String>,
@@ -316,6 +315,17 @@ fn day_key(day: crate::config::rules::Day) -> String {
     format!("{day:?}").to_lowercase()
 }
 
+/// The test's key and its value as the form writes it.
+fn test_texts(test: &ValueTest) -> (&'static str, String) {
+    match test {
+        ValueTest::Equals(Expected::Bool(expected)) => ("equals", expected.to_string()),
+        ValueTest::Equals(Expected::Number(expected)) => ("equals", expected.to_string()),
+        ValueTest::Equals(Expected::Text(expected)) => ("equals", expected.clone()),
+        ValueTest::Above(limit) => ("above", limit.to_string()),
+        ValueTest::Below(limit) => ("below", limit.to_string()),
+    }
+}
+
 fn duration_text(duration: SignedDuration) -> String {
     format!("{duration:#}")
 }
@@ -346,17 +356,13 @@ impl Draft {
                 trigger.event = event_key(event.event);
                 trigger.data = event.data.clone().unwrap_or_default();
             }
-            Trigger::Threshold(threshold) => {
+            Trigger::State(state) => {
                 trigger.kind = TriggerKind::Threshold;
-                trigger.channel =
-                    ChannelKey::text(&threshold.device, threshold.entity, threshold.channel);
-                let (direction, limit) = match threshold.limit {
-                    Limit::Above(limit) => ("above", limit),
-                    Limit::Below(limit) => ("below", limit),
-                };
+                trigger.channel = ChannelKey::text(&state.device, state.entity, state.channel);
+                let (direction, limit) = test_texts(&state.test);
                 trigger.direction = direction.into();
-                trigger.limit = limit.to_string();
-                trigger.lasting = threshold.lasting.map(duration_text).unwrap_or_default();
+                trigger.limit = limit;
+                trigger.lasting = state.lasting.map(duration_text).unwrap_or_default();
             }
             Trigger::Schedule(schedule) => {
                 trigger.kind = TriggerKind::Schedule;
@@ -370,6 +376,7 @@ impl Draft {
             Trigger::Offline(offline) => {
                 trigger.kind = TriggerKind::Offline;
                 trigger.device = offline.device.clone().unwrap_or_else(|| "*".into());
+                trigger.lasting = offline.lasting.map(duration_text).unwrap_or_default();
             }
             Trigger::Traffic(TrafficTrigger { kind, device }) => {
                 trigger.kind = TriggerKind::Traffic;
@@ -510,8 +517,21 @@ impl Draft {
         if self.trigger.kind == TriggerKind::Traffic && self.trigger.device.is_empty() {
             self.trigger.device = "*".into();
         }
-        if self.trigger.direction != "below" {
-            self.trigger.direction = "above".into();
+        let control = Control::for_condition(catalog.declared(&self.trigger.channel));
+        let trigger = &mut self.trigger;
+        if !["equals", "above", "below"].contains(&trigger.direction.as_str()) {
+            trigger.direction = if control.allows_limits() {
+                "above"
+            } else {
+                "equals"
+            }
+            .into();
+        }
+        if !control.allows_limits() {
+            trigger.direction = "equals".into();
+        }
+        if trigger.direction == "equals" {
+            control.settle(&mut trigger.limit);
         }
         for condition in &mut self.conditions {
             let control = Control::for_condition(catalog.declared(&condition.channel));
@@ -541,15 +561,7 @@ impl ConditionDraft {
             Condition::Channel(channel) => {
                 draft.kind = ConditionKind::Channel;
                 draft.channel = ChannelKey::text(&channel.device, channel.entity, channel.channel);
-                let (test, value) = match &channel.test {
-                    ValueTest::Equals(Expected::Bool(expected)) => ("equals", expected.to_string()),
-                    ValueTest::Equals(Expected::Number(expected)) => {
-                        ("equals", expected.to_string())
-                    }
-                    ValueTest::Equals(Expected::Text(expected)) => ("equals", expected.clone()),
-                    ValueTest::Above(limit) => ("above", limit.to_string()),
-                    ValueTest::Below(limit) => ("below", limit.to_string()),
-                };
+                let (test, value) = test_texts(&channel.test);
                 draft.test = test.into();
                 draft.value = value;
             }

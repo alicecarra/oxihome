@@ -297,6 +297,21 @@ mod tests {
         then = []
 
         [[rules]]
+        name = "Board offline a while"
+        when = { offline = "board", for = "30m" }
+        then = []
+
+        [[rules]]
+        name = "Door open"
+        when = { device = "board", entity = 7, channel = 0, equals = true, for = "10m" }
+        then = []
+
+        [[rules]]
+        name = "Mode auto"
+        when = { device = "board", entity = 2, channel = 0, equals = "auto" }
+        then = []
+
+        [[rules]]
         name = "Stopped"
         when = { stopped = "*" }
         then = []

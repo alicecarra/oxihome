@@ -11,9 +11,9 @@ use super::{
 };
 use crate::config::nodes::{NameTarget, Nodes};
 use crate::config::rules::{
-    Action, ChannelCondition, Condition, CronTrigger, Day, EventTrigger, Expected, Limit,
-    NoticeTrigger, OfflineTrigger, ScheduleTrigger, Subject, ThresholdTrigger, TrafficTrigger,
-    Trigger, ValueTest, has_placeholders,
+    Action, ChannelCondition, Condition, CronTrigger, Day, EventTrigger, Expected, NoticeTrigger,
+    OfflineTrigger, ScheduleTrigger, StateTrigger, Subject, TrafficTrigger, Trigger, ValueTest,
+    has_placeholders,
 };
 use crate::hub::Hub;
 use crate::node::events::EventRecord;
@@ -164,7 +164,7 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
 fn trigger_description(nodes: &Nodes, registry: &Registry, trigger: &Trigger) -> String {
     match trigger {
         Trigger::Event(trigger) => event_description(nodes, registry, trigger),
-        Trigger::Threshold(trigger) => threshold_description(nodes, registry, trigger),
+        Trigger::State(trigger) => state_description(nodes, registry, trigger),
         Trigger::Schedule(trigger) => schedule_description(trigger),
         Trigger::Cron(trigger) => cron_description(trigger),
         Trigger::Offline(trigger) => offline_description(nodes, trigger),
@@ -188,7 +188,7 @@ fn notice_description(nodes: &Nodes, trigger: &NoticeTrigger) -> String {
 }
 
 fn offline_description(nodes: &Nodes, trigger: &OfflineTrigger) -> String {
-    match &trigger.device {
+    let description = match &trigger.device {
         Some(device) => {
             let node = nodes
                 .name(&NameTarget::Node(device.clone()))
@@ -196,7 +196,15 @@ fn offline_description(nodes: &Nodes, trigger: &OfflineTrigger) -> String {
             format!("{node} goes offline")
         }
         None => "Any node goes offline".into(),
-    }
+    };
+    format!("{description}{}", lasting_description(trigger.lasting))
+}
+
+/// ` for 5m`, or nothing without `for`.
+fn lasting_description(lasting: Option<jiff::SignedDuration>) -> String {
+    lasting
+        .map(|lasting| format!(" for {lasting:#}"))
+        .unwrap_or_default()
 }
 
 fn capitalized(text: &str) -> String {
@@ -265,7 +273,7 @@ fn declared_channel<'a>(
 }
 
 /// `Living room › Climate sensor: above 28.0 °C`, with the unit the node declares.
-fn threshold_description(nodes: &Nodes, registry: &Registry, trigger: &ThresholdTrigger) -> String {
+fn state_description(nodes: &Nodes, registry: &Registry, trigger: &StateTrigger) -> String {
     let declared = declared_channel(registry, &trigger.device, trigger.entity, trigger.channel);
     let target = channel_description(
         nodes,
@@ -276,18 +284,16 @@ fn threshold_description(nodes: &Nodes, registry: &Registry, trigger: &Threshold
         declared.and_then(|channel| channel.quantity),
     );
     let unit = declared.and_then(|channel| channel.unit);
-    let (word, limit) = match trigger.limit {
-        Limit::Above(limit) => ("above", limit),
-        Limit::Below(limit) => ("below", limit),
+    let number = |number: f32| value_label(&Value::Float(number), unit);
+    let test = match &trigger.test {
+        ValueTest::Equals(Expected::Bool(true)) => "on".to_string(),
+        ValueTest::Equals(Expected::Bool(false)) => "off".to_string(),
+        ValueTest::Equals(Expected::Number(expected)) => number(*expected),
+        ValueTest::Equals(Expected::Text(expected)) => expected.clone(),
+        ValueTest::Above(limit) => format!("above {}", number(*limit)),
+        ValueTest::Below(limit) => format!("below {}", number(*limit)),
     };
-    let lasting = trigger
-        .lasting
-        .map(|lasting| format!(" for {lasting:#}"))
-        .unwrap_or_default();
-    format!(
-        "{target}: {word} {}{lasting}",
-        value_label(&Value::Float(limit), unit)
-    )
+    format!("{target}: {test}{}", lasting_description(trigger.lasting))
 }
 
 /// A condition with friendly names, as the rules page lists it.
@@ -576,7 +582,7 @@ mod tests {
     }
 
     #[test]
-    fn threshold_description_uses_the_declared_unit() {
+    fn state_description_uses_the_declared_unit() {
         let mut registry = Registry::new(3);
         let hello = oxihome_protocol::Message::new(
             "esp32-test",
@@ -599,15 +605,15 @@ mod tests {
             },
         );
         registry.handle(&hello, std::time::Instant::now());
-        let trigger = ThresholdTrigger {
+        let trigger = StateTrigger {
             device: "esp32-test".into(),
             entity: 3,
             channel: 1,
-            limit: Limit::Above(85.0),
+            test: ValueTest::Above(85.0),
             lasting: Some(jiff::SignedDuration::from_mins(5)),
         };
         assert_eq!(
-            threshold_description(&nodes(), &registry, &trigger),
+            state_description(&nodes(), &registry, &trigger),
             "Test board › entity 3 · Humidity: above 85.0 % for 5m"
         );
     }
@@ -731,14 +737,19 @@ mod tests {
         let nodes = nodes();
         let bedroom = OfflineTrigger {
             device: Some("esp32-test".into()),
+            lasting: None,
         };
         assert_eq!(
             offline_description(&nodes, &bedroom),
             "Test board goes offline"
         );
+        let any = OfflineTrigger {
+            device: None,
+            lasting: Some(jiff::SignedDuration::from_mins(30)),
+        };
         assert_eq!(
-            offline_description(&nodes, &OfflineTrigger { device: None }),
-            "Any node goes offline"
+            offline_description(&nodes, &any),
+            "Any node goes offline for 30m"
         );
         let invoke = Action::Invoke {
             device: "esp32-test".into(),

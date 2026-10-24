@@ -9,7 +9,7 @@ use serde::Deserialize;
 use tokio::task::JoinHandle;
 
 use super::{
-    Condition, EventTrigger, Limit, NoticeTrigger, OfflineTrigger, Rule, RuleRun, ThresholdTrigger,
+    Condition, EventTrigger, HomeState, NoticeTrigger, OfflineTrigger, Rule, RuleRun, StateTrigger,
     TrafficTrigger, Trigger,
 };
 use crate::hub::{CommandOrigin, Hub};
@@ -132,6 +132,8 @@ pub struct Subject {
     /// A notice's.
     pub title: Option<String>,
     pub message: Option<String>,
+    /// The node that went offline, for an offline rule with `for` to wait on.
+    pub device_id: Option<String>,
 }
 
 /// Friendly names and values for a subject; the hub in practice.
@@ -195,7 +197,7 @@ impl Subject {
             )
         };
         match trigger {
-            Trigger::Offline(OfflineTrigger { device }) => Self {
+            Trigger::Offline(OfflineTrigger { device, .. }) => Self {
                 node: node(device),
                 ..Self::default()
             },
@@ -224,16 +226,16 @@ impl Subject {
                 value: Some(data.clone().unwrap_or_else(|| "a value".into())),
                 ..Self::default()
             },
-            Trigger::Threshold(ThresholdTrigger {
+            Trigger::State(StateTrigger {
                 device,
                 entity,
                 channel,
-                limit: Limit::Above(limit) | Limit::Below(limit),
+                test,
                 ..
             }) => Self {
                 node: Some(names.node_name(device)),
                 channel: Some(names.channel_name(device, *entity, *channel)),
-                value: Some(names.value_label(device, *entity, *channel, &Value::Float(*limit))),
+                value: Some(names.value_label(device, *entity, *channel, &test.example())),
                 ..Self::default()
             },
             _ => Self::default(),
@@ -340,38 +342,70 @@ pub enum Start {
     Busy,
 }
 
-/// Starts a rule its trigger fired: a threshold with `for` waits first, and a rule with a
-/// `cooldown` does not start again that soon about the same node and channel.
+/// Starts a rule its trigger fired: one with `for` waits first, and a rule with a `cooldown`
+/// does not start again that soon about the same node and channel.
 pub fn run_triggered(hub: Arc<Hub>, rule: Rule, subject: Subject) {
-    match &rule.when {
-        Trigger::Threshold(ThresholdTrigger {
+    let wait = match &rule.when {
+        Trigger::State(StateTrigger {
+            device,
             lasting: Some(lasting),
             ..
-        }) => hold(hub, *lasting, rule, subject),
-        _ => start_unless_cooling_down(hub, rule, subject),
+        }) => Some((device.clone(), *lasting)),
+        Trigger::Offline(OfflineTrigger {
+            lasting: Some(lasting),
+            ..
+        }) => subject.device_id.clone().map(|device| (device, *lasting)),
+        _ => None,
+    };
+    match wait {
+        Some((device_id, lasting)) => hold(hub, lasting, rule, device_id, subject),
+        None => start_unless_cooling_down(hub, rule, subject),
     }
 }
 
-/// Runs the rule after `lasting` unless a value back within the limit, the node going offline,
-/// a new crossing or a change to the rule ends the wait first.
-fn hold(hub: Arc<Hub>, lasting: SignedDuration, rule: Rule, subject: Subject) {
-    let id = hub.holds().begin(&rule.name);
+/// Runs the rule after `lasting` unless what started the wait ends first (a value failing the
+/// test, the node going offline or coming back), a new start replaces it, or the rule changes.
+fn hold(hub: Arc<Hub>, lasting: SignedDuration, rule: Rule, device_id: String, subject: Subject) {
+    let deadline = Timestamp::now() + lasting;
+    let id = hub.holds().begin(&rule.name, &device_id, deadline);
     println!(
-        "rule \"{}\": runs if the value stays for {lasting:#}",
+        "rule \"{}\": runs if {device_id} stays so for {lasting:#}",
         rule.name
     );
     tokio::spawn(async move {
         tokio::time::sleep(lasting.unsigned_abs()).await;
-        if !hub.holds().finish(&rule.name, id) {
+        if !hub.holds().finish(&rule.name, &device_id, id) {
             return;
         }
         let current = hub.rules().into_iter().find(|current| {
             current.name == rule.name && current.enabled && current.when == rule.when
         });
-        if let Some(current) = current {
-            start_unless_cooling_down(hub, current, subject);
+        let Some(current) = current else {
+            return;
+        };
+        if !still_so(&current.when, &device_id, hub.as_ref()) {
+            println!(
+                "rule \"{}\": {device_id} is no longer so, not run",
+                current.name
+            );
+            return;
         }
+        start_unless_cooling_down(hub, current, subject);
     });
+}
+
+/// Whether what started the wait of a rule with `for` about the node still holds.
+pub(super) fn still_so(trigger: &Trigger, device_id: &str, home: &impl HomeState) -> bool {
+    match trigger {
+        Trigger::State(trigger) => {
+            home.is_online(device_id)
+                && home
+                    .value(device_id, trigger.entity, trigger.channel)
+                    .is_some_and(|value| trigger.test.passes(&value))
+        }
+        Trigger::Offline(_) => !home.is_online(device_id),
+        _ => false,
+    }
 }
 
 fn start_unless_cooling_down(hub: Arc<Hub>, rule: Rule, subject: Subject) {
@@ -449,44 +483,85 @@ impl RunKey {
     }
 }
 
-/// Threshold rules waiting out their `for`, by rule name; a new wait replaces the old one.
+/// Rules waiting out their `for`, by rule and node; a new wait replaces the old one.
 #[derive(Default)]
 pub struct Holds(Mutex<Waits>);
 
 #[derive(Default)]
 struct Waits {
     last_id: u64,
-    by_rule: HashMap<String, u64>,
+    by_key: HashMap<(String, String), Wait>,
+}
+
+struct Wait {
+    id: u64,
+    deadline: Timestamp,
+}
+
+/// A rule waiting out its `for` about a node.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pending {
+    pub rule: String,
+    pub device_id: String,
+    pub deadline: Timestamp,
 }
 
 impl Holds {
-    fn begin(&self, rule: &str) -> u64 {
+    fn begin(&self, rule: &str, device_id: &str, deadline: Timestamp) -> u64 {
         let mut waits = self.0.lock().unwrap();
         waits.last_id += 1;
         let id = waits.last_id;
-        waits.by_rule.insert(rule.to_string(), id);
+        waits.by_key.insert(
+            (rule.to_string(), device_id.to_string()),
+            Wait { id, deadline },
+        );
         id
     }
 
     /// Whether this wait was still on; it is over either way.
-    fn finish(&self, rule: &str, id: u64) -> bool {
+    fn finish(&self, rule: &str, device_id: &str, id: u64) -> bool {
         let mut waits = self.0.lock().unwrap();
-        let current = waits.by_rule.get(rule) == Some(&id);
+        let key = (rule.to_string(), device_id.to_string());
+        let current = waits.by_key.get(&key).is_some_and(|wait| wait.id == id);
         if current {
-            waits.by_rule.remove(rule);
+            waits.by_key.remove(&key);
         }
         current
     }
 
-    pub fn end(&self, rule: &str) {
-        if self.0.lock().unwrap().by_rule.remove(rule).is_some() {
-            println!("rule \"{rule}\": the value did not stay, not run");
+    pub fn end(&self, rule: &str, device_id: &str) {
+        let key = (rule.to_string(), device_id.to_string());
+        if self.0.lock().unwrap().by_key.remove(&key).is_some() {
+            println!("rule \"{rule}\": {device_id} did not stay so, not run");
         }
+    }
+
+    /// Every wait, soonest first.
+    pub fn pending(&self) -> Vec<Pending> {
+        let mut pending: Vec<Pending> = self
+            .0
+            .lock()
+            .unwrap()
+            .by_key
+            .iter()
+            .map(|((rule, device_id), wait)| Pending {
+                rule: rule.clone(),
+                device_id: device_id.clone(),
+                deadline: wait.deadline,
+            })
+            .collect();
+        pending.sort_by_key(|wait| wait.deadline);
+        pending
     }
 
     #[cfg(test)]
     pub fn includes(&self, rule: &str) -> bool {
-        self.0.lock().unwrap().by_rule.contains_key(rule)
+        self.0
+            .lock()
+            .unwrap()
+            .by_key
+            .keys()
+            .any(|(waiting, _)| waiting == rule)
     }
 }
 

@@ -31,7 +31,6 @@ pub(super) struct ChannelChoice {
 #[derive(Clone, Copy)]
 pub(super) enum Purpose {
     Event,
-    Threshold,
     Condition,
     Switch,
     Invoke,
@@ -42,13 +41,6 @@ impl Purpose {
         let readable = matches!(channel.access, Access::Read | Access::ReadWrite);
         match self {
             Purpose::Event => channel.access == Access::Event,
-            Purpose::Threshold => {
-                readable
-                    && matches!(
-                        channel.value,
-                        Some(ValueType::Int { .. } | ValueType::Float { .. })
-                    )
-            }
             Purpose::Condition => readable && channel.value.is_some(),
             Purpose::Switch => {
                 channel.value == Some(ValueType::Bool)

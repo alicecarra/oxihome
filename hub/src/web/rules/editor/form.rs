@@ -343,8 +343,19 @@ async fn trigger_fields(
 ) -> Result<impl View> {
     let now = catalog.now(&trigger.channel);
     let purpose = match trigger.kind {
-        TriggerKind::Threshold => Purpose::Threshold,
+        TriggerKind::Threshold => Purpose::Condition,
         _ => Purpose::Event,
+    };
+    let control = Control::for_condition(catalog.declared(&trigger.channel));
+    let mut tests = vec![Choice::new("equals", "is")];
+    if control.allows_limits() {
+        tests.push(Choice::new("above", "rises above"));
+        tests.push(Choice::new("below", "falls below"));
+    }
+    let shown_control = if trigger.direction == "equals" {
+        control
+    } else {
+        Control::Number
     };
     let channels = catalog.channel_groups(purpose, &trigger.channel);
     let events = ungrouped(
@@ -353,10 +364,6 @@ async fn trigger_fields(
             .map(|event| Choice::new(&event_key(*event), event_label(*event)))
             .collect(),
     );
-    let directions = ungrouped(vec![
-        Choice::new("above", "rises above"),
-        Choice::new("below", "falls below"),
-    ]);
     let nodes = catalog.node_groups(&trigger.device, true);
     let alerts = ungrouped(
         ALERTS
@@ -393,10 +400,10 @@ async fn trigger_fields(
                     )
                     <div class="flex gap-4">
                         form_field(title: "When the value", name: "trigger.direction".to_string(),
-                            choice_select(name: "trigger.direction".to_string(), chosen: trigger.direction, groups: directions)
+                            choice_select(name: "trigger.direction".to_string(), chosen: trigger.direction, groups: ungrouped(tests))
                         )
-                        form_field(title: "Limit", name: "trigger.limit".to_string(),
-                            text_input(name: "trigger.limit".to_string(), text: trigger.limit, kind: Some("number"), placeholder: Some("e.g. 28"))
+                        form_field(title: "Value", name: "trigger.limit".to_string(),
+                            value_control(name: "trigger.limit".to_string(), text: trigger.limit, control: shown_control)
                         )
                     </div>
                     if let Some(now) = now {
@@ -405,7 +412,7 @@ async fn trigger_fields(
                     form_field(title: "For (optional)", name: "trigger.lasting".to_string(),
                         text_input(name: "trigger.lasting".to_string(), text: trigger.lasting, placeholder: Some("e.g. 5m"))
                     )
-                    <p class="text-sm text-muted-foreground">"Runs once when the value crosses the limit, not again while it stays past it. With For, only if it stays past the limit that long (at most 24 hours)."</p>
+                    <p class="text-sm text-muted-foreground">"Runs once when the value starts passing, not again while it keeps passing. With For, only if it keeps passing that long (at most 24 hours), even across a restart of the hub."</p>
                 },
                 TriggerKind::Schedule => {
                     form_field(title: "Time", name: "trigger.at".to_string(),
@@ -429,6 +436,10 @@ async fn trigger_fields(
                     form_field(title: "Node", name: "trigger.device".to_string(),
                         choice_select(name: "trigger.device".to_string(), chosen: trigger.device, groups: nodes, placeholder: Some("Choose a node…"))
                     )
+                    form_field(title: "For (optional)", name: "trigger.lasting".to_string(),
+                        text_input(name: "trigger.lasting".to_string(), text: trigger.lasting, placeholder: Some("e.g. 30m"))
+                    )
+                    <p class="text-sm text-muted-foreground">"With For, runs only if the node stays offline that long (at most 24 hours)."</p>
                 },
                 TriggerKind::Notice => {
                     form_field(title: "Node", name: "trigger.device".to_string(),
