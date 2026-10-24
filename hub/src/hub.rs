@@ -32,6 +32,7 @@ use crate::web::format::value_label;
 mod config_files;
 mod control;
 mod hardware;
+mod references;
 mod rules;
 mod updates;
 
@@ -145,6 +146,8 @@ pub struct Hub {
     other_protocols: Mutex<HashSet<(String, u8)>>,
     /// When each node's last update ended; the reboot it brings is not notified.
     updates_finished: Mutex<HashMap<String, Instant>>,
+    /// What the config names of each node that its last `Hello` did not declare, as last notified.
+    missing_references: Mutex<HashMap<String, Vec<String>>>,
     /// Scheduled rules run in this zone's local time.
     time_zone: TimeZone,
     changes: broadcast::Sender<Change>,
@@ -230,6 +233,7 @@ impl Hub {
             ota,
             other_protocols: Mutex::default(),
             updates_finished: Mutex::default(),
+            missing_references: Mutex::default(),
             time_zone,
             changes: broadcast::channel(64).0,
             shutting_down: watch::channel(false).0,

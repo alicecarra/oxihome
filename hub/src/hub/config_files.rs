@@ -127,6 +127,7 @@ impl Hub {
         crate::config::rules::rearm(self.clone(), before.all());
         self.announce(Change::Config);
         self.announce(Change::Nodes);
+        self.check_all_references();
         for device_id in self.device_ids() {
             tokio::spawn(parameters::apply(self.clone(), device_id.clone()));
             tokio::spawn(hardware::apply(self.clone(), device_id));

@@ -60,6 +60,61 @@ fn cooldown<'de, D: Deserializer<'de>>(
     Ok(Some(duration))
 }
 
+impl Rule {
+    /// The channels it runs on, checks or acts on, as `(device, entity, channel)`.
+    pub fn channels(&self) -> Vec<(&str, u8, u8)> {
+        let mut channels = Vec::new();
+        match &self.when {
+            Trigger::Event(EventTrigger {
+                device,
+                entity,
+                channel,
+                ..
+            })
+            | Trigger::State(StateTrigger {
+                device,
+                entity,
+                channel,
+                ..
+            }) => channels.push((device.as_str(), *entity, *channel)),
+            _ => {}
+        }
+        for condition in &self.conditions {
+            if let Condition::Channel(condition) = condition {
+                channels.push((
+                    condition.device.as_str(),
+                    condition.entity,
+                    condition.channel,
+                ));
+            }
+        }
+        for action in &self.then {
+            if let Action::Set {
+                device,
+                entity,
+                channel,
+                ..
+            }
+            | Action::Toggle {
+                device,
+                entity,
+                channel,
+            }
+            | Action::Invoke {
+                device,
+                entity,
+                channel,
+                ..
+            } = action
+            {
+                channels.push((device.as_str(), *entity, *channel));
+            }
+        }
+        channels.dedup();
+        channels
+    }
+}
+
 /// How a rule involves a node: it runs on something from it, or acts on it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RuleUse {

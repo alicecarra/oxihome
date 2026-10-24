@@ -122,6 +122,8 @@ pub struct RuleOverview {
     /// When it runs if what it waits on with `for` stays so, soonest first, with the node for a
     /// rule about any node.
     pub waiting: Vec<String>,
+    /// The channels it uses that their node, as last heard, does not declare.
+    pub missing: Vec<String>,
 }
 
 /// What the dashboard's `rules` block lists.

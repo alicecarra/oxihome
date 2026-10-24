@@ -174,6 +174,23 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
                     }
                 })
                 .collect(),
+            missing: rule
+                .channels()
+                .into_iter()
+                .filter(|(device, entity, channel)| {
+                    snapshot
+                        .registry
+                        .node(device)
+                        .is_some_and(|node| node.channel(*entity, *channel).is_none())
+                })
+                .map(|(device, entity, channel)| {
+                    let node = snapshot
+                        .nodes
+                        .name(&NameTarget::Node(device.to_string()))
+                        .unwrap_or(device);
+                    format!("{node} no longer declares {entity}/{channel}")
+                })
+                .collect(),
             name: rule.name,
             enabled: rule.enabled,
         })
@@ -513,6 +530,36 @@ mod tests {
         assert_eq!(
             receiver.recv_timeout(std::time::Duration::from_secs(5)),
             Ok(1)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rule_shows_the_channels_its_node_no_longer_declares() {
+        let hub = Hub::for_tests(
+            "overview-missing",
+            r#"
+            [[rules]]
+            name = "Updated"
+            when = { device = "weather", entity = 3, channel = 0, above = 0 }
+            if = [{ device = "unknown", entity = 1, channel = 0, above = 0 }]
+            then = []
+            "#,
+        )
+        .await;
+        let hello = oxihome_protocol::Message::new(
+            "weather",
+            0,
+            oxihome_protocol::Payload::Hello {
+                build: oxihome_protocol::Build::new("weather", "0.4.2", "linux"),
+                ip: None,
+                entities: Vec::new(),
+            },
+        );
+        hub.handle(&hello, std::time::Instant::now());
+        assert_eq!(
+            rules(&hub)[0].missing,
+            ["weather no longer declares 3/0"],
+            "a node never heard is left out"
         );
     }
 

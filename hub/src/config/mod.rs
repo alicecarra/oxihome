@@ -1,5 +1,6 @@
 pub mod dashboard;
 pub mod nodes;
+pub mod references;
 pub mod remotes;
 pub mod rules;
 pub mod watch;

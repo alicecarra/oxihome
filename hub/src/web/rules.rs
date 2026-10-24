@@ -202,6 +202,9 @@ async fn rule_card(rule: RuleOverview) -> Result<impl View> {
                 for error in errors {
                     <p class="mt-3 text-sm text-destructive">(error)</p>
                 }
+                for missing in rule.missing {
+                    <p class="mt-3 text-sm text-destructive">(missing)</p>
+                }
                 <div class="mt-3 flex gap-4 text-sm font-medium">
                     <a href=(format!("/rules/edit?name={}", query_value(&rule.name))) class="hover:underline">"Edit"</a>
                     <a href=(format!("/rules/new?copy={}", query_value(&rule.name))) class="hover:underline">"Duplicate"</a>

@@ -419,6 +419,14 @@ Saving is refused if the file changed on disk since the page was loaded. After e
 editor instead, press **Reload config from disk**; a file with an error is reported there and the
 previous configuration stays in use.
 
+After each `Hello` and each configuration change, the hub checks that every rule, dashboard block
+and name in `nodes.toml` points at an entity and channel the node declares. When something the
+config uses is gone (a node update dropped or moved it), a notification says what and where
+(`weather: the config uses channels it no longer has`, `rule "Clock": 3/0`), once until the list
+changes, and the rule's card on `/rules` says it in red. Nodes never heard from are not checked.
+When the config is fixed, a newer notification replaces the warning. Entity and channel ids are
+never reused: a node that drops one leaves the id unused.
+
 - `nodes.toml`: each node by the id from its `Hello`, with its friendly names (node, entities,
   channels) and its desired operation parameters in seconds. A node may name its entities and
   channels in its `Hello`; a name here wins over the node's, so only names the node does not give,

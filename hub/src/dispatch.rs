@@ -49,6 +49,7 @@ pub fn on_message(hub: &Arc<Hub>, message: &Message) {
         Payload::Hello { build, .. } => {
             hub.settle_update(&message.src, &build.version);
             hub.hardware_restarted(&message.src);
+            hub.check_references(&message.src);
         }
         Payload::Error { code, detail } if message.reply_to.is_none() => {
             if let Some(failure) = update_failure(*code, detail.as_deref()) {
@@ -517,6 +518,60 @@ mod tests {
         assert_eq!(titles_of(&hub), ["A", "B", "A"]);
     }
 
+    #[tokio::test]
+    async fn the_config_naming_a_channel_the_node_dropped_is_notified_once() {
+        let rule = |entity: u8| {
+            format!(
+                "[[rules]]\nname = \"Updated\"\nwhen = {{ device = \"weather\", entity = {entity}, channel = 0, above = 0 }}\nthen = []\n"
+            )
+        };
+        let hub = Hub::for_tests("missing-references", &rule(3)).await;
+        let titles = || -> Vec<String> {
+            hub.notifications_since(0)
+                .into_iter()
+                .map(|notification| notification.title)
+                .collect()
+        };
+        let mut weather = hello("weather");
+        if let Payload::Hello { entities, .. } = &mut weather.payload {
+            entities.push(oxihome_protocol::EntityDescriptor {
+                id: 4,
+                name: None,
+                channels: vec![oxihome_protocol::Channel {
+                    id: 0,
+                    name: None,
+                    access: oxihome_protocol::Access::Read,
+                    value: Some(oxihome_protocol::ValueType::Bool),
+                    quantity: None,
+                    unit: None,
+                }],
+            });
+        }
+
+        on_message(&hub, &weather);
+        on_message(&hub, &weather);
+        assert_eq!(
+            titles(),
+            ["weather: the config uses channels it no longer has"]
+        );
+        assert_eq!(
+            hub.notifications_since(0)[0].message,
+            "rule \"Updated\": 3/0"
+        );
+
+        std::fs::write(hub.config_directory().join("rules.toml"), rule(4)).unwrap();
+        on_config_changed(&hub);
+        assert_eq!(
+            titles(),
+            [
+                "weather: the config uses only channels it has",
+                "Config reloaded from disk",
+            ],
+            "the newer toast replaces the warning"
+        );
+    }
+
+    /// Declares the switch the tests' rules use, entity 1 channel 0.
     fn hello(device_id: &str) -> Message {
         Message::new(
             device_id,
@@ -524,7 +579,18 @@ mod tests {
             Payload::Hello {
                 build: Build::new("firmware", "0.9.0", "esp32"),
                 ip: None,
-                entities: Vec::new(),
+                entities: vec![oxihome_protocol::EntityDescriptor {
+                    id: 1,
+                    name: None,
+                    channels: vec![oxihome_protocol::Channel {
+                        id: 0,
+                        name: None,
+                        access: oxihome_protocol::Access::ReadWrite,
+                        value: Some(oxihome_protocol::ValueType::Bool),
+                        quantity: None,
+                        unit: None,
+                    }],
+                }],
             },
         )
     }
