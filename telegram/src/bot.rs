@@ -1,4 +1,4 @@
-//! The Telegram side: long polling for commands and the queue of outgoing messages.
+//! The Telegram side: long polling for commands and reactions, and the queue of outgoing messages.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -9,7 +9,8 @@ use teloxide_core::RequestError;
 use teloxide_core::payloads::{GetUpdatesSetters, SendMessageSetters, SetMessageReactionSetters};
 use teloxide_core::prelude::*;
 use teloxide_core::types::{
-    AllowedUpdate, BotCommand, ChatId, Message, ReactionType, UpdateKind, UserId,
+    AllowedUpdate, BotCommand, ChatId, Message, MessageReactionUpdated, ReactionType, UpdateKind,
+    UserId,
 };
 use tokio::sync::mpsc;
 
@@ -53,6 +54,8 @@ impl Command {
 
 pub struct Settings {
     pub users: Vec<UserId>,
+    /// Where messages go; reactions count only there.
+    pub chat: ChatId,
     pub max_age: Duration,
     pub commands: Vec<Command>,
 }
@@ -79,7 +82,7 @@ pub async fn poll(bot: Bot, settings: Settings, handle: Handle<TelegramNode>) {
             .get_updates()
             .offset(offset)
             .timeout(POLL_TIMEOUT_S)
-            .allowed_updates([AllowedUpdate::Message])
+            .allowed_updates([AllowedUpdate::Message, AllowedUpdate::MessageReaction])
             .await;
         let now_reachable = result.is_ok();
         if reachable != Some(now_reachable) {
@@ -92,9 +95,16 @@ pub async fn poll(bot: Bot, settings: Settings, handle: Handle<TelegramNode>) {
             Ok(updates) => {
                 for update in updates {
                     offset = update.id.0 as i32 + 1;
-                    if let UpdateKind::Message(message) = update.kind
-                        && !answer(&bot, &settings, &handle, &mut limiter, &message).await
-                    {
+                    let running = match update.kind {
+                        UpdateKind::Message(message) => {
+                            answer(&bot, &settings, &handle, &mut limiter, &message).await
+                        }
+                        UpdateKind::MessageReaction(reaction) => {
+                            react(&bot, &settings, &handle, &mut limiter, &reaction).await
+                        }
+                        _ => true,
+                    };
+                    if !running {
                         return;
                     }
                 }
@@ -181,6 +191,38 @@ async fn answer(
     true
 }
 
+/// A reaction added by an allowed user to a message the bot sent. `false` when the node stopped.
+async fn react(
+    bot: &Bot,
+    settings: &Settings,
+    handle: &Handle<TelegramNode>,
+    limiter: &mut RateLimiter,
+    reaction: &MessageReactionUpdated,
+) -> bool {
+    let added = reaction
+        .new_reaction
+        .iter()
+        .any(|new| !reaction.old_reaction.contains(new));
+    let allowed = reaction
+        .user()
+        .is_some_and(|user| settings.users.contains(&user.id));
+    if reaction.chat.id != settings.chat || !added || !allowed {
+        return true;
+    }
+    if !limiter.allow(Instant::now()) {
+        return true;
+    }
+    if !handle.is_connected() {
+        let text = "No connection to the house, reaction not delivered.";
+        if let Err(error) = bot.send_message(settings.chat, text).await {
+            println!("replying failed: {error}");
+        }
+        return true;
+    }
+    let message_id = reaction.message_id.0;
+    handle.act(move |node| node.reacted(message_id)).await
+}
+
 /// `/receiver` or, in groups, `/receiver@the_bot`, with anything after it ignored.
 fn command_name(text: &str) -> Option<&str> {
     let word = text.strip_prefix('/')?.split_whitespace().next()?;
@@ -236,7 +278,13 @@ pub async fn send(
                 .disable_notification(message.silent)
                 .await;
             let error = match result {
-                Ok(_) => break,
+                Ok(sent) => {
+                    let text = message.text;
+                    if !handle.act(move |node| node.sent(sent.id.0, text)).await {
+                        return;
+                    }
+                    break;
+                }
                 Err(error) => error,
             };
             println!("sending failed: {error}");

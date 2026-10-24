@@ -1,5 +1,5 @@
 //! A software node that links the house to a Telegram chat: rules send messages to it, and the
-//! commands typed there become events.
+//! commands typed there and the reactions to its messages become events.
 
 mod bot;
 mod node;
@@ -85,6 +85,7 @@ async fn main() -> anyhow::Result<()> {
     ));
     let settings = bot::Settings {
         users: config.telegram.users.into_iter().map(UserId).collect(),
+        chat: ChatId(config.telegram.chat),
         max_age: Duration::from_secs(config.telegram.max_age.unwrap_or(DEFAULT_MAX_AGE_S)),
         commands: config.commands,
     };

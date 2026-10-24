@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::time::Instant;
 
 use oxihome_node::mqtt::SoftwareNode;
@@ -11,10 +12,13 @@ use tokio::sync::mpsc;
 const MESSAGE_ENTITY: u8 = 1;
 const COMMAND_ENTITY: u8 = 2;
 const CONNECTION_ENTITY: u8 = 3;
+const REACTION_ENTITY: u8 = 4;
 const SILENT_CHANNEL: u8 = 1;
 /// Telegram's own limit, in characters; bytes are never fewer.
 const MESSAGE_MAX_LENGTH: u16 = 4096;
 const ERROR_MAX_LENGTH: u16 = 256;
+/// Sent messages whose reactions become events; older ones are forgotten.
+const SENT_REMEMBERED: usize = 100;
 
 /// A message for the default chat, waiting to be sent.
 pub struct Outgoing {
@@ -35,6 +39,8 @@ struct TelegramDevice {
     /// `None` until the first answer or failure of `getUpdates`.
     reachable: Option<bool>,
     last_error: String,
+    /// Telegram message id and text, oldest first.
+    sent: VecDeque<(i32, String)>,
 }
 
 impl TelegramNode {
@@ -49,6 +55,7 @@ impl TelegramNode {
                 outgoing,
                 reachable: None,
                 last_error: String::new(),
+                sent: VecDeque::new(),
             },
             started_at: Instant::now(),
         }
@@ -60,6 +67,29 @@ impl TelegramNode {
             0,
             EventKind::Received,
             Some(Value::Enum(command)),
+        )]
+    }
+
+    pub fn sent(&mut self, message_id: i32, text: String) -> Vec<Message> {
+        if self.device.sent.len() == SENT_REMEMBERED {
+            self.device.sent.pop_front();
+        }
+        self.device.sent.push_back((message_id, text));
+        Vec::new()
+    }
+
+    /// The text of the reacted message as an event; nothing for a message it no longer remembers.
+    pub fn reacted(&mut self, message_id: i32) -> Vec<Message> {
+        let Some((_, text)) = self.device.sent.iter().find(|(id, _)| *id == message_id) else {
+            println!("a reaction to message {message_id}, which is not among the last sent");
+            return Vec::new();
+        };
+        let text = truncate(text.clone(), MESSAGE_MAX_LENGTH as usize);
+        vec![self.core.event(
+            REACTION_ENTITY,
+            0,
+            EventKind::Received,
+            Some(Value::Text(text)),
         )]
     }
 
@@ -173,6 +203,24 @@ impl Device for TelegramDevice {
                 ],
             }
             .named("Connection"),
+            EntityDescriptor {
+                id: REACTION_ENTITY,
+                name: None,
+                channels: vec![
+                    Channel {
+                        id: 0,
+                        name: None,
+                        access: Access::Event,
+                        value: Some(ValueType::Text {
+                            max_length: MESSAGE_MAX_LENGTH,
+                        }),
+                        quantity: None,
+                        unit: None,
+                    }
+                    .named("Reacted message"),
+                ],
+            }
+            .named("Reaction"),
         ]
     }
 
@@ -294,6 +342,30 @@ mod tests {
             Payload::Event { entity: COMMAND_ENTITY, event: EventKind::Received, data: Some(Value::Enum(command)), .. }
                 if command == "receiver"
         ));
+    }
+
+    #[test]
+    fn a_reaction_to_a_sent_message_is_an_event_with_its_text() {
+        let (mut node, _receiver) = node(1);
+        assert!(node.sent(7, "⏰ Morning medicine".into()).is_empty());
+        let messages = node.reacted(7);
+        assert!(matches!(
+            &messages[0].payload,
+            Payload::Event { entity: REACTION_ENTITY, event: EventKind::Received, data: Some(Value::Text(text)), .. }
+                if text == "⏰ Morning medicine"
+        ));
+        assert!(node.reacted(8).is_empty());
+    }
+
+    #[test]
+    fn only_the_last_sent_messages_are_remembered() {
+        let (mut node, _receiver) = node(1);
+        for id in 0..=SENT_REMEMBERED as i32 {
+            node.sent(id, format!("message {id}"));
+        }
+        assert!(node.reacted(0).is_empty());
+        assert_eq!(node.reacted(1).len(), 1);
+        assert_eq!(node.reacted(SENT_REMEMBERED as i32).len(), 1);
     }
 
     #[test]
