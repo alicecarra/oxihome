@@ -809,10 +809,12 @@ Entities, all read only:
 |---|---|
 | 1 Now | 0 temperature °C, 1 humidity %, 2 precipitation mm over the last 15 minutes, 3 wind km/h, 4 raining `Bool` (drizzle, rain, showers or thunderstorm in the WMO weather code), 5 feels like °C, 6 gusts km/h, 7 condition `Text` ("Partly cloudy"), 8 daytime `Bool` (between sunrise and sunset; flips on time, between fetches) |
 | 2 Today | 0 maximum °C, 1 minimum °C, 2 chance of rain %, 3 condition `Text`, 4 UV index, 5 sunrise and 6 sunset (`UnixTime`) |
-| 3 Updated | 0 local time of the last reading, `Text` |
-| 4 Connection | 0 reachable `Bool`, 1 data age (s) |
+| 4 Connection | 0 reachable `Bool`, 1 data age (s), 2 updated at: when Open-Meteo observed the current values (`UnixTime`) |
 | 5 Next hour | 0 precipitation mm forecast, 1 chance of rain %, 2 rain expected `Bool` (at least 0.1 mm) |
 | 6 Tomorrow | as Today |
+
+Entity 3 (`Updated`, the local time of the last reading as `Text`) went away in 0.4.2: its time is
+now `Updated at` in Connection. Its id stays unused.
 
 Rules use them like any sensor, with `above`/`below` limits (e.g. precipitation above 0 to say it
 started raining) or `equals` on the flags (daytime equals false to turn a light on at sunset, rain

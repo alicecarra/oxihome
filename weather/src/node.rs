@@ -11,14 +11,13 @@ use crate::open_meteo::{Day, Weather, condition_label, is_rain};
 
 const NOW_ENTITY: u8 = 1;
 const TODAY_ENTITY: u8 = 2;
-const UPDATED_ENTITY: u8 = 3;
+// 3 was `Updated` until 0.4.2; ids are not reused.
 const CONNECTION_ENTITY: u8 = 4;
 const NEXT_HOUR_ENTITY: u8 = 5;
 const TOMORROW_ENTITY: u8 = 6;
-const ENTITIES: [u8; 6] = [
+const ENTITIES: [u8; 5] = [
     NOW_ENTITY,
     TODAY_ENTITY,
-    UPDATED_ENTITY,
     CONNECTION_ENTITY,
     NEXT_HOUR_ENTITY,
     TOMORROW_ENTITY,
@@ -160,7 +159,6 @@ impl Device for WeatherDevice {
             )
             .named("Now"),
             entity(TODAY_ENTITY, day_channels()).named("Today"),
-            entity(UPDATED_ENTITY, vec![text(0).named("At")]).named("Updated"),
             entity(
                 CONNECTION_ENTITY,
                 vec![
@@ -175,6 +173,7 @@ impl Device for WeatherDevice {
                         ..flag(1)
                     }
                     .named("Data age"),
+                    moment(2).named("Updated at"),
                 ],
             )
             .named("Connection"),
@@ -201,6 +200,9 @@ impl Device for WeatherDevice {
                 let seconds = i32::try_from(age.as_secs()).unwrap_or(i32::MAX);
                 values.push(confirmed(1, Value::Int(seconds)));
             }
+            if let Some(weather) = &self.weather {
+                values.push(moment_value(2, weather.observed_at));
+            }
             return (!values.is_empty()).then_some(values);
         }
         let weather = self.weather.as_ref()?;
@@ -217,7 +219,6 @@ impl Device for WeatherDevice {
                 confirmed(8, Value::Bool(self.daytime)),
             ],
             TODAY_ENTITY => day_values(weather.days.first()?),
-            UPDATED_ENTITY => vec![confirmed(0, Value::Text(weather.updated_at.clone()))],
             NEXT_HOUR_ENTITY => vec![
                 float(0, weather.next_hour.precipitation),
                 float(1, weather.next_hour.chance_of_rain),
@@ -261,17 +262,14 @@ fn day_channels() -> Vec<Channel> {
 }
 
 fn day_values(day: &Day) -> Vec<ChannelValue> {
-    let moment = |channel, unix: i64| {
-        confirmed(channel, Value::Int(i32::try_from(unix).unwrap_or(i32::MAX)))
-    };
     vec![
         float(0, day.maximum),
         float(1, day.minimum),
         float(2, day.chance_of_rain),
         confirmed(3, Value::Text(condition_label(day.condition))),
         float(4, day.uv_index),
-        moment(5, day.sunrise),
-        moment(6, day.sunset),
+        moment_value(5, day.sunrise),
+        moment_value(6, day.sunset),
     ]
 }
 
@@ -334,6 +332,10 @@ fn moment(id: u8) -> Channel {
         unit: Some(Unit::UnixTime),
         ..flag(id)
     }
+}
+
+fn moment_value(channel: u8, unix: i64) -> ChannelValue {
+    confirmed(channel, Value::Int(i32::try_from(unix).unwrap_or(i32::MAX)))
 }
 
 fn float(channel: u8, value: f32) -> ChannelValue {
@@ -432,10 +434,10 @@ mod tests {
         assert!(node.update(weather(3), start, SUNRISE).is_empty());
 
         let mut drizzle = weather(51);
-        drizzle.updated_at = "2026-10-24 04:52".into();
+        drizzle.observed_at += 15 * 60;
         assert_eq!(
             entities(&node.update(drizzle, start, SUNRISE)),
-            [NOW_ENTITY, UPDATED_ENTITY]
+            [NOW_ENTITY, CONNECTION_ENTITY]
         );
         assert_eq!(
             node.device.state(NOW_ENTITY).unwrap()[4].value,
@@ -475,7 +477,11 @@ mod tests {
         node.update(weather(3), start, SUNRISE);
         assert_eq!(
             connection(&node),
-            vec![confirmed(0, Value::Bool(true)), confirmed(1, Value::Int(0))]
+            vec![
+                confirmed(0, Value::Bool(true)),
+                confirmed(1, Value::Int(0)),
+                moment_value(2, SUNRISE - 3600)
+            ]
         );
 
         let minutes = |minutes: u64| start + Duration::from_secs(minutes * 60);
@@ -487,7 +493,8 @@ mod tests {
             connection(&node),
             vec![
                 confirmed(0, Value::Bool(false)),
-                confirmed(1, Value::Int(1800))
+                confirmed(1, Value::Int(1800)),
+                moment_value(2, SUNRISE - 3600)
             ]
         );
         assert_eq!(
@@ -535,13 +542,13 @@ mod tests {
             2,
             Payload::Query {
                 what: QueryKind::State {
-                    entity: Some(UPDATED_ENTITY),
+                    entity: Some(CONNECTION_ENTITY),
                 },
             },
         );
         assert!(matches!(
             &node.handle(&query)[0].payload,
-            Payload::State { values, .. } if values[0].value == Value::Text("2026-10-24 04:37".into())
+            Payload::State { values, .. } if values[2] == moment_value(2, SUNRISE - 3600)
         ));
     }
 }
