@@ -13,8 +13,8 @@ const NOW_ENTITY: u8 = 1;
 const TODAY_ENTITY: u8 = 2;
 const UPDATED_ENTITY: u8 = 3;
 const CONNECTION_ENTITY: u8 = 4;
-/// Fetches in a row that fail before Open-Meteo counts as unreachable (30 min at one per 10 min).
-const FAILURES_UNTIL_UNREACHABLE: u32 = 3;
+/// How long fetches fail, since the last one that worked, before Open-Meteo counts as unreachable.
+const UNREACHABLE_AFTER: Duration = Duration::from_secs(30 * 60);
 
 pub struct WeatherNode {
     core: NodeCore,
@@ -27,7 +27,8 @@ struct WeatherDevice {
     weather: Option<Weather>,
     /// `None` until a fetch works or enough of them fail.
     reachable: Option<bool>,
-    failures: u32,
+    /// The first of the failed fetches in a row, while none has worked yet.
+    failing_since: Option<Instant>,
     fetched_at: Option<Instant>,
     /// Since the last fetch that worked, as of the last attempt.
     age: Option<Duration>,
@@ -43,7 +44,7 @@ impl WeatherNode {
             device: WeatherDevice {
                 weather: None,
                 reachable: None,
-                failures: 0,
+                failing_since: None,
                 fetched_at: None,
                 age: None,
             },
@@ -55,7 +56,7 @@ impl WeatherNode {
         let device = &mut self.device;
         device.weather = Some(weather);
         device.reachable = Some(true);
-        device.failures = 0;
+        device.failing_since = None;
         device.fetched_at = Some(now);
         device.age = Some(Duration::ZERO);
         self.core.states(&self.device)
@@ -64,8 +65,10 @@ impl WeatherNode {
     /// The data keeps its last values; the connection entity tells how old they are.
     pub fn failed(&mut self, now: Instant) -> Vec<Message> {
         let device = &mut self.device;
-        device.failures += 1;
-        if device.failures >= FAILURES_UNTIL_UNREACHABLE {
+        let since = device
+            .fetched_at
+            .unwrap_or(*device.failing_since.get_or_insert(now));
+        if now - since >= UNREACHABLE_AFTER {
             device.reachable = Some(false);
         }
         device.age = device.fetched_at.map(|fetched_at| now - fetched_at);
@@ -320,6 +323,23 @@ mod tests {
             node.device.state(NOW_ENTITY).unwrap()[0].value,
             Value::Float(21.4),
             "the last values stay"
+        );
+    }
+
+    #[test]
+    fn without_any_fetch_working_it_ends_unreachable_after_half_an_hour() {
+        let mut node = WeatherNode::new("weather".into());
+        let start = Instant::now();
+        let minutes = |minutes: u64| start + Duration::from_secs(minutes * 60);
+        for minute in [0, 1, 3, 7, 15, 25] {
+            assert!(node.failed(minutes(minute)).is_empty());
+        }
+        assert_eq!(
+            node.failed(minutes(35))[0].payload,
+            Payload::State {
+                entity: CONNECTION_ENTITY,
+                values: vec![confirmed(0, Value::Bool(false))]
+            }
         );
     }
 

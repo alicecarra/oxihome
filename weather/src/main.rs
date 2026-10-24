@@ -13,6 +13,8 @@ use node::WeatherNode;
 
 const FETCH_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
+/// After a failed fetch; doubles on each failure in a row, up to `FETCH_INTERVAL`.
+const FIRST_RETRY: Duration = Duration::from_secs(60);
 
 #[derive(Deserialize)]
 struct Config {
@@ -44,15 +46,15 @@ async fn main() -> anyhow::Result<()> {
         .timeout(FETCH_TIMEOUT)
         .user_agent(concat!("oxihome-weather/", env!("CARGO_PKG_VERSION")))
         .build()?;
-    let mut fetch = tokio::time::interval(FETCH_INTERVAL);
+    let shutdown = oxihome_node::shutdown_signal();
+    tokio::pin!(shutdown);
+    let mut retry = FIRST_RETRY;
     loop {
-        tokio::select! {
-            _ = fetch.tick() => {}
-            () = oxihome_node::shutdown_signal() => return Ok(()),
-        }
-
-        match open_meteo::fetch(&client, config.location.latitude, config.location.longitude).await
-        {
+        let fetched = tokio::select! {
+            fetched = open_meteo::fetch(&client, config.location.latitude, config.location.longitude) => fetched,
+            () = &mut shutdown => return Ok(()),
+        };
+        let wait = match fetched {
             Ok(weather) => {
                 println!(
                     "{}: {:.1} °C, {:.0} %, {:.1} mm, {:.1} km/h",
@@ -68,13 +70,22 @@ async fn main() -> anyhow::Result<()> {
                 {
                     return Ok(());
                 }
+                retry = FIRST_RETRY;
+                FETCH_INTERVAL
             }
             Err(error) => {
                 println!("fetching the weather failed: {error:#}");
                 if !handle.act(|node| node.failed(Instant::now())).await {
                     return Ok(());
                 }
+                let wait = retry;
+                retry = (retry * 2).min(FETCH_INTERVAL);
+                wait
             }
+        };
+        tokio::select! {
+            () = tokio::time::sleep(wait) => {}
+            () = &mut shutdown => return Ok(()),
         }
     }
 }

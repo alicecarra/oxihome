@@ -45,7 +45,7 @@ pub async fn fetch(
     latitude: f64,
     longitude: f64,
 ) -> anyhow::Result<Weather> {
-    let response: Response = client
+    let response = client
         .get(URL)
         .query(&[
             ("latitude", latitude.to_string()),
@@ -62,11 +62,25 @@ pub async fn fetch(
             ("forecast_days", "1".into()),
         ])
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
-    weather(response)
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("{status}: {}", error_reason(&body));
+    }
+    weather(response.json().await?)
+}
+
+/// Open-Meteo explains a refusal in `{"error": true, "reason": "..."}`.
+fn error_reason(body: &str) -> String {
+    #[derive(Deserialize)]
+    struct Refusal {
+        reason: String,
+    }
+    match serde_json::from_str::<Refusal>(body) {
+        Ok(refusal) => refusal.reason,
+        Err(_) => body.chars().take(200).collect(),
+    }
 }
 
 fn weather(response: Response) -> anyhow::Result<Weather> {
@@ -124,6 +138,17 @@ mod tests {
                 today_precipitation_probability: 45.0,
             }
         );
+    }
+
+    #[test]
+    fn a_refusal_gives_its_reason() {
+        let body =
+            r#"{"reason":"Latitude must be in range of -90 to 90°. Given: -300.0.","error":true}"#;
+        assert_eq!(
+            error_reason(body),
+            "Latitude must be in range of -90 to 90°. Given: -300.0."
+        );
+        assert_eq!(error_reason("Bad Gateway"), "Bad Gateway");
     }
 
     #[test]
