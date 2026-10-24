@@ -744,6 +744,14 @@ notified once per node ("speaks another protocol"). So a node may lag one versio
 `PROTOCOL_VERSION` goes up, `legacy` moves up with it, and the hub can be restarted first and the
 nodes updated afterwards.
 
+A node tells people something with a `Notice` (`NodeCore::notice`): a `level` (`Info`, `Warning`,
+`Critical`), a `title` (up to 128 bytes), an optional `message` (up to 1024) and an optional `key`,
+so a newer notice with the same key replaces the node's earlier one instead of piling up. Only the
+hub reads it, as a toast, a notification and the `notice` rule trigger; the hub ignores `level` for
+now. It came without a new protocol version (2026-10-24): only the hub reads messages from nodes
+and the hub is always updated first, so no node has to be updated for it; a hub older than 0.17.0
+logs a `Notice` as a message it cannot read.
+
 ```sh
 cargo test -p oxihome-node --features mqtt
 cargo clippy -p oxihome-node --features mqtt

@@ -374,3 +374,24 @@ fn unsupported_messages_are_refused() {
     );
     assert_eq!(error_code(&answers), Some(ErrorCode::Unsupported));
 }
+
+#[test]
+fn notices_are_cut_to_the_protocol_limits() {
+    let mut core = NodeCore::new(DEVICE, Build::new("test", "0.1.0", "test"));
+    let long = "é".repeat(NOTICE_TITLE_MAX_LENGTH);
+    let message = core.notice(NoticeLevel::Warning, &long, "", Some("2"));
+    match message.payload {
+        Payload::Notice {
+            level,
+            title,
+            message,
+            key,
+        } => {
+            assert_eq!(level, NoticeLevel::Warning);
+            assert_eq!(title.len(), NOTICE_TITLE_MAX_LENGTH);
+            assert!(message.is_empty());
+            assert_eq!(key.as_deref(), Some("2"));
+        }
+        other => panic!("not a notice: {other:?}"),
+    }
+}

@@ -12,8 +12,8 @@ mod validation;
 use std::collections::HashMap;
 
 use oxihome_protocol::{
-    Build, ChannelValue, CommandOp, EntityDescriptor, ErrorCode, EventKind, Message, Payload,
-    QueryKind, Value,
+    Build, ChannelValue, CommandOp, EntityDescriptor, ErrorCode, EventKind, Message,
+    NOTICE_MESSAGE_MAX_LENGTH, NOTICE_TITLE_MAX_LENGTH, NoticeLevel, Payload, QueryKind, Value,
 };
 
 pub use validation::Rejection;
@@ -192,6 +192,25 @@ impl NodeCore {
         )
     }
 
+    /// Cut to the protocol's limits; `key` replaces the node's earlier notice with the same key.
+    pub fn notice(
+        &mut self,
+        level: NoticeLevel,
+        title: &str,
+        message: &str,
+        key: Option<&str>,
+    ) -> Message {
+        self.message(
+            Payload::Notice {
+                level,
+                title: truncate(title, NOTICE_TITLE_MAX_LENGTH),
+                message: truncate(message, NOTICE_MESSAGE_MAX_LENGTH),
+                key: key.map(str::to_string),
+            },
+            None,
+        )
+    }
+
     /// The `Error` answering a message that could not be read, so it has no id to reply to.
     pub fn invalid_message(&mut self, detail: String) -> Message {
         let payload = Payload::Error {
@@ -272,6 +291,15 @@ fn declares_entity(device: &impl Device, entity: u8) -> bool {
         .entities()
         .iter()
         .any(|declared| declared.id == entity)
+}
+
+/// At most `max_length` bytes, cut at a character boundary.
+fn truncate(text: &str, max_length: usize) -> String {
+    let mut end = text.len().min(max_length);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_string()
 }
 
 fn rejection(code: ErrorCode, detail: String) -> Payload {
