@@ -2020,9 +2020,10 @@ dependencies = [
 
 [[package]]
 name = "oxihome-weather"
-version = "0.3.5"
+version = "0.4.0"
 dependencies = [
  "anyhow",
+ "jiff",
  "oxihome-node",
  "oxihome-protocol",
  "reqwest",
