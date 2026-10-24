@@ -12,8 +12,8 @@ use super::{
 use crate::config::nodes::{NameTarget, Nodes};
 use crate::config::rules::{
     Action, ChannelCondition, Condition, CronTrigger, Day, EventTrigger, Expected, Limit,
-    OfflineTrigger, ScheduleTrigger, Subject, ThresholdTrigger, TrafficTrigger, Trigger, ValueTest,
-    has_placeholders,
+    NoticeTrigger, OfflineTrigger, ScheduleTrigger, Subject, ThresholdTrigger, TrafficTrigger,
+    Trigger, ValueTest, has_placeholders,
 };
 use crate::hub::Hub;
 use crate::node::events::EventRecord;
@@ -171,6 +171,19 @@ fn trigger_description(nodes: &Nodes, registry: &Registry, trigger: &Trigger) ->
         Trigger::Traffic(trigger) => traffic_description(nodes, trigger),
         Trigger::RemoteKey(trigger) => format!("{}: key {}", trigger.remote, trigger.key),
         Trigger::Button(trigger) => format!("Button \"{}\"", trigger.button),
+        Trigger::Notice(trigger) => notice_description(nodes, trigger),
+    }
+}
+
+fn notice_description(nodes: &Nodes, trigger: &NoticeTrigger) -> String {
+    match &trigger.device {
+        Some(device) => {
+            let node = nodes
+                .name(&NameTarget::Node(device.clone()))
+                .unwrap_or(device);
+            format!("{node} sends a notice")
+        }
+        None => "Any node sends a notice".into(),
     }
 }
 

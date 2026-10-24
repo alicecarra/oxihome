@@ -66,6 +66,28 @@ pub fn on_message(hub: &Arc<Hub>, message: &Message) {
                 on_alert(hub, &report);
             }
         }
+        Payload::Notice {
+            title,
+            message: text,
+            key,
+            ..
+        } => {
+            let node = hub.node_name(&message.src);
+            println!("{node} notice: {title} {text}");
+            hub.notify_keyed(
+                title.clone(),
+                text.clone(),
+                message.src.clone(),
+                key.clone(),
+            );
+            let subject = Subject {
+                node: Some(node),
+                title: Some(title.clone()),
+                message: Some(text.clone()),
+                ..Subject::default()
+            };
+            spawn_rules(hub, hub.notice_rules(&message.src), subject);
+        }
         _ => {}
     }
 
@@ -185,7 +207,7 @@ fn on_alert(hub: &Arc<Hub>, raised: &RaisedAlert) {
         node: Some(node),
         channel,
         detail: Some(raised.detail.clone()),
-        value: None,
+        ..Subject::default()
     };
     spawn_rules(hub, hub.traffic_rules(alert), subject);
 }

@@ -9,7 +9,7 @@ use serde::Deserialize;
 use tokio::task::JoinHandle;
 
 use super::{
-    Condition, EventTrigger, Limit, OfflineTrigger, Rule, RuleRun, ThresholdTrigger,
+    Condition, EventTrigger, Limit, NoticeTrigger, OfflineTrigger, Rule, RuleRun, ThresholdTrigger,
     TrafficTrigger, Trigger,
 };
 use crate::hub::{CommandOrigin, Hub};
@@ -121,14 +121,17 @@ impl Action {
     }
 }
 
-/// What a rule runs about, for `{node}`, `{channel}`, `{detail}` and `{value}` in the text of its
-/// `notify` and `invoke` actions. Which ones a rule may use depends on its trigger.
+/// What a rule runs about, for `{node}`, `{channel}`, `{detail}`, `{value}`, `{title}` and
+/// `{message}` in the text of its `notify` and `invoke` actions. Which ones a rule may use depends on its trigger.
 #[derive(Debug, Clone, Default)]
 pub struct Subject {
     pub node: Option<String>,
     pub channel: Option<String>,
     pub detail: Option<String>,
     pub value: Option<String>,
+    /// A notice's.
+    pub title: Option<String>,
+    pub message: Option<String>,
 }
 
 /// Friendly names and values for a subject; the hub in practice.
@@ -159,8 +162,8 @@ impl Subject {
         Self {
             node: Some(names.node_name(&event.device_id)),
             channel: Some(names.channel_name(&event.device_id, event.entity, event.channel)),
-            detail: None,
             value: event.data.as_ref().map(data_label),
+            ..Self::default()
         }
     }
 
@@ -176,8 +179,8 @@ impl Subject {
         Self {
             node: Some(names.node_name(device_id)),
             channel: Some(names.channel_name(device_id, *entity, *channel)),
-            detail: None,
             value: Some(names.value_label(device_id, *entity, *channel, value)),
+            ..Self::default()
         }
     }
 
@@ -196,12 +199,18 @@ impl Subject {
                 node: node(device),
                 ..Self::default()
             },
+            Trigger::Notice(NoticeTrigger { device }) => Self {
+                node: node(device),
+                title: Some("a notice".into()),
+                message: Some("run by hand".into()),
+                ..Self::default()
+            },
             Trigger::Traffic(TrafficTrigger { kind, device }) => Self {
                 node: node(device),
                 channel: matches!(kind, AlertKind::Stopped | AlertKind::Noisy)
                     .then(|| "a channel".to_string()),
                 detail: Some("run by hand".into()),
-                value: None,
+                ..Self::default()
             },
             Trigger::Event(EventTrigger {
                 device,
@@ -212,8 +221,8 @@ impl Subject {
             }) => Self {
                 node: Some(names.node_name(device)),
                 channel: Some(names.channel_name(device, *entity, *channel)),
-                detail: None,
                 value: Some(data.clone().unwrap_or_else(|| "a value".into())),
+                ..Self::default()
             },
             Trigger::Threshold(ThresholdTrigger {
                 device,
@@ -224,8 +233,8 @@ impl Subject {
             }) => Self {
                 node: Some(names.node_name(device)),
                 channel: Some(names.channel_name(device, *entity, *channel)),
-                detail: None,
                 value: Some(names.value_label(device, *entity, *channel, &Value::Float(*limit))),
+                ..Self::default()
             },
             _ => Self::default(),
         }
@@ -255,6 +264,8 @@ impl Subject {
             "channel" => self.channel.as_deref(),
             "detail" => self.detail.as_deref(),
             "value" => self.value.as_deref(),
+            "title" => self.title.as_deref(),
+            "message" => self.message.as_deref(),
             _ => None,
         }
     }

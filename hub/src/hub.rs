@@ -512,6 +512,17 @@ impl Hub {
     }
 
     pub fn notify(&self, title: String, message: String, source: String) {
+        self.notify_keyed(title, message, source, None);
+    }
+
+    /// Like `notify`; a `key` replaces the source's earlier toast with that key.
+    pub fn notify_keyed(
+        &self,
+        title: String,
+        message: String,
+        source: String,
+        key: Option<String>,
+    ) {
         self.storage.write(Write::Notification(StoredNotification {
             title: title.clone(),
             message: message.clone(),
@@ -521,7 +532,7 @@ impl Hub {
         self.notifications
             .lock()
             .unwrap()
-            .push(title, message, source);
+            .push_keyed(title, message, source, key);
         self.announce(Change::Notifications);
     }
 

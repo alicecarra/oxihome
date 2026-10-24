@@ -96,6 +96,7 @@ pub(super) enum TriggerKind {
     Traffic,
     RemoteKey,
     Button,
+    Notice,
 }
 
 impl Kind for TriggerKind {
@@ -108,6 +109,7 @@ impl Kind for TriggerKind {
         Self::Traffic,
         Self::RemoteKey,
         Self::Button,
+        Self::Notice,
     ];
 
     fn key(self) -> &'static str {
@@ -120,6 +122,7 @@ impl Kind for TriggerKind {
             Self::Traffic => "traffic",
             Self::RemoteKey => "remote_key",
             Self::Button => "button",
+            Self::Notice => "notice",
         }
     }
 
@@ -133,6 +136,7 @@ impl Kind for TriggerKind {
             Self::Traffic => "A traffic alert",
             Self::RemoteKey => "A remote key",
             Self::Button => "A button",
+            Self::Notice => "A notice from a node",
         }
     }
 }
@@ -379,6 +383,10 @@ impl Draft {
             Trigger::Button(trigger_button) => {
                 trigger.kind = TriggerKind::Button;
                 trigger.button = trigger_button.button.clone();
+            }
+            Trigger::Notice(notice) => {
+                trigger.kind = TriggerKind::Notice;
+                trigger.device = notice.device.clone().unwrap_or_else(|| "*".into());
             }
         }
         Self {

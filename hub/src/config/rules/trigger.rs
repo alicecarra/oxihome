@@ -20,6 +20,7 @@ pub enum Trigger {
     Traffic(TrafficTrigger),
     RemoteKey(RemoteKeyTrigger),
     Button(ButtonTrigger),
+    Notice(NoticeTrigger),
 }
 
 impl Trigger {
@@ -31,7 +32,8 @@ impl Trigger {
             | Trigger::Offline(_)
             | Trigger::Traffic(_)
             | Trigger::RemoteKey(_)
-            | Trigger::Button(_) => None,
+            | Trigger::Button(_)
+            | Trigger::Notice(_) => None,
             Trigger::Schedule(trigger) => trigger.next_run(now),
             Trigger::Cron(trigger) => trigger.cron.find_next_occurrence(now, false).ok(),
         }
@@ -51,6 +53,7 @@ impl Trigger {
                 ..
             }) => &["node", "channel", "detail"],
             Trigger::Traffic(_) => &["node", "detail"],
+            Trigger::Notice(_) => &["node", "title", "message"],
             Trigger::Schedule(_)
             | Trigger::Cron(_)
             | Trigger::RemoteKey(_)
@@ -65,7 +68,8 @@ impl Trigger {
             | Trigger::Offline(_)
             | Trigger::Traffic(_)
             | Trigger::RemoteKey(_)
-            | Trigger::Button(_) => false,
+            | Trigger::Button(_)
+            | Trigger::Notice(_) => false,
             Trigger::Schedule(trigger) => trigger.is_due(minute),
             Trigger::Cron(trigger) => trigger.cron.is_time_matching(&minute).unwrap_or(false),
         }
@@ -97,6 +101,7 @@ struct TriggerFields {
     remote: Option<String>,
     key: Option<String>,
     button: Option<String>,
+    notice: Option<String>,
 }
 
 impl TriggerFields {
@@ -122,6 +127,7 @@ impl TriggerFields {
             ("remote", self.remote.is_some()),
             ("key", self.key.is_some()),
             ("button", self.button.is_some()),
+            ("notice", self.notice.is_some()),
         ]
         .into_iter()
         .filter_map(|(key, present)| present.then_some(key))
@@ -141,6 +147,7 @@ impl TryFrom<TriggerFields> for Trigger {
         let button_alone = fields.has_only(&["button"]);
         let remote_key_alone = fields.has_only(&["remote", "key"]);
         let offline_alone = fields.has_only(&["offline"]);
+        let notice_alone = fields.has_only(&["notice"]);
         let traffic: Vec<(AlertKind, String)> = [
             (AlertKind::Stopped, fields.stopped),
             (AlertKind::Noisy, fields.noisy),
@@ -174,6 +181,13 @@ impl TryFrom<TriggerFields> for Trigger {
                 return Err("a remote key trigger is `remote` and `key` alone".into());
             };
             return Ok(Trigger::RemoteKey(RemoteKeyTrigger { remote, key }));
+        }
+        if let Some(device) = fields.notice {
+            if !notice_alone {
+                return Err("`notice` goes alone in `when`".into());
+            }
+            let device = (device != "*").then_some(device);
+            return Ok(Trigger::Notice(NoticeTrigger { device }));
         }
         if let Some(device) = fields.offline {
             if !offline_alone {
@@ -254,7 +268,7 @@ impl TryFrom<TriggerFields> for Trigger {
         if !fields.days.is_empty() {
             return Err("`days` needs `at`".into());
         }
-        Err("`when` needs an event or a limit on a channel (`device`, `entity`, `channel`), `at`, `cron` or `offline`".into())
+        Err("`when` needs an event or a limit on a channel (`device`, `entity`, `channel`), `at`, `cron`, `offline` or `notice`".into())
     }
 }
 
@@ -325,6 +339,20 @@ pub struct RemoteKeyTrigger {
 #[derive(Debug, Clone, PartialEq)]
 pub struct OfflineTrigger {
     pub device: Option<String>,
+}
+
+/// Runs when the node sends a `Notice`; `None` for any node (`notice = "*"`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NoticeTrigger {
+    pub device: Option<String>,
+}
+
+impl NoticeTrigger {
+    pub(super) fn matches(&self, device_id: &str) -> bool {
+        self.device
+            .as_deref()
+            .is_none_or(|device| device == device_id)
+    }
 }
 
 /// Runs when the traffic map raises an alert about the node; `None` for any node (`"*"`).
@@ -523,6 +551,23 @@ mod tests {
         );
         assert!(
             when(r#"{ offline = "sim-bedroom", at = "07:00" }"#)
+                .unwrap_err()
+                .contains("goes alone")
+        );
+    }
+
+    #[test]
+    fn notice_trigger_goes_alone_and_fills_title_and_message() {
+        let any = when(r#"{ notice = "*" }"#).unwrap();
+        assert_eq!(any, Trigger::Notice(NoticeTrigger { device: None }));
+        assert_eq!(any.placeholders(), ["node", "title", "message"]);
+        let Trigger::Notice(reminders) = when(r#"{ notice = "reminders" }"#).unwrap() else {
+            panic!("not a notice trigger");
+        };
+        assert!(reminders.matches("reminders"));
+        assert!(!reminders.matches("weather"));
+        assert!(
+            when(r#"{ notice = "reminders", offline = "*" }"#)
                 .unwrap_err()
                 .contains("goes alone")
         );

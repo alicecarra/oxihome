@@ -47,10 +47,11 @@ pub enum MessageKind {
     Query,
     Ack,
     Error,
+    Notice,
 }
 
 impl MessageKind {
-    pub const ALL: [MessageKind; 8] = [
+    pub const ALL: [MessageKind; 9] = [
         MessageKind::Hello,
         MessageKind::Heartbeat,
         MessageKind::State,
@@ -59,6 +60,7 @@ impl MessageKind {
         MessageKind::Query,
         MessageKind::Ack,
         MessageKind::Error,
+        MessageKind::Notice,
     ];
 
     pub fn of(payload: &Payload) -> Self {
@@ -71,6 +73,7 @@ impl MessageKind {
             Payload::Query { .. } => MessageKind::Query,
             Payload::Ack { .. } => MessageKind::Ack,
             Payload::Error { .. } => MessageKind::Error,
+            Payload::Notice { .. } => MessageKind::Notice,
         }
     }
 
@@ -84,6 +87,7 @@ impl MessageKind {
             MessageKind::Query => "Query",
             MessageKind::Ack => "Ack",
             MessageKind::Error => "Error",
+            MessageKind::Notice => "Notice",
         }
     }
 }

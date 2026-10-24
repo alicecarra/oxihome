@@ -89,6 +89,12 @@ fn trigger_table(trigger: &TriggerDraft) -> Built<InlineTable> {
                 required(&trigger.device, "choose the node")?.into(),
             );
         }
+        TriggerKind::Notice => {
+            table.insert(
+                "notice",
+                required(&trigger.device, "choose the node")?.into(),
+            );
+        }
         TriggerKind::Traffic => {
             table.insert(
                 trigger.alert.as_str(),

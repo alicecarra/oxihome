@@ -452,6 +452,7 @@ previous configuration stays in use.
   | `offline` | `{node}` |
   | `stopped`, `noisy` | `{node}`, `{channel}`, `{detail}` |
   | `unanswered`, `reported` | `{node}`, `{detail}` (the report's text, or e.g. "Used to report every 30 s") |
+  | `notice` | `{node}`, `{title}`, `{message}` |
   | `at`, `cron`, `button`, `remote` | none |
 
   Names come from `nodes.toml`, then from what the node declares. A placeholder the trigger does
@@ -500,7 +501,11 @@ previous configuration stays in use.
     memory, so they start over when the hub restarts;
   - a node reporting a problem by itself: `when = { reported = "..." }` (node id or `"*"`), for an
     `Error` that answers no command, such as the firmware's "DHT11 not responding". It runs for
-    every report; the hub also shows a toast and lists the report on the node's page.
+    every report; the hub also shows a toast and lists the report on the node's page;
+  - a node's `Notice`: `when = { notice = "..." }` (node id or `"*"`), for something a person
+    should know that the node itself decided, such as a pending reminder. It runs for every
+    notice; the hub also shows it as a toast (a notice with the same `key` replaces that node's
+    earlier toast) and keeps it with the notifications.
 
   `cooldown = "1h"` (optional, at most 168h; not on button rules) keeps a rule from starting again
   that soon about the same node and channel, so `offline = "*"` still reports other nodes; the

@@ -96,6 +96,16 @@ impl Hub {
             .collect()
     }
 
+    pub fn notice_rules(&self, device_id: &str) -> Vec<Rule> {
+        self.rules
+            .lock()
+            .unwrap()
+            .notice(device_id)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
     pub fn due_rules(&self, minute: DateTime) -> Vec<Rule> {
         self.rules
             .lock()

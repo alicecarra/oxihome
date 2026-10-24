@@ -11,6 +11,8 @@ pub struct Notification {
     pub message: String,
     /// What produced it, e.g. a rule name.
     pub source: String,
+    /// A node's notice key: a newer one with the same source and key replaces it.
+    pub key: Option<String>,
 }
 
 /// Recent notifications for the web interface, in memory only.
@@ -31,12 +33,27 @@ impl Notifications {
     }
 
     pub fn push(&mut self, title: String, message: String, source: String) -> u64 {
+        self.push_keyed(title, message, source, None)
+    }
+
+    pub fn push_keyed(
+        &mut self,
+        title: String,
+        message: String,
+        source: String,
+        key: Option<String>,
+    ) -> u64 {
+        if key.is_some() {
+            self.recent
+                .retain(|notification| notification.source != source || notification.key != key);
+        }
         self.last_id += 1;
         self.recent.push_back(Notification {
             id: self.last_id,
             title,
             message,
             source,
+            key,
         });
         if self.recent.len() > CAPACITY {
             self.recent.pop_front();
@@ -146,6 +163,29 @@ mod tests {
         push(&mut after, "after");
 
         assert_eq!(after.since(seen).len(), 1);
+    }
+
+    #[test]
+    fn a_notice_replaces_the_one_with_its_key() {
+        let mut notifications = Notifications::default();
+        let keyed = |notifications: &mut Notifications, title: &str, source: &str, key: &str| {
+            notifications.push_keyed(title.into(), String::new(), source.into(), Some(key.into()))
+        };
+        keyed(&mut notifications, "Depakote", "reminders", "2");
+        keyed(&mut notifications, "Ciproterona", "reminders", "3");
+        keyed(&mut notifications, "Other node", "weather", "2");
+        push(&mut notifications, "plain");
+        keyed(&mut notifications, "Depakote again", "reminders", "2");
+
+        let titles: Vec<String> = notifications
+            .since(0)
+            .into_iter()
+            .map(|notification| notification.title)
+            .collect();
+        assert_eq!(
+            titles,
+            ["Ciproterona", "Other node", "plain", "Depakote again"]
+        );
     }
 
     #[test]

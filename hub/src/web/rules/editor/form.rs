@@ -430,6 +430,12 @@ async fn trigger_fields(
                         choice_select(name: "trigger.device".to_string(), chosen: trigger.device, groups: nodes, placeholder: Some("Choose a node…"))
                     )
                 },
+                TriggerKind::Notice => {
+                    form_field(title: "Node", name: "trigger.device".to_string(),
+                        choice_select(name: "trigger.device".to_string(), chosen: trigger.device, groups: nodes, placeholder: Some("Choose a node…"))
+                    )
+                    <p class="text-sm text-muted-foreground">"Messages can use {title} and {message} of the notice."</p>
+                },
                 TriggerKind::Traffic => {
                     <div class="flex gap-4">
                         form_field(title: "Alert", name: "trigger.alert".to_string(),

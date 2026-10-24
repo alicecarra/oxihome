@@ -17,8 +17,8 @@ pub use run::{
     Action, Cooldowns, Holds, Running, Start, Subject, has_placeholders, run_triggered, start,
 };
 pub use trigger::{
-    CronTrigger, Day, EventTrigger, Limit, OfflineTrigger, ScheduleTrigger, ThresholdTrigger,
-    TrafficTrigger, Trigger,
+    CronTrigger, Day, EventTrigger, Limit, NoticeTrigger, OfflineTrigger, ScheduleTrigger,
+    ThresholdTrigger, TrafficTrigger, Trigger,
 };
 
 use super::remotes::Remotes;
@@ -334,6 +334,16 @@ impl Rules {
             .filter(|rule| {
                 rule.enabled
                     && matches!(&rule.when, Trigger::Traffic(trigger) if trigger.matches(alert))
+            })
+            .collect()
+    }
+
+    pub fn notice(&self, device_id: &str) -> Vec<&Rule> {
+        self.rules
+            .iter()
+            .filter(|rule| {
+                rule.enabled
+                    && matches!(&rule.when, Trigger::Notice(trigger) if trigger.matches(device_id))
             })
             .collect()
     }
