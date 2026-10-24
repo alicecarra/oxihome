@@ -32,10 +32,6 @@ impl Notifications {
         }
     }
 
-    pub fn push(&mut self, title: String, message: String, source: String) -> u64 {
-        self.push_keyed(title, message, source, None)
-    }
-
     pub fn push_keyed(
         &mut self,
         title: String,
@@ -136,7 +132,7 @@ mod tests {
     }
 
     fn push(notifications: &mut Notifications, title: &str) -> u64 {
-        notifications.push(title.into(), "message".into(), "test".into())
+        notifications.push_keyed(title.into(), "message".into(), "test".into(), None)
     }
 
     #[test]
