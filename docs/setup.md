@@ -851,7 +851,11 @@ channel 3 since when (local time, `2026-10-13 09:15`): the moment it came online
 it answered once offline. A rule with `event = "Received"` and `data = "offline"` on a phone's
 entity catches it leaving. Entity 100 is the whole network: channel 0 how many devices answered the
 last scan, channel 1 how many of them are not in `[[devices]]`. Those counts have no waiting time,
-so sleeping phones make them go up and down; no MAC of an unknown device leaves the node.
+so sleeping phones make them go up and down; no MAC of an unknown device leaves the node. Channel 2
+is "People home": how many devices with `person = true` (phones and watches, not the TV) are
+online, with their `offline_after` wait, and no value until each of them is known. Nobody home
+for 20 minutes is `when = { device = "network-devices", entity = 100, channel = 2, below = 1,
+for = "20m" }`.
 
 ## Telegram bot
 

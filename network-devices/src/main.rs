@@ -46,6 +46,9 @@ struct DeviceConfig {
     mac: Mac,
     /// Seconds; the `[network]` one when missing.
     offline_after: Option<u64>,
+    /// Counts in the network's "People home".
+    #[serde(default)]
+    person: bool,
 }
 
 #[tokio::main]
@@ -153,6 +156,7 @@ fn watched_devices(config: &Config) -> anyhow::Result<Vec<WatchedDevice>> {
                 name: device.name.clone(),
                 mac: device.mac,
                 offline_after: Duration::from_secs(offline_after),
+                person: device.person,
             })
         })
         .collect()

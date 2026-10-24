@@ -21,10 +21,13 @@ offline_after = 600
 # Entities are fixed here so rules keep working when devices are added or removed; 0 and 100
 # (the whole network) are reserved.
 # Phones need a fixed MAC on this network: turn off the rotating private address.
+# person = true: counts in "People home" (entity 100, channel 2) while online, for "nobody home"
+# rules; a phone or watch, not a TV.
 [[devices]]
 entity = 1
 name = "Alice's phone"
 mac = "aa:bb:cc:dd:ee:01"
+person = true
 
 [[devices]]
 entity = 2

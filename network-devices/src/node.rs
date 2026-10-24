@@ -21,6 +21,7 @@ const SINCE_CHANNEL: u8 = 3;
 
 const ANSWERING_CHANNEL: u8 = 0;
 const UNKNOWN_CHANNEL: u8 = 1;
+const PEOPLE_HOME_CHANNEL: u8 = 2;
 
 /// The most hosts a /22 has.
 const MAXIMUM_COUNT: i32 = 1022;
@@ -31,6 +32,8 @@ pub struct WatchedDevice {
     pub mac: Mac,
     /// How long without answering before it counts as offline; phones sleep with Wi-Fi off.
     pub offline_after: Duration,
+    /// Counts in "People home" while online: someone's phone or watch, not the TV.
+    pub person: bool,
 }
 
 /// A device going online or offline, for the log.
@@ -58,6 +61,8 @@ struct Devices {
     started_at: Instant,
     /// Devices answering and how many of them are not watched; `None` before the first scan.
     counts: Option<(i32, i32)>,
+    /// Persons online; `None` while one of them is not known yet.
+    people_home: Option<i32>,
 }
 
 struct Watch {
@@ -90,6 +95,7 @@ impl NetworkDevicesNode {
                     .collect(),
                 started_at: now,
                 counts: None,
+                people_home: None,
             },
             started_at: now,
         }
@@ -159,8 +165,10 @@ impl NetworkDevicesNode {
             })
             .count();
         let counts = Some((scan.answered.len() as i32, unknown as i32));
-        if counts != self.device.counts {
+        let people_home = self.device.people_home();
+        if counts != self.device.counts || people_home != self.device.people_home {
             self.device.counts = counts;
+            self.device.people_home = people_home;
             messages.extend(self.core.state(&self.device, NETWORK_ENTITY));
         }
         (messages, changes)
@@ -187,6 +195,16 @@ impl SoftwareNode for NetworkDevicesNode {
     fn report(&mut self) -> Vec<Message> {
         let uptime_s = self.started_at.elapsed().as_secs() as u32;
         vec![self.core.heartbeat(uptime_s, None, None)]
+    }
+}
+
+impl Devices {
+    fn people_home(&self) -> Option<i32> {
+        self.watched
+            .iter()
+            .filter(|watch| watch.device.person)
+            .map(|watch| watch.online.map(i32::from))
+            .sum()
     }
 }
 
@@ -244,6 +262,7 @@ impl Device for Devices {
                 channels: vec![
                     count(ANSWERING_CHANNEL).named("Answering"),
                     count(UNKNOWN_CHANNEL).named("Unknown"),
+                    count(PEOPLE_HOME_CHANNEL).named("People home"),
                 ],
             }
             .named("Network"),
@@ -254,10 +273,14 @@ impl Device for Devices {
     fn state(&self, entity: u8) -> Option<Vec<ChannelValue>> {
         if entity == NETWORK_ENTITY {
             let (answering, unknown) = self.counts?;
-            return Some(vec![
+            let mut values = vec![
                 confirmed(ANSWERING_CHANNEL, Value::Int(answering)),
                 confirmed(UNKNOWN_CHANNEL, Value::Int(unknown)),
-            ]);
+            ];
+            if let Some(people) = self.people_home {
+                values.push(confirmed(PEOPLE_HOME_CHANNEL, Value::Int(people)));
+            }
+            return Some(values);
         }
         let watch = self
             .watched
@@ -309,12 +332,14 @@ mod tests {
                     name: "Phone".into(),
                     mac: PHONE.parse().unwrap(),
                     offline_after: Duration::from_secs(600),
+                    person: true,
                 },
                 WatchedDevice {
                     entity: 2,
                     name: "Television".into(),
                     mac: TELEVISION.parse().unwrap(),
                     offline_after: Duration::from_secs(60),
+                    person: false,
                 },
             ],
             start,
@@ -507,6 +532,39 @@ mod tests {
         let later = start + Duration::from_secs(30);
         let (messages, _) = update(&mut node, &[PHONE, VISITOR], later, "2026-10-13 09:00");
         assert!(messages.is_empty(), "same counts, nothing sent");
+    }
+
+    #[test]
+    fn people_home_counts_persons_once_all_are_known() {
+        let start = Instant::now();
+        let mut node = node(start);
+        update(&mut node, &[TELEVISION], start, "2026-10-13 09:00");
+        assert_eq!(
+            value(&node, NETWORK_ENTITY, PEOPLE_HOME_CHANNEL),
+            None,
+            "the phone may be asleep"
+        );
+
+        let later = start + Duration::from_secs(30);
+        update(&mut node, &[PHONE, TELEVISION], later, "2026-10-13 09:00");
+        assert_eq!(
+            value(&node, NETWORK_ENTITY, PEOPLE_HOME_CHANNEL),
+            Some(Value::Int(1)),
+            "the TV is not a person"
+        );
+
+        let later = start + Duration::from_secs(330);
+        update(&mut node, &[TELEVISION], later, "2026-10-13 09:05");
+        let later = start + Duration::from_secs(630);
+        let (messages, _) = update(&mut node, &[TELEVISION], later, "2026-10-13 09:10");
+        assert!(
+            states(&messages).contains(&NETWORK_ENTITY),
+            "sent although the counts did not change"
+        );
+        assert_eq!(
+            value(&node, NETWORK_ENTITY, PEOPLE_HOME_CHANNEL),
+            Some(Value::Int(0))
+        );
     }
 
     #[test]
