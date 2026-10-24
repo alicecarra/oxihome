@@ -779,8 +779,11 @@ cargo clippy -p oxihome-node --features mqtt
 ## Weather node
 
 `weather/` (`oxihome-weather`) is a software node with the weather outside, from
-[Open-Meteo](https://open-meteo.com) (free, no account or key). It fetches every 10 minutes and
-sends a heartbeat every 30 s; a failed fetch keeps the last readings.
+[Open-Meteo](https://open-meteo.com) (free, no account or key). It fetches every 15 minutes on the
+clock (a minute after each quarter-hour, when Open-Meteo has new current values; `[fetch]
+interval`, 5 to 60 minutes) and sends a heartbeat every 30 s. A failed fetch keeps the last
+readings and is tried again after 1, 2, 4, 8... minutes, up to the interval; Open-Meteo counts as
+unreachable once the data is 30 minutes old. It only publishes the entities whose values changed.
 
 ```sh
 cp weather/weather.toml.example weather/weather.toml   # then set the location
@@ -790,12 +793,23 @@ cargo run -p oxihome-weather -- weather/weather.toml
 
 `weather/weather.toml` stays out of git because it holds the location and the broker password
 (`[mqtt] password`, user `weather` or the `[node] id`); a public place near home is
-precise enough. Entities: 1 now (temperature °C, humidity %, precipitation mm over the last 15
-minutes, wind km/h, raining `Bool`), 2 today (maximum and minimum °C, chance of rain %), 3 the local
-time of the last reading as `Text`. All read only; rules use them like any sensor, with
-`above`/`below` limits (e.g. precipitation above 0 to say it started raining). The protocol gained
-the `Precipitation` and `WindSpeed` quantities and the `Millimeter` and `KilometerPerHour` units
-for it.
+precise enough. The node refuses to start with a latitude or longitude out of range.
+
+Entities, all read only:
+
+| Entity | Channels |
+|---|---|
+| 1 Now | 0 temperature °C, 1 humidity %, 2 precipitation mm over the last 15 minutes, 3 wind km/h, 4 raining `Bool` (drizzle, rain, showers or thunderstorm in the WMO weather code), 5 feels like °C, 6 gusts km/h, 7 condition `Text` ("Partly cloudy"), 8 daytime `Bool` (between sunrise and sunset; flips on time, between fetches) |
+| 2 Today | 0 maximum °C, 1 minimum °C, 2 chance of rain %, 3 condition `Text`, 4 UV index, 5 sunrise and 6 sunset (`UnixTime`) |
+| 3 Updated | 0 local time of the last reading, `Text` |
+| 4 Connection | 0 reachable `Bool`, 1 data age (s) |
+| 5 Next hour | 0 precipitation mm forecast, 1 chance of rain %, 2 rain expected `Bool` (at least 0.1 mm) |
+| 6 Tomorrow | as Today |
+
+Rules use them like any sensor, with `above`/`below` limits (e.g. precipitation above 0 to say it
+started raining) or `equals` on the flags (daytime equals false to turn a light on at sunset, rain
+expected equals true for a warning). The protocol gained the `Precipitation` and `WindSpeed`
+quantities and the `Millimeter` and `KilometerPerHour` units for it.
 
 ## Linux monitor
 

@@ -14,3 +14,8 @@ id = "weather"
 [location]
 latitude = -30.04
 longitude = -51.22
+
+# Minutes between fetches (5 to 60), on the clock: at 15, a minute after each quarter-hour, when
+# Open-Meteo has new current values. After a failure it tries again in 1 minute, then 2, 4...
+# [fetch]
+# interval = 15
