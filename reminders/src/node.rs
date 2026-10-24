@@ -3,12 +3,12 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use jiff::tz::TimeZone;
-use jiff::{SignedDuration, Timestamp, Zoned};
+use jiff::{SignedDuration, Timestamp, ToSpan, Zoned};
 use oxihome_node::mqtt::SoftwareNode;
 use oxihome_node::{Device, NodeCore, Rejection};
 use oxihome_protocol::{
     Access, Build, Channel, ChannelValue, CommandOp, Confidence, EntityDescriptor, ErrorCode,
-    EventKind, Message, Unit, Value, ValueType,
+    EventKind, Message, NoticeLevel, Unit, Value, ValueType,
 };
 use serde::{Deserialize, Serialize};
 
@@ -17,19 +17,25 @@ use crate::schedule::{Quiet, Schedule};
 /// The reminders use the numbers after it.
 pub const ALL_REMINDERS_ENTITY: u8 = 1;
 const PENDING_COUNT_CHANNEL: u8 = 0;
-const REMINDER_CHANNEL: u8 = 1;
 const LIST_PENDING_CHANNEL: u8 = 2;
-const DONE_BY_TEXT_CHANNEL: u8 = 3;
+const REACTION_CHANNEL: u8 = 3;
 
 const PENDING_CHANNEL: u8 = 0;
 const DONE_CHANNEL: u8 = 1;
 const LAST_DONE_CHANNEL: u8 = 2;
 const NEXT_DUE_CHANNEL: u8 = 3;
 const DUE_CHANNEL: u8 = 4;
+const SNOOZE_CHANNEL: u8 = 5;
 
-const REMINDER_MAX_LENGTH: u16 = 1024;
 /// Telegram's message limit, the usual source of the text.
-const DONE_BY_TEXT_MAX_LENGTH: u16 = 4096;
+const REACTION_MAX_LENGTH: u16 = 4096;
+/// A reaction starting with it snoozes for an hour; any other marks done.
+const SNOOZE_EMOJI: &str = "😴";
+const REACTION_SNOOZE: &str = "1h";
+const SNOOZE_OPTIONS: [&str; 4] = ["15m", "1h", "3h", "tomorrow"];
+/// The first notice says "Due at" until this long after the due time, "Pending since" after.
+const JUST_DUE: SignedDuration = SignedDuration::from_mins(5);
+const LIST_KEY: &str = "pending";
 /// Done this close before a fixed time counts for that time.
 const EARLY_DONE: SignedDuration = SignedDuration::from_hours(2);
 
@@ -55,6 +61,9 @@ pub struct SavedReminder {
     pending_since: Option<Timestamp>,
     /// The last time it went out while pending.
     last_sent: Option<Timestamp>,
+    /// Pending but quiet until then.
+    #[serde(default)]
+    snoozed_until: Option<Timestamp>,
 }
 
 pub struct RemindersNode {
@@ -72,8 +81,15 @@ struct RemindersDevice {
     now: Timestamp,
     /// Entities a command changed, to publish and save.
     changed: Vec<u8>,
-    /// Texts a command produced for the reminder channel.
-    texts: Vec<String>,
+    /// Notices a command produced.
+    notices: Vec<Notice>,
+}
+
+struct Notice {
+    level: NoticeLevel,
+    title: String,
+    message: String,
+    key: String,
 }
 
 struct ReminderState {
@@ -102,6 +118,7 @@ impl RemindersNode {
                         last_done: None,
                         pending_since: None,
                         last_sent: None,
+                        snoozed_until: None,
                     }),
                 reminder,
             })
@@ -117,7 +134,7 @@ impl RemindersNode {
                 quiet,
                 now,
                 changed: Vec::new(),
-                texts: Vec::new(),
+                notices: Vec::new(),
             },
             started_at: Instant::now(),
             state_path,
@@ -126,7 +143,7 @@ impl RemindersNode {
         node
     }
 
-    /// Marks what fell due and sends what is pending, unless in the quiet hours.
+    /// Marks what fell due and sends what is pending, unless snoozed or in the quiet hours.
     pub fn tick(&mut self, now: Timestamp) -> Vec<Message> {
         self.device.now = now;
         let zone = self.device.zone.clone();
@@ -135,7 +152,8 @@ impl RemindersNode {
             .quiet
             .is_some_and(|quiet| quiet.contains(now.to_zoned(zone.clone()).time()));
         let mut became_due = Vec::new();
-        let mut texts = Vec::new();
+        let mut woke = Vec::new();
+        let mut notices = Vec::new();
         let mut changed = false;
         for state in &mut self.device.reminders {
             let saved = &mut state.saved;
@@ -153,6 +171,16 @@ impl RemindersNode {
             let Some(pending_since) = saved.pending_since else {
                 continue;
             };
+            match saved.snoozed_until {
+                Some(until) if now < until => continue,
+                Some(_) => {
+                    saved.snoozed_until = None;
+                    saved.last_sent = None;
+                    woke.push(state.reminder.entity);
+                    changed = true;
+                }
+                None => {}
+            }
             let repeat_due = match (saved.last_sent, state.reminder.repeat) {
                 (None, _) => true,
                 (Some(sent), Some(repeat)) => {
@@ -161,17 +189,19 @@ impl RemindersNode {
                 (Some(_), None) => false,
             };
             if repeat_due && !quiet {
-                let text = if saved.last_sent.is_none() {
-                    state.reminder.name.clone()
+                let at = moment(pending_since, now, &zone);
+                let message = if now.duration_since(pending_since) < JUST_DUE {
+                    format!("Due at {at}")
                 } else {
-                    format!(
-                        "{} (pending since {})",
-                        state.reminder.name,
-                        moment(pending_since, now, &zone)
-                    )
+                    format!("Pending since {at}")
                 };
                 saved.last_sent = Some(now);
-                texts.push(text);
+                notices.push(Notice {
+                    level: NoticeLevel::Warning,
+                    title: state.reminder.name.clone(),
+                    message,
+                    key: state.reminder.entity.to_string(),
+                });
                 changed = true;
             }
         }
@@ -185,11 +215,14 @@ impl RemindersNode {
                     .event(*entity, DUE_CHANNEL, EventKind::Press, None),
             );
         }
+        for entity in &woke {
+            messages.extend(self.core.state(&self.device, *entity));
+        }
         if !became_due.is_empty() {
             messages.extend(self.core.state(&self.device, ALL_REMINDERS_ENTITY));
         }
-        for text in texts {
-            messages.push(self.reminder_text(text));
+        for notice in notices {
+            messages.push(self.notice(notice));
         }
         if changed {
             self.save();
@@ -209,18 +242,18 @@ impl RemindersNode {
             answers.extend(self.core.state(&self.device, ALL_REMINDERS_ENTITY));
             self.save();
         }
-        for text in std::mem::take(&mut self.device.texts) {
-            answers.push(self.reminder_text(text));
+        for notice in std::mem::take(&mut self.device.notices) {
+            answers.push(self.notice(notice));
         }
         answers
     }
 
-    fn reminder_text(&mut self, text: String) -> Message {
-        self.core.event(
-            ALL_REMINDERS_ENTITY,
-            REMINDER_CHANNEL,
-            EventKind::Received,
-            Some(Value::Text(truncate(&text, REMINDER_MAX_LENGTH))),
+    fn notice(&mut self, notice: Notice) -> Message {
+        self.core.notice(
+            notice.level,
+            &notice.title,
+            &notice.message,
+            Some(&notice.key),
         )
     }
 
@@ -302,23 +335,71 @@ impl RemindersDevice {
         saved.last_done = Some(now);
         saved.pending_since = None;
         saved.last_sent = None;
+        saved.snoozed_until = None;
         println!("{} done", state.reminder.name);
         self.changed.push(entity);
     }
 
-    /// The one reminder whose name is in the text; anything else is ignored.
-    fn done_by_text(&mut self, text: &str) {
+    /// A reaction to a message naming exactly one reminder: snooze for 😴, done otherwise.
+    /// Anything else is ignored, so a reaction to another message is no error.
+    fn reaction(&mut self, text: &str) {
         let named: Vec<u8> = self
             .reminders
             .iter()
             .filter(|state| text.contains(&state.reminder.name))
             .map(|state| state.reminder.entity)
             .collect();
-        match named.as_slice() {
-            [entity] => self.done(*entity),
-            [] => println!("no reminder named in \"{text}\""),
-            _ => println!("more than one reminder named in \"{text}\", none done"),
+        let [entity] = named.as_slice() else {
+            match named.len() {
+                0 => println!("no reminder named in \"{text}\""),
+                _ => println!("more than one reminder named in \"{text}\", none changed"),
+            }
+            return;
+        };
+        if !text.starts_with(SNOOZE_EMOJI) {
+            self.done(*entity);
+        } else if let Err(rejection) = self.snooze(*entity, REACTION_SNOOZE) {
+            println!("{}", rejection.detail);
         }
+    }
+
+    /// Only a pending reminder; done or the end of the snooze sends it again.
+    fn snooze(&mut self, entity: u8, option: &str) -> Result<(), Rejection> {
+        let now = self.now;
+        let zone = self.zone.clone();
+        let state = self
+            .reminders
+            .iter_mut()
+            .find(|state| state.reminder.entity == entity)
+            .ok_or_else(|| {
+                Rejection::new(ErrorCode::UnknownEntity, format!("unknown entity {entity}"))
+            })?;
+        if state.saved.pending_since.is_none() {
+            return Err(Rejection::new(
+                ErrorCode::InvalidOperation,
+                format!("{} is not pending", state.reminder.name),
+            ));
+        }
+        let until = match option {
+            "15m" => now.checked_add(SignedDuration::from_mins(15)),
+            "1h" => now.checked_add(SignedDuration::from_hours(1)),
+            "3h" => now.checked_add(SignedDuration::from_hours(3)),
+            "tomorrow" => now
+                .to_zoned(zone)
+                .checked_add(1.day())
+                .map(|tomorrow| tomorrow.timestamp()),
+            other => {
+                return Err(Rejection::new(
+                    ErrorCode::InvalidValue,
+                    format!("snooze option {other}"),
+                ));
+            }
+        }
+        .map_err(|error| Rejection::new(ErrorCode::InvalidValue, error.to_string()))?;
+        state.saved.snoozed_until = Some(until);
+        println!("{} snoozed until {until}", state.reminder.name);
+        self.changed.push(entity);
+        Ok(())
     }
 
     fn list_pending(&mut self) {
@@ -326,12 +407,17 @@ impl RemindersDevice {
             .pending()
             .map(|state| state.reminder.name.as_str())
             .collect();
-        let text = if names.is_empty() {
-            "Nothing pending".to_string()
+        let message = if names.is_empty() {
+            "none".to_string()
         } else {
-            format!("Pending: {}", names.join(", "))
+            names.join(", ")
         };
-        self.texts.push(text);
+        self.notices.push(Notice {
+            level: NoticeLevel::Info,
+            title: "Pending reminders".into(),
+            message,
+            key: LIST_KEY.into(),
+        });
     }
 }
 
@@ -372,23 +458,15 @@ impl Device for RemindersDevice {
                         }),
                     )
                     .named("Pending"),
-                    channel(
-                        REMINDER_CHANNEL,
-                        Access::Event,
-                        Some(ValueType::Text {
-                            max_length: REMINDER_MAX_LENGTH,
-                        }),
-                    )
-                    .named("Reminder"),
                     channel(LIST_PENDING_CHANNEL, Access::Trigger, None).named("List pending"),
                     channel(
-                        DONE_BY_TEXT_CHANNEL,
+                        REACTION_CHANNEL,
                         Access::Trigger,
                         Some(ValueType::Text {
-                            max_length: DONE_BY_TEXT_MAX_LENGTH,
+                            max_length: REACTION_MAX_LENGTH,
                         }),
                     )
-                    .named("Done by text"),
+                    .named("Reaction"),
                 ],
             }
             .named("All reminders"),
@@ -403,6 +481,17 @@ impl Device for RemindersDevice {
                     moment(LAST_DONE_CHANNEL).named("Last done"),
                     moment(NEXT_DUE_CHANNEL).named("Next due"),
                     channel(DUE_CHANNEL, Access::Event, None).named("Due"),
+                    channel(
+                        SNOOZE_CHANNEL,
+                        Access::Trigger,
+                        Some(ValueType::Enum(
+                            SNOOZE_OPTIONS
+                                .iter()
+                                .map(|option| option.to_string())
+                                .collect(),
+                        )),
+                    )
+                    .named("Snooze"),
                 ],
             }
             .named(&state.reminder.name)
@@ -427,7 +516,7 @@ impl Device for RemindersDevice {
         if let Some(last_done) = saved.last_done {
             values.push(confirmed(LAST_DONE_CHANNEL, unix_time(last_done)));
         }
-        let next_due = saved.pending_since.or_else(|| {
+        let next_due = saved.snoozed_until.or(saved.pending_since).or_else(|| {
             state
                 .reminder
                 .schedule
@@ -445,10 +534,15 @@ impl Device for RemindersDevice {
             (ALL_REMINDERS_ENTITY, LIST_PENDING_CHANNEL, _) => self.list_pending(),
             (
                 ALL_REMINDERS_ENTITY,
-                DONE_BY_TEXT_CHANNEL,
+                REACTION_CHANNEL,
                 CommandOp::Invoke(Some(Value::Text(text))),
-            ) => self.done_by_text(text),
+            ) => self.reaction(text),
             (_, DONE_CHANNEL, _) if entity != ALL_REMINDERS_ENTITY => self.done(entity),
+            (_, SNOOZE_CHANNEL, CommandOp::Invoke(Some(Value::Enum(option))))
+                if entity != ALL_REMINDERS_ENTITY =>
+            {
+                self.snooze(entity, option)?
+            }
             _ => {
                 return Err(Rejection::new(
                     ErrorCode::InvalidOperation,
@@ -495,15 +589,6 @@ fn write_state(path: &Path, state: &SavedState) -> anyhow::Result<()> {
     std::fs::write(&temporary, serde_json::to_vec_pretty(state)?)?;
     std::fs::rename(&temporary, path)?;
     Ok(())
-}
-
-/// At most `max_length` bytes, cut at a character boundary.
-fn truncate(text: &str, max_length: u16) -> String {
-    let mut end = text.len().min(max_length as usize);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    text[..end].to_string()
 }
 
 fn confirmed(channel: u8, value: Value) -> ChannelValue {
