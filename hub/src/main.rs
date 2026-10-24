@@ -179,7 +179,8 @@ async fn main() -> anyhow::Result<()> {
         config.http.host
     );
     let retention = Duration::from_secs(u64::from(config.storage.retention_days) * 86400);
-    let (storage, restored) = Storage::open(&config.storage.path, retention).await?;
+    let (storage, mut restored) = Storage::open(&config.storage.path, retention).await?;
+    let waits = std::mem::take(&mut restored.waits);
     println!(
         "{} nodes restored from {}",
         restored.nodes.len(),
@@ -210,6 +211,7 @@ async fn main() -> anyhow::Result<()> {
         restored,
         ota,
     }));
+    config::rules::resume_waits(hub.clone(), waits);
 
     let listener = TcpListener::bind((config.http.host.as_str(), config.http.port)).await?;
     println!(

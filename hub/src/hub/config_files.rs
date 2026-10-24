@@ -120,10 +120,11 @@ impl Hub {
         *self.config_seen.lock().unwrap() = config.texts;
         *self.nodes.lock().unwrap() = config.nodes;
         self.hardware.lock().unwrap().refused.clear();
-        *self.rules.lock().unwrap() = config.rules;
+        let before = std::mem::replace(&mut *self.rules.lock().unwrap(), config.rules);
         *self.remotes.lock().unwrap() = config.remotes;
         *self.dashboards.lock().unwrap() = config.dashboards;
         self.forget_runs_of_removed_rules();
+        crate::config::rules::rearm(self.clone(), before.all());
         self.announce(Change::Config);
         self.announce(Change::Nodes);
         for device_id in self.device_ids() {

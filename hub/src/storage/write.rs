@@ -84,6 +84,29 @@ async fn write_one(transaction: &mut Transaction<'_, Sqlite>, write: &Write) -> 
         Write::Node(node) => write_node(transaction, node).await?,
         Write::Value(update, at) => write_value(transaction, update, *at).await?,
         Write::Event(event, at) => write_event(transaction, event, *at).await?,
+        Write::WaitBegan(wait) => {
+            sqlx::query(
+                "INSERT INTO rule_waits (rule, device_id, trigger, deadline, subject)
+                 VALUES (?, ?, ?, ?, ?)
+                 ON CONFLICT (rule, device_id) DO UPDATE SET
+                     trigger = excluded.trigger, deadline = excluded.deadline,
+                     subject = excluded.subject",
+            )
+            .bind(&wait.rule)
+            .bind(&wait.device_id)
+            .bind(&wait.trigger)
+            .bind(wait.deadline.as_millisecond())
+            .bind(serde_json::to_string(&wait.subject)?)
+            .execute(&mut **transaction)
+            .await?;
+        }
+        Write::WaitEnded(rule, device_id) => {
+            sqlx::query("DELETE FROM rule_waits WHERE rule = ? AND device_id = ?")
+                .bind(rule)
+                .bind(device_id)
+                .execute(&mut **transaction)
+                .await?;
+        }
         Write::RuleRun(name, run) => {
             sqlx::query(
                 "INSERT INTO rule_runs (name, at, errors) VALUES (?, ?, ?)

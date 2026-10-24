@@ -416,6 +416,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn saved_waits_go_on_unless_their_rule_changed() {
+        let hub = Hub::for_tests(
+            "resume",
+            r#"
+            [[rules]]
+            name = "Door open"
+            when = { device = "door", entity = 1, channel = 0, equals = true, for = "10m" }
+            then = []
+            "#,
+        )
+        .await;
+        let rule = hub.rules().remove(0);
+        let saved = |rule: &str, trigger: String| crate::storage::StoredWait {
+            rule: rule.into(),
+            device_id: "door".into(),
+            trigger,
+            deadline: Timestamp::now() - jiff::SignedDuration::from_mins(1),
+            subject: Subject::default(),
+        };
+        let before = Timestamp::now();
+        rules::resume_waits(
+            hub.clone(),
+            vec![
+                saved("Door open", format!("{:?}", rule.when)),
+                saved("Door open", "State(something else)".into()),
+                saved("Removed", format!("{:?}", rule.when)),
+            ],
+        );
+        let pending = hub.holds().pending();
+        assert_eq!(pending.len(), 1);
+        assert!(
+            pending[0].deadline >= before + hub.offline_window("door"),
+            "late, so it waits until the door could have gone offline"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_new_rule_whose_value_already_passes_waits_from_now() {
+        let hub = Hub::for_tests("rearm", "").await;
+        on_message(&hub, &hello("door"));
+        on_message(&hub, &state("door", true));
+        let path = hub.config_directory().join("rules.toml");
+        let rule = r#"
+            [[rules]]
+            name = "Door open"
+            when = { device = "door", entity = 1, channel = 0, equals = true, for = "10m" }
+            then = []
+        "#;
+        std::fs::write(&path, rule).unwrap();
+        on_config_changed(&hub);
+        let pending = hub.holds().pending();
+        assert_eq!(pending.len(), 1);
+
+        std::fs::write(&path, format!("{rule}\n# a comment\n")).unwrap();
+        on_config_changed(&hub);
+        assert_eq!(
+            hub.holds().pending(),
+            pending,
+            "an unchanged rule keeps its wait"
+        );
+
+        std::fs::write(&path, rule.replace("10m", "20m")).unwrap();
+        on_config_changed(&hub);
+        let changed = hub.holds().pending();
+        assert_eq!(changed.len(), 1);
+        assert!(changed[0].deadline > pending[0].deadline);
+
+        std::fs::write(&path, "").unwrap();
+        on_config_changed(&hub);
+        assert!(hub.holds().pending().is_empty());
+    }
+
+    #[tokio::test]
     async fn a_cooldown_holds_back_the_same_node_only() {
         let hub = Hub::for_tests("cooldown", "").await;
         let rule: Rule = toml::from_str(

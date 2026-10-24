@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::bail;
 use jiff::{SignedDuration, Timestamp};
 use oxihome_protocol::Value;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 
 use super::{
@@ -15,6 +15,7 @@ use super::{
 use crate::hub::{CommandOrigin, Hub};
 use crate::node::events::{EventRecord, data_label};
 use crate::node::state::ChannelUpdate;
+use crate::storage::StoredWait;
 use crate::traffic::AlertKind;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -123,7 +124,7 @@ impl Action {
 
 /// What a rule runs about, for `{node}`, `{channel}`, `{detail}`, `{value}`, `{title}` and
 /// `{message}` in the text of its `notify` and `invoke` actions. Which ones a rule may use depends on its trigger.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Subject {
     pub node: Option<String>,
     pub channel: Option<String>,
@@ -178,10 +179,20 @@ impl Subject {
             value,
             ..
         } = update;
+        Self::of_value(device_id, *entity, *channel, value, names)
+    }
+
+    pub fn of_value(
+        device_id: &str,
+        entity: u8,
+        channel: u8,
+        value: &Value,
+        names: &impl Names,
+    ) -> Self {
         Self {
             node: Some(names.node_name(device_id)),
-            channel: Some(names.channel_name(device_id, *entity, *channel)),
-            value: Some(names.value_label(device_id, *entity, *channel, value)),
+            channel: Some(names.channel_name(device_id, entity, channel)),
+            value: Some(names.value_label(device_id, entity, channel, value)),
             ..Self::default()
         }
     }
@@ -358,25 +369,38 @@ pub fn run_triggered(hub: Arc<Hub>, rule: Rule, subject: Subject) {
         _ => None,
     };
     match wait {
-        Some((device_id, lasting)) => hold(hub, lasting, rule, device_id, subject),
+        Some((device_id, lasting)) => {
+            println!(
+                "rule \"{}\": runs if {device_id} stays so for {lasting:#}",
+                rule.name
+            );
+            hold(hub, rule, device_id, subject, Timestamp::now() + lasting);
+        }
         None => start_unless_cooling_down(hub, rule, subject),
     }
 }
 
-/// Runs the rule after `lasting` unless what started the wait ends first (a value failing the
+/// Runs the rule at `deadline` unless what started the wait ends first (a value failing the
 /// test, the node going offline or coming back), a new start replaces it, or the rule changes.
-fn hold(hub: Arc<Hub>, lasting: SignedDuration, rule: Rule, device_id: String, subject: Subject) {
-    let deadline = Timestamp::now() + lasting;
+/// The wait is saved, so it goes on after a restart.
+fn hold(hub: Arc<Hub>, rule: Rule, device_id: String, subject: Subject, deadline: Timestamp) {
     let id = hub.holds().begin(&rule.name, &device_id, deadline);
-    println!(
-        "rule \"{}\": runs if {device_id} stays so for {lasting:#}",
-        rule.name
-    );
+    hub.wait_began(StoredWait {
+        rule: rule.name.clone(),
+        device_id: device_id.clone(),
+        trigger: trigger_text(&rule.when),
+        deadline,
+        subject: subject.clone(),
+    });
     tokio::spawn(async move {
-        tokio::time::sleep(lasting.unsigned_abs()).await;
+        let left = deadline.duration_since(Timestamp::now());
+        if left > SignedDuration::ZERO {
+            tokio::time::sleep(left.unsigned_abs()).await;
+        }
         if !hub.holds().finish(&rule.name, &device_id, id) {
             return;
         }
+        hub.wait_ended(&rule.name, &device_id);
         let current = hub.rules().into_iter().find(|current| {
             current.name == rule.name && current.enabled && current.when == rule.when
         });
@@ -392,6 +416,92 @@ fn hold(hub: Arc<Hub>, lasting: SignedDuration, rule: Rule, device_id: String, s
         }
         start_unless_cooling_down(hub, current, subject);
     });
+}
+
+/// How a wait remembers its rule's `when`.
+fn trigger_text(trigger: &Trigger) -> String {
+    format!("{trigger:?}")
+}
+
+/// Goes on with the waits saved before the restart. Values and presence from before it are not
+/// trusted: a wait whose time ran out while the hub was down, or runs out before the node can
+/// talk again, waits until it could have gone offline, and runs only if it is still so then.
+pub fn resume_waits(hub: Arc<Hub>, waits: Vec<StoredWait>) {
+    let rules = hub.rules();
+    let now = Timestamp::now();
+    for wait in waits {
+        let rule = rules.iter().find(|rule| {
+            rule.name == wait.rule && rule.enabled && trigger_text(&rule.when) == wait.trigger
+        });
+        let Some(rule) = rule else {
+            println!(
+                "rule \"{}\": changed while the hub was down, wait about {} dropped",
+                wait.rule, wait.device_id
+            );
+            hub.wait_ended(&wait.rule, &wait.device_id);
+            continue;
+        };
+        let earliest = now + hub.offline_window(&wait.device_id);
+        let deadline = wait.deadline.max(earliest);
+        println!(
+            "rule \"{}\": still waiting on {} until {deadline}",
+            rule.name, wait.device_id
+        );
+        hold(
+            hub.clone(),
+            rule.clone(),
+            wait.device_id,
+            wait.subject,
+            deadline,
+        );
+    }
+}
+
+/// After the rules change: waits of rules that changed or went away end, and a new or changed
+/// channel rule with `for` whose value already passes starts waiting from now.
+pub fn rearm(hub: Arc<Hub>, before: &[Rule]) {
+    let rules = hub.rules();
+    let unchanged = |rule: &Rule, others: &[Rule]| {
+        others.iter().any(|other| {
+            other.name == rule.name && other.enabled == rule.enabled && other.when == rule.when
+        })
+    };
+    for pending in hub.holds().pending() {
+        let kept = rules
+            .iter()
+            .any(|rule| rule.name == pending.rule && rule.enabled && unchanged(rule, before));
+        if !kept && hub.holds().end(&pending.rule, &pending.device_id) {
+            hub.wait_ended(&pending.rule, &pending.device_id);
+        }
+    }
+    for rule in rules {
+        if !rule.enabled || unchanged(&rule, before) {
+            continue;
+        }
+        let Trigger::State(StateTrigger {
+            device,
+            entity,
+            channel,
+            lasting: Some(lasting),
+            ..
+        }) = &rule.when
+        else {
+            continue;
+        };
+        if !still_so(&rule.when, device, hub.as_ref()) {
+            continue;
+        }
+        let Some(value) = hub.value(device, *entity, *channel) else {
+            continue;
+        };
+        let subject = Subject::of_value(device, *entity, *channel, &value, hub.as_ref());
+        println!(
+            "rule \"{}\": {device} is already so, runs if it stays so for {lasting:#}",
+            rule.name
+        );
+        let deadline = Timestamp::now() + *lasting;
+        hold(hub.clone(), rule.clone(), device.clone(), subject, deadline);
+    }
 }
 
 /// Whether what started the wait of a rule with `for` about the node still holds.
@@ -529,11 +639,14 @@ impl Holds {
         current
     }
 
-    pub fn end(&self, rule: &str, device_id: &str) {
+    /// Whether there was such a wait.
+    pub fn end(&self, rule: &str, device_id: &str) -> bool {
         let key = (rule.to_string(), device_id.to_string());
-        if self.0.lock().unwrap().by_key.remove(&key).is_some() {
+        let ended = self.0.lock().unwrap().by_key.remove(&key).is_some();
+        if ended {
             println!("rule \"{rule}\": {device_id} did not stay so, not run");
         }
+        ended
     }
 
     /// Every wait, soonest first.

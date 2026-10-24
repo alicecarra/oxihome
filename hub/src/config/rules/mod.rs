@@ -14,8 +14,8 @@ use serde::{Deserialize, Deserializer};
 pub use condition::{ChannelCondition, Condition, Expected, HomeState, ValueTest};
 pub use editing::{with_rule_enabled, with_rule_saved};
 pub use run::{
-    Action, Cooldowns, Holds, Pending, Running, Start, Subject, has_placeholders, run_triggered,
-    start,
+    Action, Cooldowns, Holds, Pending, Running, Start, Subject, has_placeholders, rearm,
+    resume_waits, run_triggered, start,
 };
 pub use trigger::{
     CronTrigger, Day, EventTrigger, NoticeTrigger, OfflineTrigger, ScheduleTrigger, StateTrigger,

@@ -12,7 +12,7 @@ use sqlx::Row;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqliteSynchronous};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::config::rules::RuleRun;
+use crate::config::rules::{RuleRun, Subject};
 use crate::node::events::EventRecord;
 use crate::node::registry::StoredNode;
 use crate::node::state::ChannelUpdate;
@@ -35,6 +35,9 @@ pub enum Write {
     Command(StoredCommand),
     /// Removes a node's rows from `nodes`, `channel_values` and `updates`.
     Forget(String),
+    WaitBegan(StoredWait),
+    /// The rule and node of a wait that ran or ended.
+    WaitEnded(String, String),
     /// Removes the last runs of these rules; their executions stay in the history.
     ForgetRuleRuns(Vec<String>),
     /// Answered once everything sent before it is written.
@@ -48,6 +51,8 @@ impl Write {
             Write::Value(..) => "value",
             Write::Event(..) => "event",
             Write::RuleRun(..) => "rule run",
+            Write::WaitBegan(_) => "rule wait",
+            Write::WaitEnded(..) => "ended rule wait",
             Write::Notification(_) => "notification",
             Write::Update(_) => "update",
             Write::Command(_) => "command",
@@ -68,6 +73,18 @@ pub struct Restored {
     /// Newest first.
     pub received_events: Vec<(EventRecord, Timestamp)>,
     pub rule_runs: Vec<(String, RuleRun)>,
+    pub waits: Vec<StoredWait>,
+}
+
+/// A rule waiting out its `for` about a node.
+#[derive(Debug, Clone)]
+pub struct StoredWait {
+    pub rule: String,
+    pub device_id: String,
+    /// The rule's `when` when the wait began.
+    pub trigger: String,
+    pub deadline: Timestamp,
+    pub subject: Subject,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -399,6 +416,19 @@ async fn restore(pool: &SqlitePool) -> anyhow::Result<Restored> {
         ));
     }
 
+    for row in sqlx::query("SELECT rule, device_id, trigger, deadline, subject FROM rule_waits")
+        .fetch_all(pool)
+        .await?
+    {
+        restored.waits.push(StoredWait {
+            rule: row.get("rule"),
+            device_id: row.get("device_id"),
+            trigger: row.get("trigger"),
+            deadline: Timestamp::from_millisecond(row.get("deadline"))?,
+            subject: serde_json::from_str(row.get("subject"))?,
+        });
+    }
+
     Ok(restored)
 }
 
@@ -507,6 +537,19 @@ mod tests {
                 errors: vec!["failed".into()],
             },
         ));
+        let wait = |rule: &str| StoredWait {
+            rule: rule.into(),
+            device_id: "esp32-test".into(),
+            trigger: "State(..)".into(),
+            deadline: Timestamp::from_millisecond(at.as_millisecond()).unwrap(),
+            subject: Subject {
+                node: Some("Test board".into()),
+                ..Subject::default()
+            },
+        };
+        storage.write(Write::WaitBegan(wait("Door open")));
+        storage.write(Write::WaitBegan(wait("Ended")));
+        storage.write(Write::WaitEnded("Ended".into(), "esp32-test".into()));
         storage.write(Write::Notification(StoredNotification {
             title: "Test board offline".into(),
             message: "Stopped sending messages".into(),
@@ -559,6 +602,13 @@ mod tests {
         );
         assert_eq!(restored.received_events, vec![(received, at_milliseconds)]);
         assert_eq!(restored.rule_runs[0].1.errors, vec!["failed".to_string()]);
+        assert_eq!(restored.waits.len(), 1);
+        assert_eq!(restored.waits[0].rule, "Door open");
+        assert_eq!(restored.waits[0].deadline, at_milliseconds);
+        assert_eq!(
+            restored.waits[0].subject.node.as_deref(),
+            Some("Test board")
+        );
         std::fs::remove_dir_all(&directory).unwrap();
     }
 

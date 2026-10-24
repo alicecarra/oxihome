@@ -212,6 +212,15 @@ impl Registry {
         self.nodes.get(device_id)
     }
 
+    /// How long the node may stay silent before it counts as offline; the default heartbeat
+    /// interval for a node the hub does not know.
+    pub fn offline_window(&self, device_id: &str) -> Duration {
+        self.nodes.get(device_id).map_or_else(
+            || default_heartbeat_interval() * self.missed_heartbeats,
+            |node| node.offline_after(self.missed_heartbeats),
+        )
+    }
+
     /// What the node calls an entity or channel in its `Hello`; an empty or too long name counts as
     /// none.
     pub fn declared_name(&self, target: &NameTarget) -> Option<&str> {

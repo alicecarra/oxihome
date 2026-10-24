@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use jiff::SignedDuration;
 use jiff::civil::DateTime;
 
 use super::{Change, Hub, ReceivedCode};
@@ -9,7 +10,7 @@ use crate::config::dashboard::Dashboard;
 use crate::config::rules::{Cooldowns, Holds, Rule, RuleRun, RuleUse, Running};
 use crate::node::events::EventRecord;
 use crate::node::state::ChannelUpdate;
-use crate::storage::Write;
+use crate::storage::{StoredWait, Write};
 use crate::traffic::Alert;
 
 impl Hub {
@@ -72,7 +73,9 @@ impl Hub {
             .collect()
         };
         for name in names {
-            self.holds.end(&name, device_id);
+            if self.holds.end(&name, device_id) {
+                self.wait_ended(&name, device_id);
+            }
         }
     }
 
@@ -87,7 +90,9 @@ impl Hub {
             .map(str::to_string)
             .collect();
         for name in names {
-            self.holds.end(&name, device_id);
+            if self.holds.end(&name, device_id) {
+                self.wait_ended(&name, device_id);
+            }
         }
     }
 
@@ -148,6 +153,23 @@ impl Hub {
 
     pub fn holds(&self) -> &Holds {
         &self.holds
+    }
+
+    pub fn wait_began(&self, wait: StoredWait) {
+        self.storage.write(Write::WaitBegan(wait));
+        self.announce(Change::Config);
+    }
+
+    pub fn wait_ended(&self, rule: &str, device_id: &str) {
+        self.storage
+            .write(Write::WaitEnded(rule.to_string(), device_id.to_string()));
+        self.announce(Change::Config);
+    }
+
+    /// How long the node may stay silent before the hub marks it offline.
+    pub fn offline_window(&self, device_id: &str) -> SignedDuration {
+        let window = self.registry.lock().unwrap().offline_window(device_id);
+        SignedDuration::try_from(window).unwrap_or(SignedDuration::from_mins(5))
     }
 
     pub fn cooldowns(&self) -> &Cooldowns {
