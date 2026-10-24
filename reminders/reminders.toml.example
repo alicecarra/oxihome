@@ -1,0 +1,47 @@
+# Copy to reminders.toml (kept out of git: it holds the broker password).
+# What the node remembers (last done, pending) goes to reminders-state.json next to this file.
+
+[mqtt]
+host = "localhost"
+port = 1883
+password = "the node's broker password"
+# Outgoing messages waiting to be sent; new ones are dropped while it is full.
+# queue_size = 4096
+
+[node]
+id = "reminders"
+# Required: cron, at and the quiet hours are in this zone.
+zone = "America/Sao_Paulo"
+# While a reminder is pending it is sent again this often (at least 5m); "off" sends it once.
+# 30m when missing.
+repeat = "30m"
+# Nothing is sent from `from` to `to` (it may cross midnight); what falls inside goes out at the end.
+quiet = { from = "22:00", to = "08:00" }
+
+# Entity 1 is "all reminders". Each reminder has a fixed entity from 2 up: the hub keeps history,
+# rules and its own names by number, so removing a reminder must not renumber the others.
+# Exactly one of:
+#   cron: fixed times, five fields (minute, hour, day of month, month, day of week).
+#   every: this long after it was last done ("90m", "3d", "2w"); with at, on that day at that
+#   time (days or weeks only).
+# repeat: overrides the node's.
+# A Telegram reaction finds the reminder by its name, so no name may contain another.
+# Done before a fixed time counts for it when the time is less than 2 hours away.
+
+[[reminders]]
+entity = 2
+name = "Morning medicine"
+cron = "30 8 * * *"
+repeat = "15m"
+
+[[reminders]]
+entity = 3
+name = "Water the plants"
+every = "3d"
+at = "09:00"
+
+[[reminders]]
+entity = 4
+name = "Pay the rent"
+cron = "0 9 10 * *"
+repeat = "off"

@@ -1964,6 +1964,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxihome-reminders"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "croner",
+ "jiff",
+ "oxihome-node",
+ "oxihome-protocol",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+]
+
+[[package]]
 name = "oxihome-rss"
 version = "0.2.0"
 dependencies = [

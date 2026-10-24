@@ -93,6 +93,18 @@ services:
     volumes:
       - ./printer:/data:ro
 
+  reminders:
+    image: oxihome-reminders:current
+    container_name: oxihome-reminders
+    restart: unless-stopped
+    <<: *logging
+    user: "1000:1000"
+    command: ["reminders.toml"]
+    depends_on: [mosquitto]
+    volumes:
+      # Writable: the node keeps reminders-state.json next to reminders.toml.
+      - ./reminders:/data
+
   network-devices:
     image: oxihome-network-devices:current
     container_name: oxihome-network-devices

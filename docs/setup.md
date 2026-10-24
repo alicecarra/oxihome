@@ -281,7 +281,7 @@ access:
 docker compose -f infra/compose.yaml up -d
 ```
 
-Each node logs in with its device id as the user name (`esp32-<mac>`, `weather`, `network-devices`, `telegram`, `rss`, `youtube`, `printer`, `notebook`...);
+Each node logs in with its device id as the user name (`esp32-<mac>`, `weather`, `network-devices`, `telegram`, `rss`, `youtube`, `printer`, `reminders`, `notebook`...);
 the hub is `oxihome-hub` and `observer` only reads. The ACL in `infra/mosquitto/acl` (in git: it has
 no secrets) lets a node publish only on `oxihome/<its id>/up` and read only its own `down` and the
 broadcast; only the hub publishes on `down`. The client id is forced to the user name, so a login
@@ -727,7 +727,7 @@ current state. (Until 2026-10-13 a full queue of 32 blocked the loop for good: a
 the broker for a few minutes stopped reconnecting, though its service still showed as running.)
 
 `NodeCore::new` takes the node's `Build`, sent in its `Hello`: a short `name` that says what the
-program is (`firmware`, `weather`, `linux-monitor`, `network-devices`, `telegram`, `rss`, `printer`, `simulator`), its `version`
+program is (`firmware`, `weather`, `linux-monitor`, `network-devices`, `telegram`, `rss`, `printer`, `reminders`, `simulator`), its `version`
 (`major.minor.patch`, from its `Cargo.toml`: raise it when the node changes) and its `target`
 (`esp32` for the firmware, from `MCU`; `Build::native` gives `<os>-<architecture>`, e.g.
 `linux-x86_64`, for the software nodes). The hub shows it as **Software**, e.g.
@@ -883,7 +883,10 @@ of the command event; names are 1 to 32 lowercase letters, digits or `_`.
 Entities: 1 message, two `Trigger` channels of `Text` (up to 4096 bytes): 0 sends to `chat` with
 sound, 1 silently. 2 command, an `Event` channel of `Enum` with the declared commands: `/receiver`
 becomes `Received` with `receiver`. 3 connection: 0 whether Telegram answers `getUpdates` (`Bool`),
-1 the last API error (`Text`). Example rules:
+1 the last API error (`Text`). 4 reaction, an `Event` channel of `Text`: when an allowed user adds a
+reaction (any emoji) in `chat` to one of the last 100 messages the bot sent, `Received` with that
+message's text. The bot keeps those messages in memory only, so after a restart a reaction to an
+older one does nothing; removing a reaction does nothing either. Example rules:
 
 ```toml
 [[rules]]
@@ -977,6 +980,48 @@ A channel's feed has its 15 newest uploads: videos, Shorts and live streams. Sho
 with `/shorts/`, so `exclude = "/shorts/"` skips them. A live stream enters the feed when it is
 scheduled, not when it starts. The server sends no `ETag` or `Last-Modified` and caches the feed
 for 15 minutes.
+
+## Reminders node
+
+`reminders/` (`oxihome-reminders`) is a software node with reminders that fall due at fixed times
+(`cron`) or some time after they were last done (`every`, e.g. water the plants 3 days later). A
+pending reminder is sent again every `repeat` until it is done, never inside the quiet hours (what
+falls there goes out when they end). Done comes from the hub (a button, a rule) or from a reaction
+to its Telegram message. The plan and its decisions are in the Trilium note "Nó de lembretes".
+
+```sh
+cp reminders/reminders.toml.example reminders/reminders.toml   # then the broker password and the reminders
+chmod 600 reminders/reminders.toml
+infra/mosquitto/set-password.sh reminders   # the password goes in [mqtt] password
+cargo run -p oxihome-reminders -- reminders/reminders.toml
+```
+
+`reminders/reminders.toml` stays out of git because it holds the broker password; the node keeps
+`reminders-state.json` next to it (last done, pending, last sent), so a restart neither forgets a
+pending reminder nor sends it again early. A new reminder starts counting at the node's start,
+without a warning. When the node was stopped while a reminder fell due, it sends one warning, not
+one per missed time. Done before a fixed time counts for it when that time is less than 2 hours
+away (the 8:30 medicine taken at 8:10 is not sent at 8:30).
+
+Entities: 1 all reminders: 0 how many are pending (`Int`), 1 the text to send (`Event` of `Text`:
+the name, and when repeated the name with "(pending since 08:30)"), 2 list pending (`Trigger`: sends
+"Pending: A, B" on channel 1), 3 done by text (`Trigger` with `Text`: marks done the one reminder
+whose name is in the text; a text with no name or with more than one is ignored, so no reminder name
+may contain another). Each reminder, from entity 2: 0 pending (`Bool`), 1 done (`Trigger`), 2 last
+done and 3 next due (`UnixTime`), 4 due (`Event`, `Press` when it falls due). The rules that link
+it to Telegram, one for all reminders each:
+
+```toml
+[[rules]]
+name = "Reminders: Telegram"
+when = { device = "reminders", entity = 1, channel = 1, event = "Received" }
+then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "⏰ {value}" } }]
+
+[[rules]]
+name = "Reminders: done by a Telegram reaction"
+when = { device = "telegram", entity = 4, channel = 0, event = "Received" }
+then = [{ invoke = { device = "reminders", entity = 1, channel = 3, value = "{value}" } }]
+```
 
 ## Printer node
 
@@ -1214,7 +1259,7 @@ production `[http] password_hash`, see "Login") and
 on the host's network to read its ARP table) and `~/oxihome/telegram/telegram.toml` (the production
 bot's token, `host = "mosquitto"`) and `~/oxihome/rss/rss.toml` (`host = "mosquitto"`; the node
 writes `rss-state.json` there, so that volume is not read only) and `~/oxihome/youtube/youtube.toml`
-(the same for the YouTube instance) and `~/oxihome/printer/printer.toml` (`host = "mosquitto"` under `[mqtt]` only; the printer keeps its address). The web interface is
+(the same for the YouTube instance) and `~/oxihome/printer/printer.toml` (`host = "mosquitto"` under `[mqtt]` only; the printer keeps its address) and `~/oxihome/reminders/reminders.toml` (`host = "mosquitto"`; the node writes `reminders-state.json` there, so that volume is not read only either). The web interface is
 at <https://oxihome.alicecarra.com>, through Caddy (see "HTTPS"); the hub publishes 8090 only on
 the server's localhost. The containers run as uid 1000, the owner of `~/oxihome`.
 
@@ -1241,6 +1286,10 @@ ssh docker-host 'mkdir -p ~/oxihome/printer && chmod 700 ~/oxihome/printer'
 ssh docker-host oxihome/mosquitto/set-password.sh printer   # the password for [mqtt] password
 sed '0,/^host = /s/^host = .*/host = "mosquitto"/' printer/printer.toml | ssh docker-host 'umask 077; cat > ~/oxihome/printer/printer.toml'
 infra/production/deploy.sh printer
+ssh docker-host 'mkdir -p ~/oxihome/reminders && chmod 700 ~/oxihome/reminders'
+ssh docker-host oxihome/mosquitto/set-password.sh reminders   # the password for [mqtt] password
+sed 's/^host = .*/host = "mosquitto"/' reminders/reminders.toml | ssh docker-host 'umask 077; cat > ~/oxihome/reminders/reminders.toml'
+infra/production/deploy.sh reminders
 ```
 
 The first hub deploy took the notebook's configuration and database by faking a dev session

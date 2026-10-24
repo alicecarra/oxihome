@@ -6,6 +6,8 @@
 /weather/weather.toml
 /telegram/telegram.toml
 /printer/printer.toml
+/reminders/reminders.toml
+/reminders/*-state.json
 /rss/rss.toml
 /rss/youtube.toml
 /rss/*-state.json
