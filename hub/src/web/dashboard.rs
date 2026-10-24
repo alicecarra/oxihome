@@ -24,6 +24,7 @@ mod feeds;
 mod history;
 mod job;
 mod nodes;
+mod reminders;
 mod rules;
 mod tabs;
 mod value;
@@ -35,6 +36,7 @@ use feeds::{FeedList, feed_list, feeds_block};
 use history::{history, history_block};
 use job::{JobView, job_block, job_view};
 use nodes::node_status;
+use reminders::{ReminderList, reminder_list, reminders_block};
 use rules::rules_block;
 use tabs::{TabRow, dashboard_tabs, tab_row};
 use value::value_block;
@@ -82,6 +84,10 @@ enum BlockContent {
         toggle: Link,
     },
     Job(JobView),
+    Reminders {
+        list: Option<ReminderList>,
+        device_id: String,
+    },
 }
 
 const UPCOMING_RULES: usize = 5;
@@ -436,7 +442,7 @@ fn block_trigger(block: &Block, range: ChartRange) -> String {
                 .map(|channel| format!("{} throttle:{throttle}s", node_trigger(&channel.device)))
                 .collect()
         }
-        BlockKind::Feeds | BlockKind::Job => block
+        BlockKind::Feeds | BlockKind::Job | BlockKind::Reminders => block
             .device
             .iter()
             .map(|device| node_trigger(device))
@@ -567,6 +573,14 @@ async fn block_view(
             let (title, job) = job_view(hub, block);
             (title, BlockContent::Job(job))
         }
+        BlockKind::Reminders => {
+            let device_id = block.device.clone().unwrap_or_default();
+            let list = reminder_list(hub, &device_id);
+            let title = list
+                .as_ref()
+                .map_or_else(|| device_id.clone(), |list| list.node_label.clone());
+            (title, BlockContent::Reminders { list, device_id })
+        }
     };
     BlockView {
         index: 0,
@@ -679,6 +693,7 @@ async fn dashboard_block(block: BlockView, place: Place, query: String) -> Resul
                             toggle: toggle
                         ),
                         BlockContent::Job(job) => job_block(job: job),
+                        BlockContent::Reminders { list, device_id } => reminders_block(list: list, device_id: device_id),
                         BlockContent::Buttons(buttons) => buttons_block(buttons: buttons),
                     }
                 )

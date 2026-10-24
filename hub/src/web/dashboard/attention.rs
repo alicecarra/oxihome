@@ -1,6 +1,6 @@
 //! Whether a dashboard needs a look, for the dot on its tab.
 
-use super::job;
+use super::{job, reminders};
 use crate::config::dashboard::{Block, BlockKind, Dashboard};
 use crate::hub::Hub;
 use crate::web::overview;
@@ -9,7 +9,7 @@ use crate::web::overview;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Attention {
     None,
-    /// A node the block shows is offline.
+    /// A node the block shows is offline, or a reminder is pending.
     Warning,
     /// A job or a rule failed.
     Alert,
@@ -30,6 +30,14 @@ fn block_attention(hub: &Hub, block: &Block) -> Attention {
     match block.kind {
         BlockKind::Rules if overview::failing_rules(hub) > 0 => Attention::Alert,
         BlockKind::Job if job::failed(hub, block) => Attention::Alert,
+        BlockKind::Reminders
+            if block
+                .device
+                .as_deref()
+                .is_some_and(|device| reminders::needs_attention(hub, device)) =>
+        {
+            Attention::Warning
+        }
         BlockKind::Nodes | BlockKind::Buttons | BlockKind::Events | BlockKind::Rules => {
             Attention::None
         }

@@ -588,7 +588,10 @@ previous configuration stays in use.
   read (N)" bringing the read ones back, grey, and the choice kept in the address, `?read5=1` for
   the sixth block; "Mark all read" invokes the node's entity 1; `limit` 1 to 50, default 10). The
   node keeps an unread count per feed, not which items, so a feed's newest N items are the unread
-  ones. Notifications are stored in the database too (table `notifications`, same retention as
+  ones. `reminders` (the reminders of a node laid out like the reminders node, `device =
+  "reminders"`): pending ones first, in red with "Pending since 08:30", then the others by due time;
+  each with **Done** and, while pending, Snooze buttons (15 min, 1 h, 3 h, tomorrow) that invoke the
+  node; a snoozed one shows "Snoozed until". Notifications are stored in the database too (table `notifications`, same retention as
   events), so they survive a restart.
 
   Each `[[dashboards]]` is a tab, in file order: the first one at `/` (where the installed app
@@ -596,7 +599,8 @@ previous configuration stays in use.
   there are no tabs. The tab row stays under the header while scrolling; a tab swaps the page in
   place and back works. A dot on another tab says it needs a look: red when a `job` block's state
   is `failed` or `error` or a `rules` block has a rule whose last run failed, amber when a node a
-  `channels`, `value`, `history`, `feeds` or `job` block shows is offline. `attention = false` on a
+  `channels`, `value`, `history`, `feeds`, `reminders` or `job` block shows is offline or a
+  `reminders` block has a pending reminder that is not snoozed. `attention = false` on a
   block leaves it out.
 
   ```toml

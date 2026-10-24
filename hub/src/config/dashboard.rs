@@ -79,7 +79,8 @@ pub struct Block {
     pub range: Option<String>,
     /// `events` and `feeds` blocks only: how many to show, 1 to 50 (default 10).
     pub limit: Option<usize>,
-    /// `feeds` blocks: a node laid out like the rss node; `job` blocks: the node doing the job.
+    /// `feeds` blocks: a node laid out like the rss node; `reminders` blocks: like the reminders
+    /// node; `job` blocks: the node doing the job.
     pub device: Option<String>,
     /// `job` blocks only: the channel naming what the node is doing.
     pub state: Option<JobChannel>,
@@ -132,6 +133,8 @@ pub enum BlockKind {
     /// What a node is doing, like a print: progress and time left while it runs, one line
     /// otherwise.
     Job,
+    /// The reminders of a reminders node, pending first, with done and snooze.
+    Reminders,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -162,6 +165,7 @@ impl BlockKind {
             BlockKind::Events => "events",
             BlockKind::Feeds => "feeds",
             BlockKind::Job => "job",
+            BlockKind::Reminders => "reminders",
         }
     }
 }
@@ -218,6 +222,10 @@ impl Dashboards {
                         bail!("{place}: a feeds block needs device")
                     }
                     BlockKind::Feeds => {}
+                    BlockKind::Reminders if block.device.is_none() => {
+                        bail!("{place}: a reminders block needs device")
+                    }
+                    BlockKind::Reminders => {}
                     BlockKind::Job if block.device.is_none() => {
                         bail!("{place}: a job block needs device")
                     }
@@ -244,10 +252,12 @@ impl Dashboards {
                 if block.kind != BlockKind::Buttons && !block.buttons.is_empty() {
                     bail!("{place}: only a buttons block has buttons");
                 }
-                if !matches!(block.kind, BlockKind::Feeds | BlockKind::Job)
-                    && block.device.is_some()
+                if !matches!(
+                    block.kind,
+                    BlockKind::Feeds | BlockKind::Job | BlockKind::Reminders
+                ) && block.device.is_some()
                 {
-                    bail!("{place}: only feeds and job blocks have device");
+                    bail!("{place}: only feeds, reminders and job blocks have device");
                 }
                 if block.kind != BlockKind::Job
                     && (block.state.is_some()
@@ -452,12 +462,14 @@ mod tests {
         assert!(error(&block("type = \"events\"\nlimit = 0")).contains("limit must be"));
         assert!(error(&block("type = \"rules\"\nlimit = 5")).contains("only events and feeds"));
         assert!(error(&block("type = \"feeds\"")).contains("feeds block needs device"));
+        assert!(error(&block("type = \"reminders\"")).contains("reminders block needs device"));
         assert!(
             error(&block("type = \"feeds\"\ndevice = \"rss\"\nlimit = 51"))
                 .contains("limit must be")
         );
         assert!(
-            error(&block("type = \"events\"\ndevice = \"rss\"")).contains("only feeds and job")
+            error(&block("type = \"events\"\ndevice = \"rss\""))
+                .contains("only feeds, reminders and job")
         );
         let state = "state = { entity = 2, channel = 0 }";
         assert!(
