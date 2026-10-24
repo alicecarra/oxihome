@@ -157,13 +157,11 @@ impl Hub {
 
     pub fn wait_began(&self, wait: StoredWait) {
         self.storage.write(Write::WaitBegan(wait));
-        self.announce(Change::Config);
     }
 
     pub fn wait_ended(&self, rule: &str, device_id: &str) {
         self.storage
             .write(Write::WaitEnded(rule.to_string(), device_id.to_string()));
-        self.announce(Change::Config);
     }
 
     /// How long the node may stay silent before the hub marks it offline.

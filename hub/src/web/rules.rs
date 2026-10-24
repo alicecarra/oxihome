@@ -101,6 +101,8 @@ async fn rule_card(rule: RuleOverview) -> Result<impl View> {
     // The filter still goes by the last run.
     if rule.running {
         (variant, status) = (BadgeVariant::Primary, "running".to_string());
+    } else if !rule.waiting.is_empty() {
+        (variant, status) = (BadgeVariant::Primary, "waiting".to_string());
     }
     let errors = rule.last_run.map(|(_, errors)| errors).unwrap_or_default();
     Ok(view! {
@@ -172,6 +174,16 @@ async fn rule_card(rule: RuleOverview) -> Result<impl View> {
                     if let Some(next_run) = rule.next_run {
                         <dt class="text-muted-foreground">"Next"</dt>
                         <dd>(next_run)</dd>
+                    }
+                    if !rule.waiting.is_empty() {
+                        <dt class="text-muted-foreground">"Runs"</dt>
+                        <dd>
+                            <ul class="space-y-1">
+                                for wait in rule.waiting {
+                                    <li>(format!("{wait}, if it stays so"))</li>
+                                }
+                            </ul>
+                        </dd>
                     }
                     <dt class="text-muted-foreground">"Then"</dt>
                     <dd>

@@ -34,19 +34,19 @@ Deleting and reordering rules are out of scope. Use **Edit in Settings** for tho
   box: the rule defines the button, and `dashboard.toml` may show it.
 - **Purpose.** Filters the channels each select offers:
   - Event: event access
-  - Threshold: readable numbers
-  - Condition: readable with a value
+  - Condition (also the channel value trigger): readable with a value
   - Switch: writable Bool
   - Invoke: Trigger
 - **Control.** Picks the value field from the channel's type: on/off, options, number, text or
   nothing.
-- **`settle()`.** Fills in defaults after each change (event `Press`, direction `above`, alert
+- **`settle()`.** Fills in defaults after each change (event `Press`, test `above`, or `equals`
+  for a channel without limits such as on/off or options, alert
   `stopped` on any node, …).
 - **Optional fields.** `cooldown` on the rule (not shown for button rules, which cannot have one),
-  `for` on a threshold, and the `wait` action are text boxes with durations such as `5m`.
+  `for` on a channel value or an offline node, and the `wait` action are text boxes with durations such as `5m`.
 - **Names.** Entity and channel names come from `nodes.toml`, or else from what the node declares
   in its `Hello`, like the rest of the hub.
-- **Hints next to the fields.** The threshold and channel conditions show the channel's current
+- **Hints next to the fields.** The channel value trigger and channel conditions show the channel's current
   value with its unit. The cron and time triggers show croner's description (the same as the
   card on `/rules`) and the next 5 runs in the hub's time zone. Each action shows the warning the
   card on `/rules` would show, like an invoke value the node does not take.

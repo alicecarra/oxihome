@@ -123,6 +123,7 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
         .iter()
         .map(|rule| Subject::by_hand(&rule.when, hub))
         .collect();
+    let pending = hub.holds().pending();
     let snapshot = hub.snapshot();
     let now = Timestamp::now();
     let local_now = Zoned::now().with_time_zone(hub.time_zone().clone());
@@ -155,6 +156,24 @@ pub fn rules(hub: &Hub) -> Vec<RuleOverview> {
                 .remove(&rule.name)
                 .map(|run| (elapsed(run.at, now), run.errors)),
             running: hub.running().includes(&rule.name),
+            waiting: pending
+                .iter()
+                .filter(|wait| wait.rule == rule.name)
+                .map(|wait| {
+                    let run = wait.deadline.to_zoned(hub.time_zone().clone());
+                    let when = next_run_description(&local_now, &run);
+                    match &rule.when {
+                        Trigger::Offline(OfflineTrigger { device: None, .. }) => {
+                            let node = snapshot
+                                .nodes
+                                .name(&NameTarget::Node(wait.device_id.clone()))
+                                .unwrap_or(&wait.device_id);
+                            format!("{node}: {when}")
+                        }
+                        _ => when,
+                    }
+                })
+                .collect(),
             name: rule.name,
             enabled: rule.enabled,
         })

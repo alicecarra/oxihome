@@ -467,6 +467,12 @@ previous configuration stays in use.
   about the same node and channel is ignored ("still running" in the log), so a double press
   does not send the IR codes twice; another node, as with `offline = "*"`, still runs. "Run now"
   on a rule with a wait answers right away and its card shows "running" until it ends.
+  A rule waiting out its `for` shows "waiting" and when it runs if nothing changes. Waits are
+  kept in the `rule_waits` table and go on after a hub restart; one whose time ran out while the
+  hub was down, or runs out before the node can talk again, waits until the node could have gone
+  offline (its heartbeat interval times `missed_heartbeats`) and runs only if the value is still so
+  then. A wait whose rule changed or went away, also while the hub was down, is dropped; a new or
+  changed rule whose value already passes starts waiting from the moment it is saved.
   `enabled = false` turns a rule off. Triggers:
   - an event of a channel: `when = { device = "...", entity = 2, channel = 0, event = "Press" }`;
     `data = "NEC 00 52"` also requires the event's text to be exactly that (a held key's
@@ -478,18 +484,22 @@ previous configuration stays in use.
     `when = { remote = "Kit Lafvin", key = "0" }` (repeats do not match; an unknown key is an
     error when the configuration loads);
   - a local time, every day or on some days: `when = { at = "07:00", days = ["monday", "friday"] }`;
-  - a numeric channel crossing a limit: `when = { device = "...", entity = 3, channel = 0, above = 28 }`
-    (or `below = 27`). It runs when a value confirmed by the node crosses the limit, not again while
-    the value stays past it; the first value the hub learns counts as a crossing (a value kept in the
-    database from before a restart is not a first value, so a restart does not run the rule again). A pair of rules
-    (on above 28, off below 27) gives hysteresis. `for = "5m"` (at most 24h) runs it only if the
-    value stays past the limit that long after crossing: a confirmed value back within the limit or
-    the node going offline ends the wait, and so does a hub restart;
+  - a channel value: `when = { device = "...", entity = 3, channel = 0, above = 28 }` (or
+    `below = 27`, or `equals` with `true`/`false`, a number or the text of a `Text` or `Enum`
+    value, as in a condition). It runs when a value confirmed by the node starts passing, not again
+    while it keeps passing; the first value the hub learns counts as a start (a value kept in the
+    database from before a restart is not a first value, so a restart does not run the rule again).
+    A pair of rules (on above 28, off below 27) gives hysteresis. `for = "10m"` (at most 24h) runs
+    it only if the value keeps passing that long: a confirmed value that fails, or the node going
+    offline, ends the wait, and the value must still pass when the time is up. Door open for 10
+    minutes is `{ device = "...", entity = 7, channel = 0, equals = true, for = "10m" }`;
   - a cron expression, standard five fields (minute, hour, day of month, month, day of week):
     `when = { cron = "*/30 8-22 * * mon-fri" }`. When both the day of month and the day of week
     are restricted, either one matching is enough, as in classic cron;
   - a node going offline: `when = { offline = "sim-bedroom" }`, or `offline = "*"` for any node.
-    It runs when the hub marks the node offline (the same moment as the toast);
+    It runs when the hub marks the node offline (the same moment as the toast). With
+    `for = "30m"` it runs only if the node is still offline that long after, each node with its own
+    wait;
   - an alert of the traffic map on `/traffic`, checked every 10 s: `when = { stopped = "..." }` (a
     channel that sent `State` regularly went quiet while the node keeps sending other messages; a
     node that goes silent altogether is the `offline` trigger's), `noisy = "..."` (a channel sends

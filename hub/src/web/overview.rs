@@ -119,6 +119,9 @@ pub struct RuleOverview {
     pub last_run: Option<(Duration, Vec<String>)>,
     /// Its actions have not finished, e.g. during a wait.
     pub running: bool,
+    /// When it runs if what it waits on with `for` stays so, soonest first, with the node for a
+    /// rule about any node.
+    pub waiting: Vec<String>,
 }
 
 /// What the dashboard's `rules` block lists.
