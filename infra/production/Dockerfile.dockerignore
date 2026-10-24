@@ -7,6 +7,7 @@
 !node
 !printer
 !protocol
+!reminders
 !rss
 !simulator
 !telegram
@@ -24,3 +25,5 @@ telegram/telegram.toml
 printer/printer.toml
 rss/rss.toml
 rss/rss-state.json
+reminders/reminders.toml
+reminders/*-state.json
