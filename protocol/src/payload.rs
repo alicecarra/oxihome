@@ -46,6 +46,27 @@ pub enum Payload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
     },
+    /// Something a person should know, from the node itself: the hub shows it and rules may pass
+    /// it on. Up to `NOTICE_TITLE_MAX_LENGTH` and `NOTICE_MESSAGE_MAX_LENGTH` bytes.
+    Notice {
+        level: NoticeLevel,
+        title: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        message: String,
+        /// A notice with the same key replaces the node's previous one instead of adding another.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
+}
+
+pub const NOTICE_TITLE_MAX_LENGTH: usize = 128;
+pub const NOTICE_MESSAGE_MAX_LENGTH: usize = 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum NoticeLevel {
+    Info,
+    Warning,
+    Critical,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

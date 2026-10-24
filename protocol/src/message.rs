@@ -214,6 +214,12 @@ mod tests {
                 code: 1,
                 detail: Some("unknown channel".into()),
             },
+            Payload::Notice {
+                level: NoticeLevel::Warning,
+                title: "Depakote".into(),
+                message: "Pending since 08:30".into(),
+                key: Some("2".into()),
+            },
         ];
 
         for payload in payloads {
@@ -250,6 +256,26 @@ mod tests {
         let msg = Message::from_json(json).unwrap();
         assert_eq!(msg.timestamp, None);
         assert_eq!(msg.auth, None);
+    }
+
+    #[test]
+    fn a_notice_leaves_out_an_empty_message_and_key() {
+        let notice = Message::new(
+            "reminders",
+            3,
+            Payload::Notice {
+                level: NoticeLevel::Info,
+                title: "Nothing pending".into(),
+                message: String::new(),
+                key: None,
+            },
+        );
+        let json = notice.to_json().unwrap();
+        assert_eq!(
+            json,
+            r#"{"version":2,"msg_id":3,"src":"reminders","ttl":1,"kind":"Notice","payload":{"level":"Info","title":"Nothing pending"}}"#
+        );
+        assert_eq!(Message::from_json(&json).unwrap(), notice);
     }
 
     #[test]

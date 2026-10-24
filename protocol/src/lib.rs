@@ -13,5 +13,6 @@ pub use error_code::ErrorCode;
 pub use management::ManagementChannel;
 pub use message::{Envelope, Message, PROTOCOL_VERSION};
 pub use payload::{
-    Build, ChannelValue, CommandOp, Confidence, EntityDescriptor, EventKind, Payload, QueryKind,
+    Build, ChannelValue, CommandOp, Confidence, EntityDescriptor, EventKind,
+    NOTICE_MESSAGE_MAX_LENGTH, NOTICE_TITLE_MAX_LENGTH, NoticeLevel, Payload, QueryKind,
 };
