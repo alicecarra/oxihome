@@ -905,9 +905,10 @@ Entities: 1 message, two `Trigger` channels of `Text` (up to 4096 bytes): 0 send
 sound, 1 silently. 2 command, an `Event` channel of `Enum` with the declared commands: `/receiver`
 becomes `Received` with `receiver`. 3 connection: 0 whether Telegram answers `getUpdates` (`Bool`),
 1 the last API error (`Text`). 4 reaction, an `Event` channel of `Text`: when an allowed user adds a
-reaction (any emoji) in `chat` to one of the last 100 messages the bot sent, `Received` with that
-message's text. The bot keeps those messages in memory only, so after a restart a reaction to an
-older one does nothing; removing a reaction does nothing either. Example rules:
+reaction in `chat` to one of the last 100 messages the bot sent, `Received` with the emoji, a space
+and that message's text (`😴 ⏰ Depakote`; just the text for a custom emoji). The bot keeps those
+messages in memory only, so after a restart a reaction to an older one does nothing; removing a
+reaction does nothing either. Example rules:
 
 ```toml
 [[rules]]

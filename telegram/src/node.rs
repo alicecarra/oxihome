@@ -78,13 +78,18 @@ impl TelegramNode {
         Vec::new()
     }
 
-    /// The text of the reacted message as an event; nothing for a message it no longer remembers.
-    pub fn reacted(&mut self, message_id: i32) -> Vec<Message> {
+    /// The emoji, a space and the text of the reacted message as an event; just the text for a
+    /// custom emoji. Nothing for a message it no longer remembers.
+    pub fn reacted(&mut self, message_id: i32, emoji: Option<&str>) -> Vec<Message> {
         let Some((_, text)) = self.device.sent.iter().find(|(id, _)| *id == message_id) else {
             println!("a reaction to message {message_id}, which is not among the last sent");
             return Vec::new();
         };
-        let text = truncate(text.clone(), MESSAGE_MAX_LENGTH as usize);
+        let text = match emoji {
+            Some(emoji) => format!("{emoji} {text}"),
+            None => text.clone(),
+        };
+        let text = truncate(text, MESSAGE_MAX_LENGTH as usize);
         vec![self.core.event(
             REACTION_ENTITY,
             0,
@@ -348,13 +353,21 @@ mod tests {
     fn a_reaction_to_a_sent_message_is_an_event_with_its_text() {
         let (mut node, _receiver) = node(1);
         assert!(node.sent(7, "⏰ Morning medicine".into()).is_empty());
-        let messages = node.reacted(7);
-        assert!(matches!(
-            &messages[0].payload,
-            Payload::Event { entity: REACTION_ENTITY, event: EventKind::Received, data: Some(Value::Text(text)), .. }
-                if text == "⏰ Morning medicine"
-        ));
-        assert!(node.reacted(8).is_empty());
+        let text_of = |messages: Vec<Message>| match &messages[0].payload {
+            Payload::Event {
+                entity: REACTION_ENTITY,
+                event: EventKind::Received,
+                data: Some(Value::Text(text)),
+                ..
+            } => text.clone(),
+            other => panic!("not a reaction event: {other:?}"),
+        };
+        assert_eq!(
+            text_of(node.reacted(7, Some("😴"))),
+            "😴 ⏰ Morning medicine"
+        );
+        assert_eq!(text_of(node.reacted(7, None)), "⏰ Morning medicine");
+        assert!(node.reacted(8, Some("👍")).is_empty());
     }
 
     #[test]
@@ -363,9 +376,9 @@ mod tests {
         for id in 0..=SENT_REMEMBERED as i32 {
             node.sent(id, format!("message {id}"));
         }
-        assert!(node.reacted(0).is_empty());
-        assert_eq!(node.reacted(1).len(), 1);
-        assert_eq!(node.reacted(SENT_REMEMBERED as i32).len(), 1);
+        assert!(node.reacted(0, None).is_empty());
+        assert_eq!(node.reacted(1, None).len(), 1);
+        assert_eq!(node.reacted(SENT_REMEMBERED as i32, None).len(), 1);
     }
 
     #[test]

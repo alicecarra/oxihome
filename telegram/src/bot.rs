@@ -202,13 +202,17 @@ async fn react(
     let added = reaction
         .new_reaction
         .iter()
-        .any(|new| !reaction.old_reaction.contains(new));
+        .find(|new| !reaction.old_reaction.contains(new));
     let allowed = reaction
         .user()
         .is_some_and(|user| settings.users.contains(&user.id));
-    if reaction.chat.id != settings.chat || !added || !allowed {
+    let Some(added) = added.filter(|_| reaction.chat.id == settings.chat && allowed) else {
         return true;
-    }
+    };
+    let emoji = match added {
+        ReactionType::Emoji { emoji } => Some(emoji.clone()),
+        _ => None,
+    };
     if !limiter.allow(Instant::now()) {
         return true;
     }
@@ -220,7 +224,9 @@ async fn react(
         return true;
     }
     let message_id = reaction.message_id.0;
-    handle.act(move |node| node.reacted(message_id)).await
+    handle
+        .act(move |node| node.reacted(message_id, emoji.as_deref()))
+        .await
 }
 
 /// `/receiver` or, in groups, `/receiver@the_bot`, with anything after it ignored.
