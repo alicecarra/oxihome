@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use oxihome_protocol::legacy::{self, ReadError};
@@ -31,6 +31,8 @@ pub struct Mqtt {
     client: AsyncClient,
     next_message_id: AtomicU32,
     traffic: Arc<Traffic>,
+    /// From the broker's `ConnAck` to the next connection error.
+    connected: Arc<AtomicBool>,
 }
 
 impl Mqtt {
@@ -51,10 +53,13 @@ impl Mqtt {
         let subscriber = client.clone();
         let traffic = Arc::new(Traffic::default());
         let recorder = traffic.clone();
+        let connected = Arc::new(AtomicBool::new(false));
+        let connection = connected.clone();
         tokio::spawn(async move {
             loop {
                 let incoming = match event_loop.poll().await {
                     Ok(Event::Incoming(Packet::ConnAck(_))) => {
+                        connection.store(true, Ordering::Relaxed);
                         if let Err(error) = subscriber.subscribe(UP_TOPICS, QoS::AtLeastOnce).await
                         {
                             println!("subscribe failed: {error}");
@@ -75,6 +80,7 @@ impl Mqtt {
                     }
                     Ok(_) => continue,
                     Err(error) => {
+                        connection.store(false, Ordering::Relaxed);
                         println!("MQTT connection error: {error}, retrying");
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         continue;
@@ -91,6 +97,7 @@ impl Mqtt {
                 client,
                 next_message_id: AtomicU32::new(0),
                 traffic,
+                connected,
             },
             receiver,
         )
@@ -109,11 +116,16 @@ impl Mqtt {
             client,
             next_message_id: AtomicU32::new(0),
             traffic: Arc::new(Traffic::default()),
+            connected: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub fn traffic(&self) -> &Traffic {
         &self.traffic
+    }
+
+    pub fn is_connected(&self) -> bool {
+        self.connected.load(Ordering::Relaxed)
     }
 
     pub fn next_message_id(&self) -> u32 {

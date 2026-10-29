@@ -28,6 +28,13 @@ services:
     user: "1000:1000"
     command: ["hub.toml"]
     depends_on: [mosquitto]
+    # Unhealthy when the web interface stops answering or the hub loses the broker.
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/oxihome", "health", "hub.toml"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     ports:
       # The web interface only through Caddy (~/caddy, https://oxihome.alicecarra.com).
       - "127.0.0.1:8090:8090"

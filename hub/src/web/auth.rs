@@ -43,7 +43,7 @@ const MAX_FAILURES: usize = 10;
 const FAILURE_WINDOW: Duration = Duration::from_secs(60);
 const FAILURE_DELAY: Duration = Duration::from_secs(1);
 /// What a signed-out browser can still load.
-const PUBLIC_PATHS: [&str; 2] = ["/login", "/static/app.css"];
+const PUBLIC_PATHS: [&str; 3] = ["/login", "/static/app.css", "/health"];
 
 pub struct Auth {
     /// Argon2 hash in PHC format; the interface is open when missing.

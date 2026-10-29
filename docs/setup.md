@@ -383,6 +383,12 @@ at <http://localhost:8080> works, but at <http://192.168.15.10:8080> the login s
 Only one hub can run per broker: both use the MQTT client id `oxihome-hub` and keep disconnecting
 each other.
 
+`GET /health` needs no login and tells nothing about the home: `200 ok` while the hub is connected
+to the broker, `503 broker disconnected` otherwise. `oxihome-hub health hub/hub.toml` asks it on the
+port of that config (on loopback when `[http] host` is `0.0.0.0`) and exits with 1 unless the
+answer is 200; the production compose file uses it as the hub's Docker healthcheck, every 30 s, so
+`docker ps` shows the hub as healthy or unhealthy.
+
 Ctrl+C or `SIGTERM` stops the hub at once: it logs `shutting down`, stops handling messages and
 rules, closes the pages' event streams and gives other requests up to 3 s to finish. (Before
 2026-10-12 it took 30 s with a page open, waiting for the event streams, which never end on their

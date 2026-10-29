@@ -3,6 +3,7 @@ mod changes;
 mod chart;
 mod dashboard;
 pub(crate) mod format;
+mod health;
 mod home;
 mod host;
 mod icons;
@@ -106,6 +107,7 @@ pub fn router(hub: Arc<Hub>, auth: Auth, listen_host: &str, allowed_hosts: &[Str
         .route(settings::reload)
         .route(settings::save)
         .route(toasts::toasts)
+        .route(health::health)
         .route(changes::events)
         .route(tools::traffic_events)
         .route(htmx_script)

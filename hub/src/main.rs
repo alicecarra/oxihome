@@ -4,6 +4,7 @@ mod commands;
 mod components;
 mod config;
 mod dispatch;
+mod health;
 mod hub;
 mod mqtt;
 mod node;
@@ -130,9 +131,19 @@ struct HttpConfig {
 async fn main() -> anyhow::Result<()> {
     let path = std::env::args()
         .nth(1)
-        .context("usage: oxihome-hub <config.toml> | oxihome-hub hash-password")?;
+        .context(
+            "usage: oxihome-hub <config.toml> | oxihome-hub hash-password | oxihome-hub health <config.toml>",
+        )?;
     if path == "hash-password" {
         return print_password_hash();
+    }
+    if path == "health" {
+        let path = std::env::args()
+            .nth(2)
+            .context("usage: oxihome-hub health <config.toml>")?;
+        let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
+        let config: Config = toml::from_str(&text).with_context(|| format!("parsing {path}"))?;
+        return health::check(&config.http.host, config.http.port).await;
     }
     let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
     let config: Config = toml::from_str(&text).with_context(|| format!("parsing {path}"))?;
