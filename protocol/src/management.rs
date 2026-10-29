@@ -10,7 +10,8 @@ pub const ENTITY: u8 = 0;
 pub enum ManagementChannel {
     /// `Bool`: Wi-Fi on/off.
     Wifi = 0,
-    /// `Trigger` with `Text`: downloads the image at that URL over HTTP and reboots into it.
+    /// `Trigger` with `Text`: downloads the image at that URL over HTTP and reboots into it. The
+    /// URL may end in the image's digest (see `ota_command`).
     Ota = 1,
     /// `Trigger`: reboots the node.
     Reboot = 2,
@@ -88,6 +89,36 @@ pub const WIFI_POWER_SAVE: Parameter = Parameter {
 };
 
 pub const OTA_URL_MAX_LENGTH: u16 = 512;
+
+/// A URL fragment never reaches the server, so a node that does not check the digest still
+/// downloads the image.
+const OTA_DIGEST_PREFIX: &str = "#sha256=";
+
+/// The `Ota` command for the image at `url`, whose SHA-256 is `digest`.
+pub fn ota_command(url: &str, digest: &[u8; 32]) -> String {
+    let mut command = format!("{url}{OTA_DIGEST_PREFIX}");
+    for byte in digest {
+        command.push_str(&format!("{byte:02x}"));
+    }
+    command
+}
+
+/// The URL and, when the command has one, the digest of an `Ota` command. `Err` for a digest that
+/// is not 64 hex digits.
+pub fn parse_ota_command(command: &str) -> Result<(&str, Option<[u8; 32]>), String> {
+    let Some((url, hex)) = command.split_once(OTA_DIGEST_PREFIX) else {
+        return Ok((command, None));
+    };
+    let invalid = || format!("not a SHA-256 digest: \"{hex}\"");
+    if hex.len() != 64 || !hex.is_ascii() {
+        return Err(invalid());
+    }
+    let mut digest = [0; 32];
+    for (index, byte) in digest.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).map_err(|_| invalid())?;
+    }
+    Ok((url, Some(digest)))
+}
 
 pub const PARAMETERS: [Parameter; 3] = [HEARTBEAT_INTERVAL, WIFI_CHECK_INTERVAL, WIFI_POWER_SAVE];
 
@@ -175,6 +206,28 @@ mod tests {
         }
         assert_eq!(ManagementChannel::try_from(4), Err(4));
         assert_eq!(ManagementChannel::try_from(9), Err(9));
+    }
+
+    #[test]
+    fn ota_command_roundtrip() {
+        let digest: [u8; 32] = std::array::from_fn(|index| index as u8 * 8);
+        let command = ota_command("http://hub:8081/ota/abc", &digest);
+        assert_eq!(
+            command,
+            "http://hub:8081/ota/abc#sha256=\
+             0008101820283038404850586068707880889098a0a8b0b8c0c8d0d8e0e8f0f8"
+        );
+        assert!(command.len() <= OTA_URL_MAX_LENGTH.into());
+        assert_eq!(
+            parse_ota_command(&command),
+            Ok(("http://hub:8081/ota/abc", Some(digest)))
+        );
+        assert_eq!(
+            parse_ota_command("http://hub:8081/ota/abc"),
+            Ok(("http://hub:8081/ota/abc", None))
+        );
+        assert!(parse_ota_command("http://hub/ota/abc#sha256=00ff").is_err());
+        assert!(parse_ota_command(&command.replace("f8", "zz")).is_err());
     }
 
     #[test]
