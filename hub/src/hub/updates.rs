@@ -6,6 +6,7 @@ use std::time::Instant;
 use anyhow::{Context, ensure};
 use jiff::Timestamp;
 use oxihome_protocol::management::{self, ManagementChannel};
+use sha2::{Digest, Sha256};
 
 use super::{Change, CommandOrigin, Hub, UpdateStatus};
 use crate::ota::Update;
@@ -29,8 +30,8 @@ impl Hub {
         Some(UpdateStatus::Available(version))
     }
 
-    /// Sends the node a single-use link to its newest image; the outcome comes with its next
-    /// `Hello` (see `settle_update`).
+    /// Sends the node a single-use link to its newest image, with the image's digest; the outcome
+    /// comes with its next `Hello` (see `settle_update`).
     pub async fn start_update(&self, device_id: &str) -> anyhow::Result<()> {
         let ota = self
             .ota
@@ -46,7 +47,12 @@ impl Hub {
         let (version, image) = ota
             .newer_image(device_id, &running)
             .with_context(|| format!("no image newer than {running} for {device_id}"))?;
+        let bytes = tokio::fs::read(&image)
+            .await
+            .with_context(|| format!("reading {}", image.display()))?;
+        let digest: [u8; 32] = Sha256::digest(&bytes).into();
         let url = ota.start(device_id, running.clone(), version.clone(), image)?;
+        let command = management::ota_command(&url, &digest);
         self.announce(Change::Nodes);
         let channel = u8::from(ManagementChannel::Ota);
         if let Err(error) = self
@@ -54,7 +60,7 @@ impl Hub {
                 device_id,
                 management::ENTITY,
                 channel,
-                Some(url),
+                Some(command),
                 CommandOrigin::Hub,
             )
             .await
