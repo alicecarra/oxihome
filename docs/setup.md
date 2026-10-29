@@ -528,8 +528,10 @@ never reused: a node that drops one leaves the id unused.
     `for = "30m"` it runs only if the node is still offline that long after, each node with its own
     wait;
   - an alert of the traffic map on `/traffic`, checked every 10 s: `when = { stopped = "..." }` (a
-    channel that sent `State` regularly went quiet while the node keeps sending other messages; a
-    node that goes silent altogether is the `offline` trigger's), `noisy = "..."` (a channel sends
+    channel that sent `State` regularly went quiet while the node keeps sending other messages;
+    regularly means its recent `State` cover at least 2 minutes and its longer gaps are at most
+    twice its shorter ones, so a channel that only reports changes, like the potentiometer, never
+    stops; a node that goes silent altogether is the `offline` trigger's), `noisy = "..."` (a channel sends
     far more than usual for at least 3 of the last 5 minutes, so holding a remote key is not noise)
     or `unanswered = "..."` (commands to the node went without an answer in the last hour), with a
     node id or `"*"` for any node. It runs when the alert goes up, not again while it stays up nor

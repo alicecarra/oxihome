@@ -25,6 +25,9 @@ const NOISY_MINUTES: usize = 3;
 const STOPPED_FACTOR: u32 = 3;
 const STOPPED_MINIMUM: Duration = Duration::from_secs(2 * 60);
 const STOPPED_MINIMUM_STATES: usize = 5;
+/// A channel is regular when its longer gaps (upper quartile) are at most this many times its
+/// shorter ones (lower quartile): a potentiometer that only reports changes is not.
+const REGULAR_SPREAD: u32 = 2;
 
 /// A node whose median answer takes this long is slow.
 const SLOW: Duration = Duration::from_secs(1);
@@ -405,7 +408,9 @@ fn channel_summary(
                 per_minute >= NOISY_MINIMUM_PER_MINUTE && per_minute >= NOISY_FACTOR * earlier
             }));
     let stopped = match (typical, counters.states.back()) {
-        (Some(typical), Some(last)) if counters.states.len() >= STOPPED_MINIMUM_STATES => {
+        (Some(typical), Some(last))
+            if counters.states.len() >= STOPPED_MINIMUM_STATES && regular(&counters.states) =>
+        {
             let limit = (typical * STOPPED_FACTOR).max(STOPPED_MINIMUM);
             elapsed(*last, now) > limit
                 && node_last_up_at.is_some_and(|up| elapsed(up, now) <= limit)
@@ -445,13 +450,33 @@ fn answers(answers: &VecDeque<(Timestamp, Duration)>, now: Timestamp) -> Option<
     })
 }
 
-/// The median time between `times`.
-fn typical_gap(times: &VecDeque<Timestamp>) -> Option<Duration> {
-    let mut gaps: Vec<Duration> = times
+/// `times` cover at least `STOPPED_MINIMUM`, so a short even burst is not a rhythm, and their gaps
+/// are even (`REGULAR_SPREAD`).
+fn regular(times: &VecDeque<Timestamp>) -> bool {
+    let (Some(first), Some(last)) = (times.front(), times.back()) else {
+        return false;
+    };
+    if elapsed(*first, *last) < STOPPED_MINIMUM {
+        return false;
+    }
+    let mut gaps = gaps(times);
+    gaps.sort();
+    let lower = gaps[gaps.len() / 4];
+    let upper = gaps[gaps.len() * 3 / 4];
+    upper <= lower * REGULAR_SPREAD
+}
+
+fn gaps(times: &VecDeque<Timestamp>) -> Vec<Duration> {
+    times
         .iter()
         .zip(times.iter().skip(1))
         .map(|(earlier, later)| elapsed(*earlier, *later))
-        .collect();
+        .collect()
+}
+
+/// The median time between `times`.
+fn typical_gap(times: &VecDeque<Timestamp>) -> Option<Duration> {
+    let mut gaps = gaps(times);
     if gaps.is_empty() {
         return None;
     }
@@ -589,6 +614,57 @@ mod tests {
                 typical: Duration::from_secs(30)
             })
         );
+    }
+
+    /// Records `State` after each gap and heartbeats every 10 s up to `quiet` seconds after the
+    /// last one, which it returns.
+    fn states_then_quiet(counters: &mut Counters, gaps: &[i64], quiet: i64) -> i64 {
+        let mut second = 0;
+        counters.record(&entry(second, MessageKind::State, Some(0)));
+        for gap in gaps {
+            second += gap;
+            counters.record(&entry(second, MessageKind::State, Some(0)));
+        }
+        for heartbeat in (10..=quiet).step_by(10) {
+            counters.record(&entry(second + heartbeat, MessageKind::Heartbeat, None));
+        }
+        second + quiet
+    }
+
+    #[test]
+    fn a_potentiometer_reporting_noise_never_stops() {
+        let mut counters = Counters::new(at(0));
+        // The gaps seen on 2026-10-17 before a false alert: the ADC noise at rest, then a few
+        // quick ones.
+        let now = states_then_quiet(
+            &mut counters,
+            &[41, 200, 80, 130, 65, 175, 59, 2, 2, 27, 4],
+            600,
+        );
+        assert_eq!(only_channel(&counters, now).highlight, None);
+    }
+
+    #[test]
+    fn a_periodic_channel_with_an_extra_state_still_stops() {
+        let mut counters = Counters::new(at(0));
+        // Every 30 s, with one change reported halfway through a period.
+        let mut gaps = vec![30; 17];
+        gaps.splice(8..9, [12, 18]);
+        let now = states_then_quiet(&mut counters, &gaps, 130);
+        assert_eq!(
+            only_channel(&counters, now + 1).highlight,
+            Some(Highlight::Stopped {
+                typical: Duration::from_secs(30)
+            })
+        );
+    }
+
+    #[test]
+    fn a_short_even_burst_is_not_a_rhythm() {
+        let mut counters = Counters::new(at(0));
+        // Turning the knob slowly: a change every 4 s for 40 s.
+        let now = states_then_quiet(&mut counters, &[4; 10], 300);
+        assert_eq!(only_channel(&counters, now).highlight, None);
     }
 
     #[test]
