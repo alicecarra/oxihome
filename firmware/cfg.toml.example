@@ -10,3 +10,5 @@ mqtt_password = "the board's broker password"
 peripherals = "climate, external_led, buzzer, ir, potentiometer"
 # Read only by build-images.sh: esp32 (default) or esp32c6.
 #chip = "esp32c6"
+# Read by build-images.sh and flash.sh: picks partitions-<flash>.csv; 4mb without it.
+#flash = "16mb"

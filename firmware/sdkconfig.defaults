@@ -13,5 +13,5 @@ CONFIG_FREERTOS_IDLE_TASK_STACKSIZE=4096
 CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=4096
 
 # Over-the-air updates: the bootloader rolls back a new image that does not mark itself valid.
-# The partition table with the two app slots is partitions.csv, written by espflash (flash.sh).
+# The partition tables (two app slots) are partitions-<flash>.csv, written by flash.sh.
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

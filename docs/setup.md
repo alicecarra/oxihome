@@ -67,13 +67,19 @@ cargo run --release
 ```
 
 Always flash through `flash.sh`, not plain `espflash flash`. The flash has two app slots for
-over-the-air updates (`partitions.csv`: `nvs`, `otadata`, `phy_init`, `ota_0` and `ota_1` of
-1984 KiB each), and the script writes that table and the bootloader of our build, which rolls back
+over-the-air updates, with one partition table per flash size, picked by `flash` in `cfg.toml`
+(`4mb` without it): `partitions-4mb.csv` has `nvs`, `otadata`, `phy_init`, `ota_0` and `ota_1` of
+1984 KiB each; `partitions-16mb.csv` (NanoESP32-C6) keeps the same first three, has slots of
+4 MiB and a FAT `storage` partition of the remaining ~7.9 MiB, mounted by the firmware at
+`/storage` (formatted on first boot). Before writing, the script reads the board's flash size
+with `espflash board-info` and stops if the table needs more. The table and the bootloader only
+change over the cable: an update over the air writes just the app. The script writes the table
+and the bootloader of our build, which rolls back
 a new image that does not mark itself valid (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` in
 `sdkconfig.defaults`); `espflash` alone writes its own bootloader and its single-app table. The
 script also erases `otadata`, so the board boots the flashed image from `ota_0` even if an update
-had moved it to `ota_1`. Images go over the air in release (about 70% of a slot); debug ones fill
-over 85%.
+had moved it to `ota_1`. Images go over the air in release; debug ones may not fit a 4 MB
+board's slot.
 
 ## Firmware configuration
 
@@ -110,7 +116,9 @@ firmware/build-images.sh esp32-14335c2e7270   # or some of them
 ```
 
 A board with another chip has a `chip` line in its file (`chip = "esp32c6"`); without it the
-script builds for the classic ESP32. The firmware ignores the line.
+script builds for the classic ESP32. A board with 16 MB of flash also has `flash = "16mb"`, which
+picks its partition table; the script stops if an image does not fit that table's slot and warns
+above 90%. The firmware ignores both lines.
 
 The script builds a release image per board into `hub/firmware/<device id>/<version>.bin` (ignored
 by git and readable only by the owner: the images hold the passwords) and puts `cfg.toml` back as

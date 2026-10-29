@@ -13,6 +13,7 @@ mod peripheral;
 mod potentiometer;
 mod recovery;
 mod settings;
+mod storage;
 mod transport;
 mod wifi;
 
@@ -73,6 +74,11 @@ fn run() -> anyhow::Result<()> {
 
     let device_id = device_id()?;
     log::info!("Oxihome node {device_id} started");
+    match storage::mount() {
+        Ok(true) => log::info!("Storage partition mounted at /storage"),
+        Ok(false) => {}
+        Err(error) => log::warn!("Storage partition: {error:#}"),
+    }
     let restart_reason = restart_reason();
     if let Some(reason) = &restart_reason {
         log::warn!("{reason}");
