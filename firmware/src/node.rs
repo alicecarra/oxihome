@@ -511,12 +511,12 @@ fn unsupported(entity: u8, channel: u8, op: &CommandOp) -> Rejection {
 
 fn descriptor(id: u8, peripheral: &Peripheral) -> EntityDescriptor {
     let channels = match peripheral {
-        Peripheral::Output { .. } => vec![channel(
-            MAIN_CHANNEL,
-            Access::ReadWrite,
-            Some(ValueType::Bool),
-        )],
-        Peripheral::Button { .. } => vec![channel(MAIN_CHANNEL, Access::Event, None)],
+        Peripheral::Output { .. } => {
+            vec![channel(MAIN_CHANNEL, Access::ReadWrite, Some(ValueType::Bool)).named("Power")]
+        }
+        Peripheral::Button { .. } => {
+            vec![channel(MAIN_CHANNEL, Access::Event, None).named("Press")]
+        }
         Peripheral::Climate { climate, .. } => {
             let (temperature, humidity, pressure) = climate.ranges();
             let measured = |id, quantity, unit, range| Channel {
@@ -548,40 +548,50 @@ fn descriptor(id: u8, peripheral: &Peripheral) -> EntityDescriptor {
             }
             channels
         }
-        Peripheral::Buzzer(_) => vec![channel(
-            MAIN_CHANNEL,
-            Access::Trigger,
-            Some(ValueType::Enum(
-                buzzer::PATTERNS
-                    .iter()
-                    .map(|pattern| pattern.to_string())
-                    .collect(),
-            )),
-        )],
-        Peripheral::IrReceiver(_) => vec![channel(
-            MAIN_CHANNEL,
-            Access::Event,
-            Some(ValueType::Text {
-                max_length: ir::MAX_CODE_LENGTH,
-            }),
-        )],
-        Peripheral::IrTransmitter(_) => vec![channel(
-            MAIN_CHANNEL,
-            Access::Trigger,
-            Some(ValueType::Text {
-                max_length: ir::MAX_CODE_LENGTH,
-            }),
-        )],
+        Peripheral::Buzzer(_) => vec![
+            channel(
+                MAIN_CHANNEL,
+                Access::Trigger,
+                Some(ValueType::Enum(
+                    buzzer::PATTERNS
+                        .iter()
+                        .map(|pattern| pattern.to_string())
+                        .collect(),
+                )),
+            )
+            .named("Pattern"),
+        ],
+        Peripheral::IrReceiver(_) => vec![
+            channel(
+                MAIN_CHANNEL,
+                Access::Event,
+                Some(ValueType::Text {
+                    max_length: ir::MAX_CODE_LENGTH,
+                }),
+            )
+            .named("Received"),
+        ],
+        Peripheral::IrTransmitter(_) => vec![
+            channel(
+                MAIN_CHANNEL,
+                Access::Trigger,
+                Some(ValueType::Text {
+                    max_length: ir::MAX_CODE_LENGTH,
+                }),
+            )
+            .named("Send"),
+        ],
         Peripheral::Gps { .. } => {
-            let read = |id, value, unit| Channel {
+            let read = |id, name, value, unit| Channel {
                 unit,
-                ..channel(id, Access::Read, Some(value))
+                ..channel(id, Access::Read, Some(value)).named(name)
             };
             let float = |min, max, step| ValueType::Float { min, max, step };
             vec![
-                read(FIX_CHANNEL, ValueType::Bool, None),
+                read(FIX_CHANNEL, "Fix", ValueType::Bool, None),
                 read(
                     SATELLITES_CHANNEL,
+                    "Satellites",
                     ValueType::Int {
                         min: 0,
                         max: 32,
@@ -591,26 +601,31 @@ fn descriptor(id: u8, peripheral: &Peripheral) -> EntityDescriptor {
                 ),
                 read(
                     LATITUDE_CHANNEL,
+                    "Latitude",
                     float(-90.0, 90.0, 0.00001),
                     Some(Unit::Degree),
                 ),
                 read(
                     LONGITUDE_CHANNEL,
+                    "Longitude",
                     float(-180.0, 180.0, 0.00001),
                     Some(Unit::Degree),
                 ),
                 read(
                     ALTITUDE_CHANNEL,
+                    "Altitude",
                     float(-1000.0, 20000.0, 0.1),
                     Some(Unit::Meter),
                 ),
                 read(
                     SPEED_CHANNEL,
+                    "Speed",
                     float(0.0, 2000.0, 0.1),
                     Some(Unit::KilometerPerHour),
                 ),
                 read(
                     TIME_CHANNEL,
+                    "UTC time",
                     ValueType::Int {
                         min: 0,
                         max: i32::MAX,
@@ -631,6 +646,7 @@ fn descriptor(id: u8, peripheral: &Peripheral) -> EntityDescriptor {
                     step: 1,
                 }),
             )
+            .named("Position")
         }],
     };
     EntityDescriptor {
