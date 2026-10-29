@@ -18,8 +18,8 @@ pub use run::{
     run_triggered, start,
 };
 pub use trigger::{
-    CronTrigger, Day, EventTrigger, NoticeTrigger, OfflineTrigger, ScheduleTrigger, StateTrigger,
-    TrafficTrigger, Trigger,
+    CronTrigger, Day, EventTrigger, NoticeTrigger, OfflineTrigger, OnlineTrigger, ScheduleTrigger,
+    StateTrigger, TrafficTrigger, Trigger,
 };
 
 use super::remotes::Remotes;
@@ -121,13 +121,13 @@ pub struct RuleUse {
     pub rule: String,
     pub enabled: bool,
     pub role: RuleRole,
-    /// `None` for the whole node (offline triggers).
+    /// `None` for the whole node (offline and online triggers).
     pub channel: Option<(u8, u8)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuleRole {
-    /// An event or value of the node, or the node going offline, runs the rule.
+    /// An event or value of the node, or the node going offline or coming back, runs the rule.
     RunsOn,
     /// One of the rule's actions sets, toggles or invokes a channel of the node.
     ActsOn,
@@ -201,6 +201,7 @@ impl Rules {
                     add(RuleRole::RunsOn, Some((trigger.entity, trigger.channel)));
                 }
                 Trigger::Offline(OfflineTrigger { device, .. })
+                | Trigger::Online(OnlineTrigger { device })
                 | Trigger::Traffic(TrafficTrigger { device, .. })
                     if device.as_deref().is_none_or(|device| device == device_id) =>
                 {
@@ -390,6 +391,16 @@ impl Rules {
                 rule.enabled
                     && matches!(&rule.when, Trigger::Offline(trigger)
                         if trigger.device.as_deref().is_none_or(|device| device == device_id))
+            })
+            .collect()
+    }
+
+    pub fn online(&self, device_id: &str) -> Vec<&Rule> {
+        self.rules
+            .iter()
+            .filter(|rule| {
+                rule.enabled
+                    && matches!(&rule.when, Trigger::Online(trigger) if trigger.matches(device_id))
             })
             .collect()
     }

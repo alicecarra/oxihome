@@ -78,7 +78,7 @@ pub fn for_node_event(event: &NodeEvent, name: &str) -> Option<(String, String)>
         NodeEvent::Offline(_) => {
             Some((format!("{name} offline"), "Stopped sending messages".into()))
         }
-        NodeEvent::Online(_) => Some((
+        NodeEvent::Online(_) | NodeEvent::Resumed(_) => Some((
             format!("{name} back online"),
             "Sending messages again".into(),
         )),

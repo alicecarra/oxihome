@@ -17,6 +17,7 @@ pub enum Trigger {
     Cron(CronTrigger),
     State(StateTrigger),
     Offline(OfflineTrigger),
+    Online(OnlineTrigger),
     Traffic(TrafficTrigger),
     RemoteKey(RemoteKeyTrigger),
     Button(ButtonTrigger),
@@ -30,6 +31,7 @@ impl Trigger {
             Trigger::Event(_)
             | Trigger::State(_)
             | Trigger::Offline(_)
+            | Trigger::Online(_)
             | Trigger::Traffic(_)
             | Trigger::RemoteKey(_)
             | Trigger::Button(_)
@@ -47,7 +49,7 @@ impl Trigger {
             }
             Trigger::Event(_) => &["node", "channel"],
             Trigger::State(_) => &["node", "channel", "value"],
-            Trigger::Offline(_) => &["node"],
+            Trigger::Offline(_) | Trigger::Online(_) => &["node"],
             Trigger::Traffic(TrafficTrigger {
                 kind: AlertKind::Stopped | AlertKind::Noisy,
                 ..
@@ -66,6 +68,7 @@ impl Trigger {
             Trigger::Event(_)
             | Trigger::State(_)
             | Trigger::Offline(_)
+            | Trigger::Online(_)
             | Trigger::Traffic(_)
             | Trigger::RemoteKey(_)
             | Trigger::Button(_)
@@ -95,6 +98,7 @@ struct TriggerFields {
     days: Vec<Day>,
     cron: Option<String>,
     offline: Option<String>,
+    online: Option<String>,
     stopped: Option<String>,
     noisy: Option<String>,
     unanswered: Option<String>,
@@ -122,6 +126,7 @@ impl TriggerFields {
             ("days", !self.days.is_empty()),
             ("cron", self.cron.is_some()),
             ("offline", self.offline.is_some()),
+            ("online", self.online.is_some()),
             ("stopped", self.stopped.is_some()),
             ("noisy", self.noisy.is_some()),
             ("unanswered", self.unanswered.is_some()),
@@ -150,6 +155,7 @@ impl TryFrom<TriggerFields> for Trigger {
         let remote_key_alone = fields.has_only(&["remote", "key"]);
         let offline_alone = fields.has_only(&["offline", "for"]);
         let notice_alone = fields.has_only(&["notice"]);
+        let online_alone = fields.has_only(&["online"]);
         let traffic: Vec<(AlertKind, String)> = [
             (AlertKind::Stopped, fields.stopped),
             (AlertKind::Noisy, fields.noisy),
@@ -198,6 +204,13 @@ impl TryFrom<TriggerFields> for Trigger {
             let device = (device != "*").then_some(device);
             let lasting = fields.lasting.as_deref().map(lasting).transpose()?;
             return Ok(Trigger::Offline(OfflineTrigger { device, lasting }));
+        }
+        if let Some(device) = fields.online {
+            if !online_alone {
+                return Err("`online` goes alone in `when`".into());
+            }
+            let device = (device != "*").then_some(device);
+            return Ok(Trigger::Online(OnlineTrigger { device }));
         }
         let channel_kinds = [
             fields.event.is_some(),
@@ -330,6 +343,21 @@ pub struct OfflineTrigger {
     pub device: Option<String>,
     /// `for = "30m"`: runs only if the node does not come back this long after going offline.
     pub lasting: Option<SignedDuration>,
+}
+
+/// Runs when the hub marks a node online again after seeing it go offline; `None` for any node
+/// (`online = "*"`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct OnlineTrigger {
+    pub device: Option<String>,
+}
+
+impl OnlineTrigger {
+    pub(super) fn matches(&self, device_id: &str) -> bool {
+        self.device
+            .as_deref()
+            .is_none_or(|device| device == device_id)
+    }
 }
 
 /// Runs when the node sends a `Notice`; `None` for any node (`notice = "*"`).
@@ -557,6 +585,23 @@ mod tests {
         );
         assert!(
             when(r#"{ offline = "sim-bedroom", at = "07:00" }"#)
+                .unwrap_err()
+                .contains("goes alone")
+        );
+    }
+
+    #[test]
+    fn online_trigger_goes_alone_and_fills_the_node() {
+        let any = when(r#"{ online = "*" }"#).unwrap();
+        assert_eq!(any, Trigger::Online(OnlineTrigger { device: None }));
+        assert_eq!(any.placeholders(), ["node"]);
+        let Trigger::Online(tv) = when(r#"{ online = "tv" }"#).unwrap() else {
+            panic!("not an online trigger");
+        };
+        assert!(tv.matches("tv"));
+        assert!(!tv.matches("weather"));
+        assert!(
+            when(r#"{ online = "tv", for = "5m" }"#)
                 .unwrap_err()
                 .contains("goes alone")
         );

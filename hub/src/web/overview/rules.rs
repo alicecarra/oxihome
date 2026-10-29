@@ -12,8 +12,8 @@ use super::{
 use crate::config::nodes::{NameTarget, Nodes};
 use crate::config::rules::{
     Action, ChannelCondition, Condition, CronTrigger, Day, EventTrigger, Expected, NoticeTrigger,
-    OfflineTrigger, ScheduleTrigger, StateTrigger, Subject, TrafficTrigger, Trigger, ValueTest,
-    has_placeholders,
+    OfflineTrigger, OnlineTrigger, ScheduleTrigger, StateTrigger, Subject, TrafficTrigger, Trigger,
+    ValueTest, has_placeholders,
 };
 use crate::hub::Hub;
 use crate::node::events::EventRecord;
@@ -204,6 +204,7 @@ fn trigger_description(nodes: &Nodes, registry: &Registry, trigger: &Trigger) ->
         Trigger::Schedule(trigger) => schedule_description(trigger),
         Trigger::Cron(trigger) => cron_description(trigger),
         Trigger::Offline(trigger) => offline_description(nodes, trigger),
+        Trigger::Online(trigger) => online_description(nodes, trigger),
         Trigger::Traffic(trigger) => traffic_description(nodes, trigger),
         Trigger::RemoteKey(trigger) => format!("{}: key {}", trigger.remote, trigger.key),
         Trigger::Button(trigger) => format!("Button \"{}\"", trigger.button),
@@ -220,6 +221,18 @@ fn notice_description(nodes: &Nodes, trigger: &NoticeTrigger) -> String {
             format!("{node} sends a notice")
         }
         None => "Any node sends a notice".into(),
+    }
+}
+
+fn online_description(nodes: &Nodes, trigger: &OnlineTrigger) -> String {
+    match &trigger.device {
+        Some(device) => {
+            let node = nodes
+                .name(&NameTarget::Node(device.clone()))
+                .unwrap_or(device);
+            format!("{node} comes back online")
+        }
+        None => "Any node comes back online".into(),
     }
 }
 

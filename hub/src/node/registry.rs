@@ -122,7 +122,10 @@ pub enum NodeEvent {
         build: Build,
         entity_count: usize,
     },
+    /// Back after the hub saw the node go offline.
     Online(String),
+    /// The first message from a node the hub only had from the database, after the hub started.
+    Resumed(String),
     Rebooted {
         device_id: String,
         previous_uptime: u32,
@@ -139,6 +142,7 @@ impl NodeEvent {
                 device_id
             }
             NodeEvent::Online(device_id)
+            | NodeEvent::Resumed(device_id)
             | NodeEvent::Offline(device_id)
             | NodeEvent::Unknown(device_id) => device_id,
         }
@@ -156,7 +160,9 @@ impl fmt::Display for NodeEvent {
                 formatter,
                 "{device_id} online ({build}, {entity_count} entities)"
             ),
-            NodeEvent::Online(device_id) => write!(formatter, "{device_id} online"),
+            NodeEvent::Online(device_id) | NodeEvent::Resumed(device_id) => {
+                write!(formatter, "{device_id} online")
+            }
             NodeEvent::Rebooted {
                 device_id,
                 previous_uptime,
@@ -354,11 +360,15 @@ impl Registry {
         let mut events = Vec::new();
         node.last_seen = now;
         node.last_seen_at = Timestamp::now();
-        node.restored = false;
+        let restored = std::mem::take(&mut node.restored);
         node.network.seen(now);
         if !node.online {
             node.online = true;
-            events.push(NodeEvent::Online(message.src.clone()));
+            events.push(if restored {
+                NodeEvent::Resumed(message.src.clone())
+            } else {
+                NodeEvent::Online(message.src.clone())
+            });
         }
 
         if let Payload::State {
@@ -716,6 +726,25 @@ mod tests {
             registry.handle(&hello(), start).as_slice(),
             [NodeEvent::Registered { .. }]
         ));
+    }
+
+    #[test]
+    fn first_heartbeat_after_a_hub_restart_is_not_a_return() {
+        let mut source = Registry::default();
+        let start = Instant::now();
+        source.handle(&hello(), start);
+        let mut registry = Registry::default();
+        registry.restore(source.stored(DEVICE).unwrap(), start);
+
+        assert_eq!(
+            registry.handle(&heartbeat(10), start),
+            vec![NodeEvent::Resumed(DEVICE.into())]
+        );
+        registry.check_presence(start + OFFLINE_AFTER);
+        assert_eq!(
+            registry.handle(&heartbeat(40), start + OFFLINE_AFTER * 2),
+            vec![NodeEvent::Online(DEVICE.into())]
+        );
     }
 
     #[test]

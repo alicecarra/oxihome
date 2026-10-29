@@ -441,6 +441,12 @@ async fn trigger_fields(
                     )
                     <p class="text-sm text-muted-foreground">"With For, runs only if the node stays offline that long (at most 24 hours)."</p>
                 },
+                TriggerKind::Online => {
+                    form_field(title: "Node", name: "trigger.device".to_string(),
+                        choice_select(name: "trigger.device".to_string(), chosen: trigger.device, groups: nodes, placeholder: Some("Choose a node…"))
+                    )
+                    <p class="text-sm text-muted-foreground">"Runs when a node that went offline sends again, not when the hub starts."</p>
+                },
                 TriggerKind::Notice => {
                     form_field(title: "Node", name: "trigger.device".to_string(),
                         choice_select(name: "trigger.device".to_string(), chosen: trigger.device, groups: nodes, placeholder: Some("Choose a node…"))

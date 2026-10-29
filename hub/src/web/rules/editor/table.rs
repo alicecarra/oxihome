@@ -92,6 +92,12 @@ fn trigger_table(trigger: &TriggerDraft, catalog: &Catalog) -> Built<InlineTable
             );
             insert_lasting(&mut table, &trigger.lasting);
         }
+        TriggerKind::Online => {
+            table.insert(
+                "online",
+                required(&trigger.device, "choose the node")?.into(),
+            );
+        }
         TriggerKind::Notice => {
             table.insert(
                 "notice",

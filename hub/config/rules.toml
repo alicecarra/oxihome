@@ -249,7 +249,9 @@ then = [
 [[rules]]
 name = "Telegram echo"
 when = { device = "telegram", entity = 2, channel = 0, event = "Received" }
-then = [{ invoke = { device = "telegram", entity = 1, channel = 0, value = "Got /{value}" } }]
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "Got /{value}" } },
+]
 
 [[rules]]
 name = "buzz when potentiometer above 50"
@@ -257,3 +259,24 @@ when = { device = "esp32-08d1f9ca41e4", entity = 7, channel = 0, above = 50.0 }
 then = [
     { invoke = { device = "esp32-08d1f9ca41e4", entity = 5, channel = 0, value = "Short" } },
 ]
+
+# Reminders (reminders: 1 all reminders, 2 Depakote, 3 Ciproterona)
+
+[[rules]]
+name = "Reminders: Telegram"
+when = { notice = "reminders" }
+then = [
+    { invoke = { device = "telegram", entity = 1, channel = 0, value = "⏰ {title}: {message}" } },
+]
+
+[[rules]]
+name = "Reminders: reaction on Telegram"
+when = { device = "telegram", entity = 4, channel = 0, event = "Received" }
+then = [
+    { invoke = { device = "reminders", entity = 1, channel = 3, value = "{value}" } },
+]
+
+[[rules]]
+name = "Reminders: list from Telegram"
+when = { device = "telegram", entity = 2, channel = 0, event = "Received", data = "lembretes" }
+then = [{ invoke = { device = "reminders", entity = 1, channel = 2 } }]

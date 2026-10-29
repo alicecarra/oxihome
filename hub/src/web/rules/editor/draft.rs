@@ -91,6 +91,7 @@ pub(super) enum TriggerKind {
     Schedule,
     Cron,
     Offline,
+    Online,
     Traffic,
     RemoteKey,
     Button,
@@ -104,6 +105,7 @@ impl Kind for TriggerKind {
         Self::Schedule,
         Self::Cron,
         Self::Offline,
+        Self::Online,
         Self::Traffic,
         Self::RemoteKey,
         Self::Button,
@@ -117,6 +119,7 @@ impl Kind for TriggerKind {
             Self::Schedule => "schedule",
             Self::Cron => "cron",
             Self::Offline => "offline",
+            Self::Online => "online",
             Self::Traffic => "traffic",
             Self::RemoteKey => "remote_key",
             Self::Button => "button",
@@ -131,6 +134,7 @@ impl Kind for TriggerKind {
             Self::Schedule => "At a time of day",
             Self::Cron => "A cron expression",
             Self::Offline => "A node going offline",
+            Self::Online => "A node coming back online",
             Self::Traffic => "A traffic alert",
             Self::RemoteKey => "A remote key",
             Self::Button => "A button",
@@ -377,6 +381,10 @@ impl Draft {
                 trigger.kind = TriggerKind::Offline;
                 trigger.device = offline.device.clone().unwrap_or_else(|| "*".into());
                 trigger.lasting = offline.lasting.map(duration_text).unwrap_or_default();
+            }
+            Trigger::Online(online) => {
+                trigger.kind = TriggerKind::Online;
+                trigger.device = online.device.clone().unwrap_or_else(|| "*".into());
             }
             Trigger::Traffic(TrafficTrigger { kind, device }) => {
                 trigger.kind = TriggerKind::Traffic;

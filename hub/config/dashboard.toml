@@ -112,3 +112,13 @@ type = "feeds"
 title = "YouTube"
 device = "youtube"
 width = 1
+
+
+[[dashboards]]
+name = "Reminders"
+
+[[dashboards.blocks]]
+type = "reminders"
+title = "Reminders"
+width = 2
+device = "reminders"

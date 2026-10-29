@@ -103,7 +103,7 @@ pub fn on_message(hub: &Arc<Hub>, message: &Message) {
     let came_back = !matches!(message.payload, Payload::Hello { .. })
         && node_events
             .iter()
-            .any(|node_event| matches!(node_event, NodeEvent::Online(_)));
+            .any(|node_event| matches!(node_event, NodeEvent::Online(_) | NodeEvent::Resumed(_)));
     if reports_parameters || came_back {
         tokio::spawn(parameters::apply(hub.clone(), message.src.clone()));
         tokio::spawn(hardware::apply(hub.clone(), message.src.clone()));
@@ -233,7 +233,16 @@ fn on_node_event(hub: &Arc<Hub>, node_event: &NodeEvent) {
             };
             spawn_rules(hub, hub.offline_rules(device_id), subject);
         }
-        NodeEvent::Online(device_id) | NodeEvent::Registered { device_id, .. } => {
+        NodeEvent::Online(device_id) => {
+            hub.end_offline_holds(device_id);
+            let subject = Subject {
+                node: Some(hub.node_name(device_id)),
+                device_id: Some(device_id.clone()),
+                ..Subject::default()
+            };
+            spawn_rules(hub, hub.online_rules(device_id), subject);
+        }
+        NodeEvent::Resumed(device_id) | NodeEvent::Registered { device_id, .. } => {
             hub.end_offline_holds(device_id);
         }
         _ => {}
@@ -414,6 +423,37 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert_eq!(titles_of(&hub).last().map(String::as_str), Some("lamp"));
         assert!(!titles_of(&hub).contains(&"tv".to_string()));
+    }
+
+    #[tokio::test]
+    async fn an_online_rule_runs_when_a_node_comes_back_not_when_the_hub_starts() {
+        let hub = Hub::for_tests(
+            "online",
+            r#"
+            [[rules]]
+            name = "Back"
+            when = { online = "*" }
+            then = [{ notify = { title = "{node} is back", message = "" } }]
+            "#,
+        )
+        .await;
+        let runs = || {
+            titles_of(&hub)
+                .into_iter()
+                .filter(|title| title == "tv is back")
+                .count()
+        };
+        on_message(&hub, &hello("tv"));
+        on_node_event(&hub, &NodeEvent::Resumed("tv".into()));
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(runs(), 0);
+
+        for node_event in hub.check_presence(Instant::now() + Duration::from_secs(3600)) {
+            on_node_event(&hub, &node_event);
+        }
+        on_message(&hub, &hello("tv"));
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(runs(), 1);
     }
 
     #[tokio::test]

@@ -1883,7 +1883,7 @@ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "oxihome-hub"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "argon2",

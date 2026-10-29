@@ -527,6 +527,9 @@ never reused: a node that drops one leaves the id unused.
     It runs when the hub marks the node offline (the same moment as the toast). With
     `for = "30m"` it runs only if the node is still offline that long after, each node with its own
     wait;
+  - a node coming back: `when = { online = "sim-bedroom" }`, or `online = "*"` for any node, alone
+    in `when`. It runs when a node the hub saw go offline sends again (the same moment as the
+    "back online" toast), not for the nodes reconnecting when the hub starts; `{node}` names it;
   - an alert of the traffic map on `/traffic`, checked every 10 s: `when = { stopped = "..." }` (a
     channel that sent `State` regularly went quiet while the node keeps sending other messages;
     regularly means its recent `State` cover at least 2 minutes and its longer gaps are at most

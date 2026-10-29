@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 
 use super::{
-    Condition, EventTrigger, HomeState, NoticeTrigger, OfflineTrigger, Rule, RuleRun, StateTrigger,
-    TrafficTrigger, Trigger,
+    Condition, EventTrigger, HomeState, NoticeTrigger, OfflineTrigger, OnlineTrigger, Rule,
+    RuleRun, StateTrigger, TrafficTrigger, Trigger,
 };
 use crate::hub::{CommandOrigin, Hub};
 use crate::node::events::{EventRecord, data_label};
@@ -208,7 +208,8 @@ impl Subject {
             )
         };
         match trigger {
-            Trigger::Offline(OfflineTrigger { device, .. }) => Self {
+            Trigger::Offline(OfflineTrigger { device, .. })
+            | Trigger::Online(OnlineTrigger { device }) => Self {
                 node: node(device),
                 ..Self::default()
             },

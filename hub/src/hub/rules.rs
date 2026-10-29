@@ -106,6 +106,16 @@ impl Hub {
             .collect()
     }
 
+    pub fn online_rules(&self, device_id: &str) -> Vec<Rule> {
+        self.rules
+            .lock()
+            .unwrap()
+            .online(device_id)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
     pub fn traffic_rules(&self, alert: &Alert) -> Vec<Rule> {
         self.rules
             .lock()
