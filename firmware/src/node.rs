@@ -46,7 +46,8 @@ pub struct Board {
     pub problems: Vec<String>,
     pub entities: Vec<Entity>,
     /// Set by an `Ota` command, run by `Node::poll` once the `Ack` is out.
-    pub pending_update: Option<String>,
+    /// The image's URL and digest.
+    pub pending_update: Option<(String, Option<[u8; 32]>)>,
     /// Set by a new hardware, run by `Node::poll` once the `Ack` is out.
     pub pending_restart: bool,
     /// Sent to the hub as `Error` on the first connection only.
@@ -103,8 +104,8 @@ impl<T: Transport> Node<T> {
             std::thread::sleep(RESTART_DELAY);
             esp_idf_svc::hal::reset::restart();
         }
-        if let Some(url) = self.board.pending_update.take() {
-            match self.ota.update(&url) {
+        if let Some((url, digest)) = self.board.pending_update.take() {
+            match self.ota.update(&url, digest) {
                 Ok(()) => esp_idf_svc::hal::reset::restart(),
                 Err(error) => {
                     log::warn!("OTA: {error}");
@@ -455,10 +456,12 @@ impl Device for Board {
                 }
                 Ok(())
             }
-            (management::ENTITY, CommandOp::Invoke(Some(Value::Text(url))))
+            (management::ENTITY, CommandOp::Invoke(Some(Value::Text(command))))
                 if channel == u8::from(ManagementChannel::Ota) =>
             {
-                self.pending_update = Some(url.clone());
+                let (url, digest) = management::parse_ota_command(command)
+                    .map_err(|detail| Rejection::new(ErrorCode::InvalidValue, detail))?;
+                self.pending_update = Some((url.to_string(), digest));
                 Ok(())
             }
             (management::ENTITY, CommandOp::Set(Value::Text(json)))

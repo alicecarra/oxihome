@@ -4,6 +4,10 @@ use anyhow::anyhow;
 use esp_idf_svc::http::Method;
 use esp_idf_svc::http::client::{Configuration, EspHttpConnection};
 use esp_idf_svc::ota::{EspOta, SlotState};
+use esp_idf_svc::sys::{
+    mbedtls_sha256_context, mbedtls_sha256_finish, mbedtls_sha256_free, mbedtls_sha256_init,
+    mbedtls_sha256_starts, mbedtls_sha256_update,
+};
 use oxihome_protocol::ErrorCode;
 
 /// A new image that has not reached the broker by then is rolled back.
@@ -15,7 +19,7 @@ const BUFFER_SIZE: usize = 4096;
 pub enum UpdateError {
     /// No connection, an HTTP status other than 200, or the transfer stopped.
     Download(anyhow::Error),
-    /// Downloaded, but the image failed the final check.
+    /// Downloaded, but the image failed the final check or does not match the digest.
     Rejected(anyhow::Error),
     /// Writing to flash or another failure inside the board.
     Internal(anyhow::Error),
@@ -76,8 +80,9 @@ impl Ota {
         Ok(())
     }
 
-    /// Writes the image to the other slot and boots from it next time; the caller restarts.
-    pub fn update(&mut self, url: &str) -> Result<(), UpdateError> {
+    /// Writes the image to the other slot and boots from it next time; the caller restarts. With a
+    /// `digest`, an image whose SHA-256 differs is dropped before it can boot.
+    pub fn update(&mut self, url: &str, digest: Option<[u8; 32]>) -> Result<(), UpdateError> {
         log::info!("OTA: downloading {url}");
         let mut connection = EspHttpConnection::new(&Configuration {
             buffer_size: Some(BUFFER_SIZE),
@@ -102,6 +107,7 @@ impl Ota {
             .ota
             .initiate_update_with_known_size(size)
             .map_err(internal)?;
+        let mut hasher = Sha256::new();
         let mut buffer = vec![0; BUFFER_SIZE];
         let mut received = 0;
         while received < size {
@@ -119,9 +125,21 @@ impl Ota {
                     internal(error)
                 }
             })?;
+            hasher.update(&buffer[..read]);
             received += read;
             // A slow download must not pass for a stuck loop; a stalled one still times out above.
             unsafe { esp_idf_svc::sys::esp_task_wdt_reset() };
+        }
+        if let Some(expected) = digest {
+            let actual = hasher.finish();
+            if actual != expected {
+                update.abort().map_err(internal)?;
+                return Err(UpdateError::Rejected(anyhow!(
+                    "SHA-256 {} does not match {}",
+                    hex(&actual),
+                    hex(&expected)
+                )));
+            }
         }
         update
             .complete()
@@ -129,4 +147,38 @@ impl Ota {
         log::info!("OTA: {size} bytes written, rebooting");
         Ok(())
     }
+}
+
+/// SHA-256 by mbedtls, already linked for HTTP, on the chip's hash accelerator.
+struct Sha256(Box<mbedtls_sha256_context>);
+
+impl Sha256 {
+    fn new() -> Self {
+        let mut context: Box<mbedtls_sha256_context> = Box::new(unsafe { std::mem::zeroed() });
+        unsafe {
+            mbedtls_sha256_init(&mut *context);
+            mbedtls_sha256_starts(&mut *context, 0);
+        }
+        Self(context)
+    }
+
+    fn update(&mut self, data: &[u8]) {
+        unsafe { mbedtls_sha256_update(&mut *self.0, data.as_ptr(), data.len()) };
+    }
+
+    fn finish(mut self) -> [u8; 32] {
+        let mut digest = [0; 32];
+        unsafe { mbedtls_sha256_finish(&mut *self.0, digest.as_mut_ptr()) };
+        digest
+    }
+}
+
+impl Drop for Sha256 {
+    fn drop(&mut self) {
+        unsafe { mbedtls_sha256_free(&mut *self.0) };
+    }
+}
+
+fn hex(digest: &[u8; 32]) -> String {
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
