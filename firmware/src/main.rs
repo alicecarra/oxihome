@@ -3,8 +3,10 @@ mod button;
 mod buzzer;
 mod climate;
 mod config;
+mod gps;
 mod ir;
 mod ir_transmitter;
+mod nmea;
 mod node;
 mod ota;
 mod peripheral;
@@ -57,8 +59,12 @@ fn run() -> anyhow::Result<()> {
     let mut settings = Settings::load(nvs.clone())?;
     recovery::erase_on_boot_hold(&mut settings)?;
     let selection = recovery::select(&mut settings, factory)?;
-    let (entities, failures) =
-        peripheral::mount(&selection.hardware, peripherals.adc1, peripherals.i2c0);
+    let (entities, failures) = peripheral::mount(
+        &selection.hardware,
+        peripherals.adc1,
+        peripherals.i2c0,
+        peripherals.uart1,
+    );
     let mut problems = selection.problems;
     for problem in &problems {
         log::warn!("{problem}");

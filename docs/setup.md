@@ -272,6 +272,25 @@ come from the AHT20 (0x38) and pressure from the BMP280 (0x77, or 0x76); the BMP
 temperature is not reported, because the chip warms itself. A board has one I2C bus for it, so a
 second such entity fails to mount.
 
+## GPS module
+
+GY-NEO6MV2 (u-blox NEO-6M), driver `gps`, on either chip. It sends NMEA at 9600 baud once a
+second and needs no command, so only its TX is wired: module `VCC` to 3V3 (or 5 V, the module has
+its own regulator), `GND` to GND, `TX` to the board's RX pin (`pin` in `nodes.toml`); its `RX`
+stays loose. The logic is 3.3 V, no divider. Suggested pins: GPIO16 on the classic ESP32 (an
+input-only pin, 34 to 39, works too) and GPIO5 or GPIO20 on the NanoESP32-C6. It uses UART1, so
+a board takes one `gps`.
+
+```toml
+{ id = 8, pin = 16, driver = "gps" }   # report_interval_seconds = 30 by default, 2 to 3600
+```
+
+Channels: 0 fix (`Bool`), 1 satellites, 2 latitude and 3 longitude (°), 4 altitude (m above sea
+level), 5 speed (km/h), 6 UTC time (unix time). Positions, altitude, speed and time are left out
+without a fix. The fix coming or going is reported at once; the rest every
+`report_interval_seconds`, when something changed. Indoors it needs a window: a cold start takes
+from 30 s to a few minutes, and the blue LED on the module blinks once it has a fix.
+
 ## MQTT broker
 
 Mosquitto 2 in Docker on port 1883 (see `infra/`), with a password per client and no anonymous

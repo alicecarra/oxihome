@@ -4,6 +4,7 @@ use esp_idf_svc::hal::adc::oneshot::AdcDriver;
 use esp_idf_svc::hal::adc::{ADC1, ADCU1};
 use esp_idf_svc::hal::gpio::{AnyIOPin, Output, PinDriver, Pull};
 use esp_idf_svc::hal::i2c::{I2C0, I2cConfig, I2cDriver};
+use esp_idf_svc::hal::uart::UART1;
 use esp_idf_svc::hal::units::FromValueType;
 use oxihome_protocol::hardware::{Driver, Hardware, HardwareEntity};
 
@@ -11,6 +12,7 @@ use crate::aht20_bmp280::Aht20Bmp280;
 use crate::button::Button;
 use crate::buzzer::Buzzer;
 use crate::climate::Climate;
+use crate::gps::{Gps, Reading};
 use crate::ir::IrReceiver;
 use crate::ir_transmitter::IrTransmitter;
 use crate::potentiometer::Potentiometer;
@@ -44,6 +46,12 @@ pub enum Peripheral {
         potentiometer: Potentiometer,
         last_read: Instant,
     },
+    Gps {
+        gps: Gps,
+        report_interval: Duration,
+        next_report: Instant,
+        reported: Option<Reading>,
+    },
 }
 
 /// Mounts the entities of an already validated `hardware`. An entity that fails is left out, and
@@ -52,14 +60,16 @@ pub fn mount(
     hardware: &Hardware,
     adc: ADC1<'static>,
     i2c: I2C0<'static>,
+    uart: UART1<'static>,
 ) -> (Vec<Entity>, Vec<String>) {
     let mut adc = Some(adc);
     let mut i2c = Some(i2c);
+    let mut uart = Some(uart);
     let mut shared_adc: Option<&'static AdcDriver<'static, ADCU1>> = None;
     let mut entities = Vec::new();
     let mut failures = Vec::new();
     for entity in &hardware.entities {
-        match mount_one(entity, &mut adc, &mut shared_adc, &mut i2c) {
+        match mount_one(entity, &mut adc, &mut shared_adc, &mut i2c, &mut uart) {
             Ok(peripheral) => entities.push(Entity {
                 id: entity.id,
                 peripheral,
@@ -84,6 +94,7 @@ fn mount_one(
     adc: &mut Option<ADC1<'static>>,
     shared_adc: &mut Option<&'static AdcDriver<'static, ADCU1>>,
     i2c: &mut Option<I2C0<'static>>,
+    uart: &mut Option<UART1<'static>>,
 ) -> anyhow::Result<Peripheral> {
     // Validation keeps pins unique and away from the flash, so no other driver holds this one.
     let pin = || unsafe { AnyIOPin::steal(entity.pin) };
@@ -147,6 +158,19 @@ fn mount_one(
             Peripheral::Potentiometer {
                 potentiometer: Potentiometer::new(adc, entity.pin, *minimum_change)?,
                 last_read: Instant::now(),
+            }
+        }
+        Driver::Gps {
+            report_interval_seconds,
+        } => {
+            let unit = uart
+                .take()
+                .ok_or_else(|| anyhow::anyhow!("UART1 is taken by another entity"))?;
+            Peripheral::Gps {
+                gps: Gps::new(unit, pin())?,
+                report_interval: Duration::from_secs((*report_interval_seconds).into()),
+                next_report: Instant::now(),
+                reported: None,
             }
         }
     })

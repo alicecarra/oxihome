@@ -21,6 +21,13 @@ const MAIN_CHANNEL: u8 = 0;
 const TEMPERATURE_CHANNEL: u8 = 0;
 const HUMIDITY_CHANNEL: u8 = 1;
 const PRESSURE_CHANNEL: u8 = 2;
+const FIX_CHANNEL: u8 = 0;
+const SATELLITES_CHANNEL: u8 = 1;
+const LATITUDE_CHANNEL: u8 = 2;
+const LONGITUDE_CHANNEL: u8 = 3;
+const ALTITUDE_CHANNEL: u8 = 4;
+const SPEED_CHANNEL: u8 = 5;
+const TIME_CHANNEL: u8 = 6;
 /// Time for the `Ack` to leave before a restart.
 const RESTART_DELAY: Duration = Duration::from_secs(1);
 /// After a failed climate read, the next try comes this soon instead of after the read interval.
@@ -176,6 +183,22 @@ impl<T: Transport> Node<T> {
                             Ok(true) => outcomes.push(Outcome::State(id)),
                             Ok(false) => {}
                             Err(error) => log::error!("Entity {id}: reading failed: {error:#}"),
+                        }
+                    }
+                }
+                Peripheral::Gps {
+                    gps,
+                    report_interval,
+                    next_report,
+                    reported,
+                } => {
+                    let fix_changed = gps.poll();
+                    if fix_changed || Instant::now() >= *next_report {
+                        *next_report = Instant::now() + *report_interval;
+                        let reading = gps.reading();
+                        if reading.is_some() && reading != *reported {
+                            *reported = reading;
+                            outcomes.push(Outcome::State(id));
                         }
                     }
                 }
@@ -369,6 +392,38 @@ impl Device for Board {
                 Peripheral::Potentiometer { potentiometer, .. } => potentiometer
                     .percent()
                     .map(|percent| vec![confirmed(MAIN_CHANNEL, Value::Int(percent.into()))]),
+                // The last reported reading, so a `Query` matches what the hub stored.
+                Peripheral::Gps { reported, .. } => reported.map(|reading| {
+                    let mut values = vec![
+                        confirmed(FIX_CHANNEL, Value::Bool(reading.fix)),
+                        confirmed(SATELLITES_CHANNEL, Value::Int(reading.satellites.into())),
+                    ];
+                    if let Some(position) = reading.position {
+                        values.push(confirmed(LATITUDE_CHANNEL, Value::Float(position.latitude)));
+                        values.push(confirmed(
+                            LONGITUDE_CHANNEL,
+                            Value::Float(position.longitude),
+                        ));
+                    }
+                    let optional = [
+                        (ALTITUDE_CHANNEL, reading.altitude_meters.map(Value::Float)),
+                        (
+                            SPEED_CHANNEL,
+                            reading.speed_kilometers_per_hour.map(Value::Float),
+                        ),
+                        (
+                            TIME_CHANNEL,
+                            reading
+                                .unix_time
+                                .and_then(|time| i32::try_from(time).ok())
+                                .map(Value::Int),
+                        ),
+                    ];
+                    values.extend(optional.into_iter().filter_map(|(channel, value)| {
+                        value.map(|value| confirmed(channel, value))
+                    }));
+                    values
+                }),
                 Peripheral::Button { .. }
                 | Peripheral::Buzzer(_)
                 | Peripheral::IrReceiver(_)
@@ -514,6 +569,54 @@ fn descriptor(id: u8, peripheral: &Peripheral) -> EntityDescriptor {
                 max_length: ir::MAX_CODE_LENGTH,
             }),
         )],
+        Peripheral::Gps { .. } => {
+            let read = |id, value, unit| Channel {
+                unit,
+                ..channel(id, Access::Read, Some(value))
+            };
+            let float = |min, max, step| ValueType::Float { min, max, step };
+            vec![
+                read(FIX_CHANNEL, ValueType::Bool, None),
+                read(
+                    SATELLITES_CHANNEL,
+                    ValueType::Int {
+                        min: 0,
+                        max: 32,
+                        step: 1,
+                    },
+                    None,
+                ),
+                read(
+                    LATITUDE_CHANNEL,
+                    float(-90.0, 90.0, 0.00001),
+                    Some(Unit::Degree),
+                ),
+                read(
+                    LONGITUDE_CHANNEL,
+                    float(-180.0, 180.0, 0.00001),
+                    Some(Unit::Degree),
+                ),
+                read(
+                    ALTITUDE_CHANNEL,
+                    float(-1000.0, 20000.0, 0.1),
+                    Some(Unit::Meter),
+                ),
+                read(
+                    SPEED_CHANNEL,
+                    float(0.0, 2000.0, 0.1),
+                    Some(Unit::KilometerPerHour),
+                ),
+                read(
+                    TIME_CHANNEL,
+                    ValueType::Int {
+                        min: 0,
+                        max: i32::MAX,
+                        step: 1,
+                    },
+                    Some(Unit::UnixTime),
+                ),
+            ]
+        }
         Peripheral::Potentiometer { .. } => vec![Channel {
             unit: Some(Unit::Percent),
             ..channel(
