@@ -215,5 +215,8 @@ fn driver_label(driver: &Driver) -> String {
         } => format!(
             "AHT20 + BMP280, SDA on this pin, SCL on {clock_pin}, read every {read_interval_seconds} s"
         ),
+        Driver::Gps {
+            report_interval_seconds,
+        } => format!("GPS, RX on this pin, reported every {report_interval_seconds} s"),
     }
 }

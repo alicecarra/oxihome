@@ -101,6 +101,8 @@ pub fn value_label(value: &Value, unit: Option<Unit>) -> String {
         (Value::Float(number), Some(Unit::UnixTime)) => {
             return moment_label(*number as i64, Timestamp::now());
         }
+        // Five decimals is about a meter.
+        (Value::Float(number), Some(Unit::Degree)) => return format!("{number:.5}°"),
         _ => {}
     }
     match value {
@@ -166,6 +168,8 @@ pub fn unit_symbol(unit: Unit) -> &'static str {
         Unit::Megabyte => "MB",
         Unit::UnixTime => "",
         Unit::Hectopascal => "hPa",
+        Unit::Degree => "°",
+        Unit::Meter => "m",
     }
 }
 
@@ -216,6 +220,10 @@ mod tests {
         assert_eq!(
             value_label(&Value::Float(54.0), Some(Unit::Percent)),
             "54.0 %"
+        );
+        assert_eq!(
+            value_label(&Value::Float(-30.034_57), Some(Unit::Degree)),
+            "-30.03457°"
         );
     }
 
