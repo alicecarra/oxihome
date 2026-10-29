@@ -53,6 +53,12 @@ pub enum Driver {
         #[serde(default = "default_read_interval")]
         read_interval_seconds: u16,
     },
+    /// NMEA GPS module such as the NEO-6M at 9600 baud; `pin` is the board's RX, wired to the
+    /// module's TX.
+    Gps {
+        #[serde(default = "default_read_interval")]
+        report_interval_seconds: u16,
+    },
 }
 
 impl HardwareEntity {
@@ -91,6 +97,7 @@ impl Driver {
             Driver::IrTransmitter => "ir_transmitter",
             Driver::Potentiometer { .. } => "potentiometer",
             Driver::Aht20Bmp280 { .. } => "aht20_bmp280",
+            Driver::Gps { .. } => "gps",
         }
     }
 
@@ -175,6 +182,7 @@ pub enum HardwareProblem {
     NotAnalog { entity: u8, pin: u8 },
     OutOfRange { entity: u8, option: &'static str },
     NotAnOutput { entity: u8, toggles: u8 },
+    SecondGps { entity: u8 },
 }
 
 impl std::fmt::Display for HardwareProblem {
@@ -223,6 +231,9 @@ impl std::fmt::Display for HardwareProblem {
                 formatter,
                 "entity {entity}: toggles entity {toggles}, which is not an output"
             ),
+            HardwareProblem::SecondGps { entity } => {
+                write!(formatter, "entity {entity}: a board takes only one gps")
+            }
         }
     }
 }
@@ -326,6 +337,23 @@ impl Hardware {
                     entity: id,
                     option: "read_interval_seconds",
                 });
+            }
+            Driver::Gps {
+                report_interval_seconds,
+            } => {
+                let first = self
+                    .entities
+                    .iter()
+                    .find(|other| matches!(other.driver, Driver::Gps { .. }));
+                if first.is_some_and(|first| !std::ptr::eq(first, entity)) {
+                    problems.push(HardwareProblem::SecondGps { entity: id });
+                }
+                if !READ_INTERVAL_RANGE.contains(report_interval_seconds) {
+                    problems.push(HardwareProblem::OutOfRange {
+                        entity: id,
+                        option: "report_interval_seconds",
+                    });
+                }
             }
             Driver::Potentiometer { minimum_change } => {
                 if !chip.analog(pin) {
@@ -545,6 +573,34 @@ mod tests {
             alone(sensor(21, 35)).validate("esp32"),
             vec![HardwareProblem::InputOnlyPin { entity: 8, pin: 35 }]
         );
+    }
+
+    #[test]
+    fn gps() {
+        let gps = |id, pin| {
+            entity(
+                id,
+                pin,
+                Driver::Gps {
+                    report_interval_seconds: 30,
+                },
+            )
+        };
+        let mut hardware = test_board();
+        hardware.entities.push(gps(8, 35));
+        assert_eq!(hardware.validate("esp32"), vec![]);
+        assert_eq!(Hardware::from_json(&hardware.to_json()).unwrap(), hardware);
+
+        hardware.entities.push(gps(9, 16));
+        assert_eq!(
+            hardware.validate("esp32"),
+            vec![HardwareProblem::SecondGps { entity: 9 }]
+        );
+
+        let json = r#"{"entities":[{"id":1,"pin":20,"driver":"gps"}]}"#;
+        let hardware = Hardware::from_json(json).unwrap();
+        assert_eq!(hardware.entities[0], gps(1, 20));
+        assert_eq!(hardware.validate("esp32c6"), vec![]);
     }
 
     #[test]

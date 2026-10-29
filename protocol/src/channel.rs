@@ -128,4 +128,6 @@ pub enum Unit {
     Megabyte,
     UnixTime,
     Hectopascal,
+    Degree,
+    Meter,
 }
