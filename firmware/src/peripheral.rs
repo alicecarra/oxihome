@@ -13,6 +13,7 @@ use crate::aht20_bmp280::Aht20Bmp280;
 use crate::button::Button;
 use crate::buzzer::Buzzer;
 use crate::climate::Climate;
+use crate::contact::Contact;
 use crate::gps::{Gps, Reading};
 use crate::ir::IrReceiver;
 use crate::ir_transmitter::IrTransmitter;
@@ -35,6 +36,7 @@ pub enum Peripheral {
         button: Button,
         toggles: Option<u8>,
     },
+    Contact(Contact),
     Climate {
         climate: Climate,
         read_interval: Duration,
@@ -124,6 +126,10 @@ fn mount_one(
                 button: Button::new(PinDriver::input(pin(), pull)?),
                 toggles: *toggles,
             }
+        }
+        Driver::Contact { pull_up, inverted } => {
+            let pull = if *pull_up { Pull::Up } else { Pull::Floating };
+            Peripheral::Contact(Contact::new(PinDriver::input(pin(), pull)?, *inverted))
         }
         Driver::Dht11 {
             read_interval_seconds,

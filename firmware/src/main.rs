@@ -3,6 +3,7 @@ mod aht20_bmp280;
 mod button;
 mod buzzer;
 mod climate;
+mod contact;
 mod config;
 mod espnow;
 mod gateway;

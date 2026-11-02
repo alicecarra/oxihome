@@ -315,6 +315,30 @@ Creating the board's broker user:
 ssh docker-host oxihome/mosquitto/set-password.sh esp32-e8f60afbdf9c   # goes in mqtt_password
 ```
 
+## Reed switch module
+
+Magnetic reed switch on a 3-pin board with a comparator, driver `contact`, on either chip. Board
+`esp32-e8f60afbdf9c` has it as entity 10 through `contact` in `peripherals` of its board file, which
+picks GPIO20 (GPIO25 on the classic ESP32).
+
+| Module | Board |
+|---|---|
+| `+` | 3V3 (never 5 V: the output rises to the supply voltage) |
+| `-` | GND |
+| `DO` | GPIO20 |
+
+In `nodes.toml` the same is `{ id = 10, pin = 20, driver = "contact" }`, with `pull_up` (on by
+default, not available on the classic ESP32's input-only pins) and `inverted` (off by default).
+The driver also takes any other contact wired between the pin and GND.
+
+Channel 0, `Closed` (`Bool`), is true while the pin is low (high when `inverted`), debounced for
+50 ms and reported as soon as it changes. A rule fires on it with `equals`, and `for` covers "open
+for 10 minutes":
+
+```toml
+when = { device = "esp32-e8f60afbdf9c", entity = 10, channel = 0, equals = false, for = "10m" }
+```
+
 ## GPS module
 
 GY-NEO6MV2 (u-blox NEO-6M), driver `gps`, on either chip. It sends NMEA at 9600 baud once a

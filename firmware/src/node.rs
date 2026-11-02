@@ -150,6 +150,11 @@ impl<T: Transport> Node<T> {
                         }
                     }
                 }
+                Peripheral::Contact(contact) => {
+                    if contact.poll() {
+                        outcomes.push(Outcome::State(id));
+                    }
+                }
                 Peripheral::Climate {
                     climate,
                     read_interval,
@@ -441,6 +446,9 @@ impl Device for Board {
                     }
                     values
                 }),
+                Peripheral::Contact(contact) => {
+                    Some(vec![confirmed(MAIN_CHANNEL, Value::Bool(contact.closed()))])
+                }
                 Peripheral::Potentiometer { potentiometer, .. } => potentiometer
                     .percent()
                     .map(|percent| vec![confirmed(MAIN_CHANNEL, Value::Int(percent.into()))]),
@@ -583,6 +591,9 @@ fn descriptor(id: u8, peripheral: &Peripheral) -> EntityDescriptor {
         }
         Peripheral::Button { .. } => {
             vec![channel(MAIN_CHANNEL, Access::Event, None).named("Press")]
+        }
+        Peripheral::Contact(_) => {
+            vec![channel(MAIN_CHANNEL, Access::Read, Some(ValueType::Bool)).named("Closed")]
         }
         Peripheral::Climate { climate, .. } => {
             let (temperature, humidity, pressure) = climate.ranges();

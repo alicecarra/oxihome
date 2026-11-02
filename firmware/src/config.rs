@@ -72,6 +72,14 @@ pub fn default_hardware(peripherals: &str) -> anyhow::Result<Hardware> {
                     vibration_threshold_milli_g: 250,
                 },
             ),
+            "contact" => entity(
+                10,
+                if esp32c6 { 20 } else { 25 },
+                Driver::Contact {
+                    pull_up: true,
+                    inverted: false,
+                },
+            ),
             _ => anyhow::bail!("unknown peripheral \"{name}\" in cfg.toml"),
         });
     }
