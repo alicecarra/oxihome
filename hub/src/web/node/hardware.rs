@@ -200,6 +200,16 @@ fn driver_label(driver: &Driver) -> String {
             }
             label
         }
+        Driver::Contact { pull_up, inverted } => {
+            let mut label = "contact".to_string();
+            if !pull_up {
+                label.push_str(", no pull-up");
+            }
+            if *inverted {
+                label.push_str(", inverted");
+            }
+            label
+        }
         Driver::Dht11 {
             read_interval_seconds,
         } => format!("DHT11, read every {read_interval_seconds} s"),
