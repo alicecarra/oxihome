@@ -27,6 +27,9 @@ const ACCEPTED_REACTION: &str = "👍";
 pub struct Command {
     pub name: String,
     pub description: String,
+    /// What follows the name goes to the hub as text, on a channel of its own.
+    #[serde(default)]
+    pub argument: bool,
 }
 
 impl Command {
@@ -175,7 +178,11 @@ async fn answer(
         return true;
     }
     let name = name.to_string();
-    if !handle.act(move |node| node.command_received(name)).await {
+    let argument = message.text().and_then(command_argument).map(String::from);
+    if !handle
+        .act(move |node| node.command_received(name, argument))
+        .await
+    {
         return false;
     }
     let reaction = ReactionType::Emoji {
@@ -234,6 +241,13 @@ fn command_name(text: &str) -> Option<&str> {
     let word = text.strip_prefix('/')?.split_whitespace().next()?;
     let name = word.split('@').next()?;
     (!name.is_empty()).then_some(name)
+}
+
+/// What follows the command, or `None` when nothing does.
+fn command_argument(text: &str) -> Option<&str> {
+    let (_, argument) = text.split_once(char::is_whitespace)?;
+    let argument = argument.trim();
+    (!argument.is_empty()).then_some(argument)
 }
 
 fn help(commands: &[Command]) -> String {
@@ -319,6 +333,7 @@ mod tests {
         Command {
             name: name.into(),
             description: description.into(),
+            argument: false,
         }
     }
 
@@ -339,6 +354,17 @@ mod tests {
         assert_eq!(command_name("receiver"), None);
         assert_eq!(command_name("/"), None);
         assert_eq!(command_name("/@casa_bot"), None);
+    }
+
+    #[test]
+    fn reads_the_command_argument() {
+        assert_eq!(
+            command_argument("/cena Cinema em casa "),
+            Some("Cinema em casa")
+        );
+        assert_eq!(command_argument("/cena@casa_bot sala"), Some("sala"));
+        assert_eq!(command_argument("/cena"), None);
+        assert_eq!(command_argument("/cena   "), None);
     }
 
     #[test]

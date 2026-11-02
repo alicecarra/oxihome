@@ -1045,7 +1045,8 @@ of the command event; names are 1 to 32 lowercase letters, digits or `_`.
 
 Entities: 1 message, two `Trigger` channels of `Text` (up to 4096 bytes): 0 sends to `chat` with
 sound, 1 silently. 2 command, an `Event` channel of `Enum` with the declared commands: `/receiver`
-becomes `Received` with `receiver`. 3 connection: 0 whether Telegram answers `getUpdates` (`Bool`),
+becomes `Received` with `receiver`; a command with `argument = true` and text after its name sends
+the text on its own channel instead, 1 for the first such command, 2 for the next (up to 256 bytes). 3 connection: 0 whether Telegram answers `getUpdates` (`Bool`),
 1 the last API error (`Text`). 4 reaction, an `Event` channel of `Text`: when an allowed user adds a
 reaction in `chat` to one of the last 100 messages the bot sent, `Received` with the emoji, a space
 and that message's text (`😴 ⏰ Depakote`; just the text for a custom emoji). The bot keeps those
@@ -1057,6 +1058,16 @@ reaction does nothing either. Example rules:
 name = "Receiver from Telegram"
 when = { device = "telegram", entity = 2, channel = 0, event = "Received", data = "receiver" }
 then = [{ invoke = { device = "esp32-14335c2e7270", entity = 3, channel = 0, value = "SONY15 30 15" } }]
+
+[[rules]]
+name = "Telegram /cena: run a scene"
+when = { device = "telegram", entity = 2, channel = 1, event = "Received" }
+then = [{ run_named = { name = "{value}", reply = { device = "telegram", entity = 1, channel = 0 } } }]
+
+[[rules]]
+name = "Telegram /cenas: list the scenes"
+when = { device = "telegram", entity = 2, channel = 0, event = "Received", data = "cenas" }
+then = [{ run_named = { reply = { device = "telegram", entity = 1, channel = 0 } } }]
 
 [[rules]]
 name = "Warn on Telegram when a node goes offline"

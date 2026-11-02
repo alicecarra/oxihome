@@ -17,6 +17,7 @@ const SILENT_CHANNEL: u8 = 1;
 /// Telegram's own limit, in characters; bytes are never fewer.
 const MESSAGE_MAX_LENGTH: u16 = 4096;
 const ERROR_MAX_LENGTH: u16 = 256;
+const ARGUMENT_MAX_LENGTH: u16 = 256;
 /// Sent messages whose reactions become events; older ones are forgotten.
 const SENT_REMEMBERED: usize = 100;
 
@@ -35,6 +36,8 @@ pub struct TelegramNode {
 
 struct TelegramDevice {
     commands: Vec<String>,
+    /// The commands that take an argument; the first has channel 1 of the command entity.
+    argument_commands: Vec<String>,
     outgoing: mpsc::Sender<Outgoing>,
     /// `None` until the first answer or failure of `getUpdates`.
     reachable: Option<bool>,
@@ -44,7 +47,12 @@ struct TelegramDevice {
 }
 
 impl TelegramNode {
-    pub fn new(device_id: String, commands: Vec<String>, outgoing: mpsc::Sender<Outgoing>) -> Self {
+    pub fn new(
+        device_id: String,
+        commands: Vec<String>,
+        argument_commands: Vec<String>,
+        outgoing: mpsc::Sender<Outgoing>,
+    ) -> Self {
         Self {
             core: NodeCore::new(
                 device_id,
@@ -52,6 +60,7 @@ impl TelegramNode {
             ),
             device: TelegramDevice {
                 commands,
+                argument_commands,
                 outgoing,
                 reachable: None,
                 last_error: String::new(),
@@ -61,7 +70,25 @@ impl TelegramNode {
         }
     }
 
-    pub fn command_received(&mut self, command: String) -> Vec<Message> {
+    /// The argument of a command that takes one as text on its channel; anything else as the
+    /// command's name.
+    pub fn command_received(&mut self, command: String, argument: Option<String>) -> Vec<Message> {
+        let position = self
+            .device
+            .argument_commands
+            .iter()
+            .position(|known| *known == command);
+        if let (Some(position), Some(argument)) = (position, argument) {
+            return vec![self.core.event(
+                COMMAND_ENTITY,
+                position as u8 + 1,
+                EventKind::Received,
+                Some(Value::Text(truncate(
+                    argument,
+                    ARGUMENT_MAX_LENGTH as usize,
+                ))),
+            )];
+        }
         vec![self.core.event(
             COMMAND_ENTITY,
             0,
@@ -168,7 +195,7 @@ impl Device for TelegramDevice {
             EntityDescriptor {
                 id: COMMAND_ENTITY,
                 name: None,
-                channels: vec![
+                channels: std::iter::once(
                     Channel {
                         id: 0,
                         name: None,
@@ -178,7 +205,26 @@ impl Device for TelegramDevice {
                         unit: None,
                     }
                     .named("Received"),
-                ],
+                )
+                .chain(
+                    self.argument_commands
+                        .iter()
+                        .enumerate()
+                        .map(|(position, command)| {
+                            Channel {
+                                id: position as u8 + 1,
+                                name: None,
+                                access: Access::Event,
+                                value: Some(ValueType::Text {
+                                    max_length: ARGUMENT_MAX_LENGTH,
+                                }),
+                                quantity: None,
+                                unit: None,
+                            }
+                            .named(format!("/{command} argument"))
+                        }),
+                )
+                .collect(),
             }
             .named("Command"),
             EntityDescriptor {
@@ -292,9 +338,9 @@ mod tests {
 
     fn node(queue: usize) -> (TelegramNode, mpsc::Receiver<Outgoing>) {
         let (sender, receiver) = mpsc::channel(queue);
-        let commands = vec!["receiver".into(), "achar".into()];
+        let commands = vec!["receiver".into(), "achar".into(), "cena".into()];
         (
-            TelegramNode::new("telegram".into(), commands, sender),
+            TelegramNode::new("telegram".into(), commands, vec!["cena".into()], sender),
             receiver,
         )
     }
@@ -341,11 +387,28 @@ mod tests {
     #[test]
     fn commands_are_enum_events() {
         let (mut node, _receiver) = node(1);
-        let messages = node.command_received("receiver".into());
+        let messages = node.command_received("receiver".into(), Some("ignored".into()));
         assert!(matches!(
             &messages[0].payload,
             Payload::Event { entity: COMMAND_ENTITY, event: EventKind::Received, data: Some(Value::Enum(command)), .. }
                 if command == "receiver"
+        ));
+    }
+
+    #[test]
+    fn an_argument_goes_as_text_on_the_channel_of_its_command() {
+        let (mut node, _receiver) = node(1);
+        let messages = node.command_received("cena".into(), Some("Cinema".into()));
+        assert!(matches!(
+            &messages[0].payload,
+            Payload::Event { entity: COMMAND_ENTITY, channel: 1, event: EventKind::Received, data: Some(Value::Text(text)) }
+                if text == "Cinema"
+        ));
+        let messages = node.command_received("cena".into(), None);
+        assert!(matches!(
+            &messages[0].payload,
+            Payload::Event { entity: COMMAND_ENTITY, channel: 0, data: Some(Value::Enum(command)), .. }
+                if command == "cena"
         ));
     }
 

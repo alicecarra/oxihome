@@ -69,8 +69,19 @@ async fn main() -> anyhow::Result<()> {
         .iter()
         .map(|command| command.name.clone())
         .collect();
+    let argument_commands = config
+        .commands
+        .iter()
+        .filter(|command| command.argument)
+        .map(|command| command.name.clone())
+        .collect();
     let handle = mqtt::spawn(
-        TelegramNode::new(config.node.id, command_names, outgoing_sender),
+        TelegramNode::new(
+            config.node.id,
+            command_names,
+            argument_commands,
+            outgoing_sender,
+        ),
         config.mqtt.broker(),
     );
     let client = teloxide_core::net::default_reqwest_settings()

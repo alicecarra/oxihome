@@ -22,6 +22,9 @@ chat = 123456789
 
 # Each one becomes an entry of the bot's menu and an option of the command event (entity 2).
 # Names: 1 to 32 lowercase letters, digits or _.
+# argument = true: what follows the name, as in /cena cinema, goes as text on channel 1 of entity 2
+# (channel 2 for the second such command, and so on) instead of the command event; without text it
+# is a plain command.
 [[commands]]
 name = "receiver"
 description = "Turn the receiver on or off"
@@ -29,3 +32,12 @@ description = "Turn the receiver on or off"
 [[commands]]
 name = "achar"
 description = "Beep the test board"
+
+[[commands]]
+name = "cena"
+description = "Run a scene: /cena name"
+argument = true
+
+[[commands]]
+name = "cenas"
+description = "List the scenes"
