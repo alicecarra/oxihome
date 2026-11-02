@@ -53,6 +53,15 @@ pub enum Driver {
         #[serde(default = "default_read_interval")]
         read_interval_seconds: u16,
     },
+    /// ADXL345 accelerometer on I2C; `pin` is SDA.
+    Adxl345 {
+        clock_pin: u8,
+        #[serde(default = "default_read_interval")]
+        read_interval_seconds: u16,
+        /// A swing of acceleration on an axis above this, within 100 ms, counts as vibration.
+        #[serde(default = "default_vibration_threshold")]
+        vibration_threshold_milli_g: u16,
+    },
     /// NMEA GPS module such as the NEO-6M at 9600 baud; `pin` is the board's RX, wired to the
     /// module's TX.
     Gps {
@@ -65,7 +74,9 @@ impl HardwareEntity {
     /// `pin`, plus the clock pin of an I2C driver.
     pub fn pins(&self) -> Vec<u8> {
         match self.driver {
-            Driver::Aht20Bmp280 { clock_pin, .. } => vec![self.pin, clock_pin],
+            Driver::Aht20Bmp280 { clock_pin, .. } | Driver::Adxl345 { clock_pin, .. } => {
+                vec![self.pin, clock_pin]
+            }
             _ => vec![self.pin],
         }
     }
@@ -83,8 +94,13 @@ fn default_minimum_change() -> u8 {
     2
 }
 
+fn default_vibration_threshold() -> u16 {
+    250
+}
+
 const READ_INTERVAL_RANGE: std::ops::RangeInclusive<u16> = 2..=3600;
 const MINIMUM_CHANGE_RANGE: std::ops::RangeInclusive<u8> = 1..=50;
+const VIBRATION_THRESHOLD_RANGE: std::ops::RangeInclusive<u16> = 10..=16000;
 
 impl Driver {
     pub fn name(&self) -> &'static str {
@@ -97,6 +113,7 @@ impl Driver {
             Driver::IrTransmitter => "ir_transmitter",
             Driver::Potentiometer { .. } => "potentiometer",
             Driver::Aht20Bmp280 { .. } => "aht20_bmp280",
+            Driver::Adxl345 { .. } => "adxl345",
             Driver::Gps { .. } => "gps",
         }
     }
@@ -109,6 +126,7 @@ impl Driver {
                 | Driver::Buzzer
                 | Driver::IrTransmitter
                 | Driver::Aht20Bmp280 { .. }
+                | Driver::Adxl345 { .. }
         )
     }
 }
@@ -337,6 +355,24 @@ impl Hardware {
                     entity: id,
                     option: "read_interval_seconds",
                 });
+            }
+            Driver::Adxl345 {
+                read_interval_seconds,
+                vibration_threshold_milli_g,
+                ..
+            } => {
+                if !READ_INTERVAL_RANGE.contains(read_interval_seconds) {
+                    problems.push(HardwareProblem::OutOfRange {
+                        entity: id,
+                        option: "read_interval_seconds",
+                    });
+                }
+                if !VIBRATION_THRESHOLD_RANGE.contains(vibration_threshold_milli_g) {
+                    problems.push(HardwareProblem::OutOfRange {
+                        entity: id,
+                        option: "vibration_threshold_milli_g",
+                    });
+                }
             }
             Driver::Gps {
                 report_interval_seconds,
@@ -572,6 +608,42 @@ mod tests {
         assert_eq!(
             alone(sensor(21, 35)).validate("esp32"),
             vec![HardwareProblem::InputOnlyPin { entity: 8, pin: 35 }]
+        );
+    }
+
+    #[test]
+    fn adxl345() {
+        let json = r#"{"entities":[{"id":9,"pin":6,"driver":"adxl345","clock_pin":7}]}"#;
+        let mut hardware = Hardware::from_json(json).unwrap();
+        assert_eq!(
+            hardware.entities[0].driver,
+            Driver::Adxl345 {
+                clock_pin: 7,
+                read_interval_seconds: 30,
+                vibration_threshold_milli_g: 250,
+            }
+        );
+        assert_eq!(hardware.entities[0].pins(), vec![6, 7]);
+        assert_eq!(hardware.validate("esp32c6"), vec![]);
+        assert_eq!(Hardware::from_json(&hardware.to_json()).unwrap(), hardware);
+
+        hardware.entities[0].driver = Driver::Adxl345 {
+            clock_pin: 7,
+            read_interval_seconds: 1,
+            vibration_threshold_milli_g: 9,
+        };
+        assert_eq!(
+            hardware.validate("esp32c6"),
+            vec![
+                HardwareProblem::OutOfRange {
+                    entity: 9,
+                    option: "read_interval_seconds",
+                },
+                HardwareProblem::OutOfRange {
+                    entity: 9,
+                    option: "vibration_threshold_milli_g",
+                },
+            ]
         );
     }
 

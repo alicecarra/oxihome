@@ -130,4 +130,5 @@ pub enum Unit {
     Hectopascal,
     Degree,
     Meter,
+    StandardGravity,
 }
