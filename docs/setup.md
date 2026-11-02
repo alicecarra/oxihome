@@ -578,6 +578,10 @@ never reused: a node that drops one leaves the id unused.
   remote key, a board's button and a schedule can share one list of actions; its own conditions
   still apply. A `run` of a button no rule has, a circle of scenes or more than 8 levels stop the
   file from loading; a disabled scene or one still running fails the action when it runs.
+  `{ run_named = { name = "{value}", reply = { device = "telegram", entity = 1, channel = 0 } } }`
+  takes the name from a text, whatever its case and accents, starts that scene without waiting for
+  it and answers on the `reply` channel; without `name`, or with an unknown one, it answers with the
+  list of scenes. A button rule cannot use it, since its name could close a circle.
   `enabled = false` turns a rule off. Triggers:
   - an event of a channel: `when = { device = "...", entity = 2, channel = 0, event = "Press" }`;
     `data = "NEC 00 52"` also requires the event's text to be exactly that (a held key's

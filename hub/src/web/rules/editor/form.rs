@@ -598,7 +598,7 @@ async fn action_fields(
         move |part: &str| format!("{prefix}.{part}")
     };
     let purpose = match action.kind {
-        ActionKind::Invoke => Purpose::Invoke,
+        ActionKind::Invoke | ActionKind::RunNamed => Purpose::Invoke,
         _ => Purpose::Switch,
     };
     let channels = catalog.channel_groups(purpose, &action.channel);
@@ -652,6 +652,15 @@ async fn action_fields(
                         text_input(name: name("wait"), text: action.wait, placeholder: Some("e.g. 2s"))
                     )
                     <p class="text-sm text-muted-foreground">"Pauses before the next action; at most 30 minutes."</p>
+                },
+                ActionKind::RunNamed => {
+                    form_field(title: "Scene name (optional)", name: name("value"),
+                        text_input(name: name("value"), text: action.value, placeholder: Some("e.g. {value}"))
+                    )
+                    form_field(title: "Answer on", name: name("channel"),
+                        choice_select(name: name("channel"), chosen: action.channel, groups: channels, placeholder: Some("Choose a channel…"))
+                    )
+                    <p class="text-sm text-muted-foreground">"Starts the scene with that name, whatever its case and accents, without waiting for it. Without a name, or with an unknown one, it lists the scenes."</p>
                 },
                 ActionKind::Run => {
                     form_field(title: "Scene", name: name("value"),

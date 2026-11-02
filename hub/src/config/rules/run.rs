@@ -47,6 +47,20 @@ pub enum Action {
     Wait(WaitTime),
     /// Runs the rule of a button, a scene, and waits for it to end.
     Run(String),
+    /// Starts the scene with this name, whatever its case and accents, and says how that went on
+    /// the `reply` channel. Without a name, or with an unknown one, it lists the scenes.
+    RunNamed {
+        name: Option<String>,
+        reply: ReplyChannel,
+    },
+}
+
+/// A `Trigger` channel that takes text, for an answer.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ReplyChannel {
+    pub device: String,
+    pub entity: u8,
+    pub channel: u8,
 }
 
 /// `wait = "2s"`, `"500ms"`, `"1m 30s"`: more than zero, at most 30 minutes.
@@ -107,6 +121,10 @@ impl fmt::Display for Action {
             Action::Notify { title, .. } => write!(formatter, "notify \"{title}\""),
             Action::Wait(time) => write!(formatter, "wait {time}"),
             Action::Run(scene) => write!(formatter, "run \"{scene}\""),
+            Action::RunNamed {
+                name: Some(name), ..
+            } => write!(formatter, "run the scene named \"{name}\""),
+            Action::RunNamed { name: None, .. } => write!(formatter, "list the scenes"),
         }
     }
 }
@@ -120,6 +138,9 @@ impl Action {
             Action::Invoke {
                 value: Some(value), ..
             } => vec![value],
+            Action::RunNamed {
+                name: Some(name), ..
+            } => vec![name],
             _ => Vec::new(),
         }
     }
@@ -751,6 +772,60 @@ impl Drop for RunningGuard {
     }
 }
 
+/// Lowercase and without accents, as a name typed on a phone may come.
+fn folded(text: &str) -> String {
+    text.trim()
+        .to_lowercase()
+        .chars()
+        .map(|character| match character {
+            'á' | 'à' | 'â' | 'ã' | 'ä' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'í' | 'ì' | 'î' | 'ï' => 'i',
+            'ó' | 'ò' | 'ô' | 'õ' | 'ö' => 'o',
+            'ú' | 'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            other => other,
+        })
+        .collect()
+}
+
+/// The enabled button rules with their buttons, in file order.
+fn scenes(rules: &[Rule]) -> Vec<(&str, &Rule)> {
+    rules
+        .iter()
+        .filter(|rule| rule.enabled)
+        .filter_map(|rule| match &rule.when {
+            Trigger::Button(trigger) => Some((trigger.button.as_str(), rule)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Starts the scene with that name, if any, and says what happened.
+fn run_named(hub: &Arc<Hub>, name: Option<&str>) -> String {
+    let rules = hub.rules();
+    let scenes = scenes(&rules);
+    let list = || {
+        if scenes.is_empty() {
+            return "No scenes.".to_string();
+        }
+        let names: Vec<&str> = scenes.iter().map(|(button, _)| *button).collect();
+        format!("Scenes: {}", names.join(", "))
+    };
+    let Some(name) = name.filter(|name| !name.trim().is_empty()) else {
+        return list();
+    };
+    let wanted = folded(name);
+    let Some((button, rule)) = scenes.iter().find(|(button, _)| folded(button) == wanted) else {
+        return format!("No scene named \"{name}\". {}", list());
+    };
+    match start(hub.clone(), (*rule).clone(), Subject::default()) {
+        Start::Started(_) => format!("Running {button}"),
+        Start::Skipped(condition) => format!("{button} skipped: {condition} does not hold"),
+        Start::Busy => format!("{button} is still running"),
+    }
+}
+
 /// Returns what happened, for the log.
 async fn perform(
     hub: &Arc<Hub>,
@@ -775,6 +850,18 @@ async fn perform(
                 Start::Skipped(condition) => Ok(format!("skipped, {condition} does not hold")),
                 Start::Busy => bail!("still running"),
             };
+        }
+        Action::RunNamed { name, reply } => {
+            let name = name.as_deref().map(|name| subject.fill(name));
+            hub.invoke(
+                &reply.device,
+                reply.entity,
+                reply.channel,
+                Some(run_named(hub, name.as_deref())),
+                CommandOrigin::Rule(rule_name.to_string()),
+            )
+            .await?;
+            return Ok("answered".into());
         }
         Action::Notify { title, message } => {
             hub.notify(
@@ -874,6 +961,75 @@ mod tests {
             .try_into()
             .unwrap();
         assert_eq!(actions[0].to_string(), "wait 2s");
+    }
+
+    #[test]
+    fn names_are_folded() {
+        assert_eq!(folded(" Sessão de CINEMA "), "sessao de cinema");
+        assert_eq!(folded("Ação"), "acao");
+    }
+
+    #[tokio::test]
+    async fn scenes_run_by_name_whatever_the_case_and_accents() {
+        let hub = Hub::for_tests(
+            "named-scenes",
+            r#"
+            [[rules]]
+            name = "Movie"
+            when = { scene = "Sessão de Cinema" }
+            then = []
+
+            [[rules]]
+            name = "Off"
+            enabled = false
+            when = { button = "Hidden" }
+            then = []
+
+            [[rules]]
+            name = "Busy"
+            when = { button = "Long" }
+            then = [{ wait = "30m" }]
+
+            [[rules]]
+            name = "Never"
+            if = [{ days = ["monday"] }, { online = "nobody" }]
+            when = { button = "Blocked" }
+            then = []
+        "#,
+        )
+        .await;
+        let all = "Scenes: Sessão de Cinema, Long, Blocked";
+        assert_eq!(run_named(&hub, None), all);
+        assert_eq!(run_named(&hub, Some("  ")), all);
+        assert_eq!(
+            run_named(&hub, Some("sessao de cinema")),
+            "Running Sessão de Cinema"
+        );
+        assert_eq!(
+            run_named(&hub, Some("Hidden")),
+            format!("No scene named \"Hidden\". {all}")
+        );
+        assert_eq!(run_named(&hub, Some("long")), "Running Long");
+        assert_eq!(run_named(&hub, Some("LONG")), "Long is still running");
+        assert!(run_named(&hub, Some("blocked")).starts_with("Blocked skipped: "));
+    }
+
+    #[test]
+    fn run_named_reads_its_name_and_reply_channel() {
+        let actions: Vec<Action> = toml::from_str::<toml::Table>(
+            r#"then = [
+                { run_named = { name = "{value}", reply = { device = "telegram", entity = 1, channel = 0 } } },
+                { run_named = { reply = { device = "telegram", entity = 1, channel = 0 } } },
+            ]"#,
+        )
+        .unwrap()
+        .remove("then")
+        .unwrap()
+        .try_into()
+        .unwrap();
+        assert_eq!(actions[0].texts(), ["{value}"]);
+        assert_eq!(actions[0].to_string(), "run the scene named \"{value}\"");
+        assert_eq!(actions[1].to_string(), "list the scenes");
     }
 
     #[test]

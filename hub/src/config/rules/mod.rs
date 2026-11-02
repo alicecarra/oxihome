@@ -115,6 +115,9 @@ impl Rule {
             {
                 channels.push((device.as_str(), *entity, *channel));
             }
+            if let Action::RunNamed { reply, .. } = action {
+                channels.push((reply.device.as_str(), reply.entity, reply.channel));
+            }
         }
         channels.dedup();
         channels
@@ -250,6 +253,9 @@ impl Rules {
                         channel,
                         ..
                     } if device == device_id => add(RuleRole::ActsOn, Some((*entity, *channel))),
+                    Action::RunNamed { reply, .. } if reply.device == device_id => {
+                        add(RuleRole::ActsOn, Some((reply.entity, reply.channel)));
+                    }
                     _ => {}
                 }
             }
@@ -313,6 +319,15 @@ impl Rules {
                         rule.name
                     );
                 }
+            }
+            // The name is known only when it runs, so it could not be checked for circles.
+            if matches!(rule.when, Trigger::Button(_))
+                && rule
+                    .then
+                    .iter()
+                    .any(|action| matches!(action, Action::RunNamed { .. }))
+            {
+                bail!("rule \"{}\": a button rule cannot use run_named", rule.name);
             }
             self.scene_depth(rule, &mut vec![rule.name.as_str()])
                 .map_err(|error| anyhow::anyhow!("rule \"{}\": {error}", rule.name))?;
@@ -669,6 +684,19 @@ mod tests {
         "#,
         );
         assert!(itself.contains("A -> A"), "{itself}");
+    }
+
+    #[test]
+    fn scenes_cannot_run_scenes_by_name() {
+        let error = scene_error(
+            r#"
+            [[rules]]
+            name = "A"
+            when = { button = "a" }
+            then = [{ run_named = { reply = { device = "telegram", entity = 1, channel = 0 } } }]
+        "#,
+        );
+        assert!(error.contains("cannot use run_named"), "{error}");
     }
 
     #[test]

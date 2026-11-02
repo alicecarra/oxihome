@@ -494,6 +494,20 @@ fn action_description(nodes: &Nodes, registry: &Registry, action: &Action) -> St
         Action::Notify { title, message } => format!("Notify \"{title}\": {message}"),
         Action::Wait(time) => format!("Wait {time}"),
         Action::Run(scene) => format!("Run scene \"{scene}\""),
+        Action::RunNamed { name, reply } => {
+            let target = channel_description(
+                nodes,
+                registry,
+                &reply.device,
+                reply.entity,
+                reply.channel,
+                None,
+            );
+            match name {
+                Some(name) => format!("Run the scene named \"{name}\", answer on {target}"),
+                None => format!("List the scenes on {target}"),
+            }
+        }
     }
 }
 

@@ -213,6 +213,15 @@ fn action_table(action: &ActionDraft) -> Built<InlineTable> {
                 inner.insert("value", argument.into());
             }
         }
+        ActionKind::RunNamed => {
+            let name = action.value.trim();
+            if !name.is_empty() {
+                inner.insert("name", name.into());
+            }
+            let mut reply = InlineTable::new();
+            insert_channel(&mut reply, &action.channel)?;
+            inner.insert("reply", reply.into());
+        }
         ActionKind::Notify => {
             inner.insert("title", required(&action.title, "write the title")?.into());
             inner.insert("message", action.message.trim().into());

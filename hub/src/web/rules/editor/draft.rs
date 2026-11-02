@@ -192,6 +192,7 @@ pub(super) enum ActionKind {
     Notify,
     Wait,
     Run,
+    RunNamed,
 }
 
 impl Kind for ActionKind {
@@ -202,6 +203,7 @@ impl Kind for ActionKind {
         Self::Notify,
         Self::Wait,
         Self::Run,
+        Self::RunNamed,
     ];
 
     fn key(self) -> &'static str {
@@ -212,6 +214,7 @@ impl Kind for ActionKind {
             Self::Notify => "notify",
             Self::Wait => "wait",
             Self::Run => "run",
+            Self::RunNamed => "run_named",
         }
     }
 
@@ -223,6 +226,7 @@ impl Kind for ActionKind {
             Self::Notify => "Notify",
             Self::Wait => "Wait",
             Self::Run => "Run a scene",
+            Self::RunNamed => "Run a scene by name and answer",
         }
     }
 }
@@ -564,7 +568,11 @@ impl Draft {
                 ActionKind::Invoke => {
                     Control::for_invoke(catalog.declared(&action.channel)).settle(&mut action.value)
                 }
-                ActionKind::Toggle | ActionKind::Notify | ActionKind::Wait | ActionKind::Run => {}
+                ActionKind::Toggle
+                | ActionKind::Notify
+                | ActionKind::Wait
+                | ActionKind::Run
+                | ActionKind::RunNamed => {}
             }
         }
     }
@@ -651,6 +659,12 @@ impl ActionDraft {
             Action::Run(scene) => Self {
                 kind: ActionKind::Run,
                 value: scene.clone(),
+                ..Self::default()
+            },
+            Action::RunNamed { name, reply } => Self {
+                kind: ActionKind::RunNamed,
+                channel: ChannelKey::text(&reply.device, reply.entity, reply.channel),
+                value: name.clone().unwrap_or_default(),
                 ..Self::default()
             },
         }
