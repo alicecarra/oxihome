@@ -12,7 +12,9 @@ use oxihome_protocol::{
 use crate::buzzer;
 use crate::ir;
 use crate::ota::Ota;
-use crate::peripheral::{Entity, POTENTIOMETER_READ_INTERVAL, Peripheral};
+use crate::peripheral::{
+    Entity, POTENTIOMETER_READ_INTERVAL, Peripheral, VIBRATION_CHECK_INTERVAL,
+};
 use crate::recovery::SAFE_MODE_BOOTS;
 use crate::settings::Settings;
 use crate::transport::{Transport, TransportEvent};
@@ -28,12 +30,20 @@ const LONGITUDE_CHANNEL: u8 = 3;
 const ALTITUDE_CHANNEL: u8 = 4;
 const SPEED_CHANNEL: u8 = 5;
 const TIME_CHANNEL: u8 = 6;
+const VIBRATING_CHANNEL: u8 = 0;
+const ACCELERATION_X_CHANNEL: u8 = 1;
+const ACCELERATION_Y_CHANNEL: u8 = 2;
+const ACCELERATION_Z_CHANNEL: u8 = 3;
+const PITCH_CHANNEL: u8 = 4;
+const ROLL_CHANNEL: u8 = 5;
 /// Time for the `Ack` to leave before a restart.
 const RESTART_DELAY: Duration = Duration::from_secs(1);
 /// After a failed climate read, the next try comes this soon instead of after the read interval.
 const CLIMATE_RETRY: Duration = Duration::from_secs(2);
 /// Failed reads in a row before the hub hears of it; the tries go back to the read interval.
 const CLIMATE_FAILURES_REPORTED: u8 = 5;
+/// Failed vibration checks in a row before the hub hears of it: 5 s.
+const VIBRATION_FAILURES_REPORTED: u8 = 50;
 
 /// The board's peripherals as `oxihome-node` sees them.
 pub struct Board {
@@ -195,6 +205,37 @@ impl<T: Transport> Node<T> {
                             Ok(false) => {}
                             Err(error) => log::error!("Entity {id}: reading failed: {error:#}"),
                         }
+                    }
+                }
+                Peripheral::Accelerometer {
+                    accelerometer,
+                    read_interval,
+                    next_read,
+                    last_check,
+                    failures,
+                } => {
+                    if last_check.elapsed() >= VIBRATION_CHECK_INTERVAL {
+                        *last_check = Instant::now();
+                        match accelerometer.check_vibration() {
+                            Ok(changed) => {
+                                *failures = 0;
+                                if changed {
+                                    outcomes.push(Outcome::State(id));
+                                }
+                            }
+                            Err(error) => {
+                                *failures = failures.saturating_add(1);
+                                if *failures == VIBRATION_FAILURES_REPORTED {
+                                    outcomes.push(Outcome::Error(format!(
+                                        "entity {id}: ADXL345 not responding ({error:#})"
+                                    )));
+                                }
+                            }
+                        }
+                    }
+                    if Instant::now() >= *next_read && accelerometer.read() {
+                        *next_read = Instant::now() + *read_interval;
+                        outcomes.push(Outcome::State(id));
                     }
                 }
                 Peripheral::Gps {
@@ -403,6 +444,22 @@ impl Device for Board {
                 Peripheral::Potentiometer { potentiometer, .. } => potentiometer
                     .percent()
                     .map(|percent| vec![confirmed(MAIN_CHANNEL, Value::Int(percent.into()))]),
+                Peripheral::Accelerometer { accelerometer, .. } => {
+                    let mut values = vec![confirmed(
+                        VIBRATING_CHANNEL,
+                        Value::Bool(accelerometer.vibrating()),
+                    )];
+                    if let Some(reading) = accelerometer.last() {
+                        values.extend([
+                            confirmed(ACCELERATION_X_CHANNEL, Value::Float(reading.x)),
+                            confirmed(ACCELERATION_Y_CHANNEL, Value::Float(reading.y)),
+                            confirmed(ACCELERATION_Z_CHANNEL, Value::Float(reading.z)),
+                            confirmed(PITCH_CHANNEL, Value::Float(reading.pitch())),
+                            confirmed(ROLL_CHANNEL, Value::Float(reading.roll())),
+                        ]);
+                    }
+                    Some(values)
+                }
                 // The last reported reading, so a `Query` matches what the hub stored.
                 Peripheral::Gps { reported, .. } => reported.map(|reading| {
                     let mut values = vec![
@@ -591,6 +648,45 @@ fn descriptor(id: u8, peripheral: &Peripheral) -> EntityDescriptor {
             )
             .named("Send"),
         ],
+        Peripheral::Accelerometer { .. } => {
+            let read = |id, name, value, unit| Channel {
+                unit,
+                ..channel(id, Access::Read, Some(value)).named(name)
+            };
+            let acceleration = ValueType::Float {
+                min: -16.0,
+                max: 16.0,
+                step: 0.004,
+            };
+            let angle = |max: f32| ValueType::Float {
+                min: -max,
+                max,
+                step: 0.1,
+            };
+            vec![
+                read(VIBRATING_CHANNEL, "Vibrating", ValueType::Bool, None),
+                read(
+                    ACCELERATION_X_CHANNEL,
+                    "X",
+                    acceleration.clone(),
+                    Some(Unit::StandardGravity),
+                ),
+                read(
+                    ACCELERATION_Y_CHANNEL,
+                    "Y",
+                    acceleration.clone(),
+                    Some(Unit::StandardGravity),
+                ),
+                read(
+                    ACCELERATION_Z_CHANNEL,
+                    "Z",
+                    acceleration,
+                    Some(Unit::StandardGravity),
+                ),
+                read(PITCH_CHANNEL, "Pitch", angle(90.0), Some(Unit::Degree)),
+                read(ROLL_CHANNEL, "Roll", angle(180.0), Some(Unit::Degree)),
+            ]
+        }
         Peripheral::Gps { .. } => {
             let read = |id, name, value, unit| Channel {
                 unit,

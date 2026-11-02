@@ -1,3 +1,4 @@
+mod adxl345;
 mod aht20_bmp280;
 mod button;
 mod buzzer;

@@ -8,6 +8,7 @@ use esp_idf_svc::hal::uart::UART1;
 use esp_idf_svc::hal::units::FromValueType;
 use oxihome_protocol::hardware::{Driver, Hardware, HardwareEntity};
 
+use crate::adxl345::Adxl345;
 use crate::aht20_bmp280::Aht20Bmp280;
 use crate::button::Button;
 use crate::buzzer::Buzzer;
@@ -18,6 +19,7 @@ use crate::ir_transmitter::IrTransmitter;
 use crate::potentiometer::Potentiometer;
 
 pub const POTENTIOMETER_READ_INTERVAL: Duration = Duration::from_millis(100);
+pub const VIBRATION_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 
 pub struct Entity {
     pub id: u8,
@@ -45,6 +47,13 @@ pub enum Peripheral {
     Potentiometer {
         potentiometer: Potentiometer,
         last_read: Instant,
+    },
+    Accelerometer {
+        accelerometer: Adxl345,
+        read_interval: Duration,
+        next_read: Instant,
+        last_check: Instant,
+        failures: u8,
     },
     Gps {
         gps: Gps,
@@ -128,13 +137,7 @@ fn mount_one(
             clock_pin,
             read_interval_seconds,
         } => {
-            let unit = i2c
-                .take()
-                .ok_or_else(|| anyhow::anyhow!("the I2C bus is taken by another entity"))?;
-            let clock = unsafe { AnyIOPin::steal(*clock_pin) };
-            // The default is 1 MHz; the AHT20 takes up to 400 kHz.
-            let config = I2cConfig::new().baudrate(100.kHz().into());
-            let driver = I2cDriver::new(unit, pin(), clock, &config)?;
+            let driver = i2c_bus(i2c, pin(), *clock_pin)?;
             Peripheral::Climate {
                 climate: Climate::aht20_bmp280(Aht20Bmp280::new(driver)?),
                 read_interval: Duration::from_secs((*read_interval_seconds).into()),
@@ -142,6 +145,20 @@ fn mount_one(
                 failures: 0,
             }
         }
+        Driver::Adxl345 {
+            clock_pin,
+            read_interval_seconds,
+            vibration_threshold_milli_g,
+        } => Peripheral::Accelerometer {
+            accelerometer: Adxl345::new(
+                i2c_bus(i2c, pin(), *clock_pin)?,
+                *vibration_threshold_milli_g,
+            )?,
+            read_interval: Duration::from_secs((*read_interval_seconds).into()),
+            next_read: Instant::now(),
+            last_check: Instant::now(),
+            failures: 0,
+        },
         Driver::Buzzer => Peripheral::Buzzer(Buzzer::new(PinDriver::output(pin())?)?),
         Driver::IrReceiver => Peripheral::IrReceiver(IrReceiver::new(pin())?),
         Driver::IrTransmitter => Peripheral::IrTransmitter(IrTransmitter::new(pin())?),
@@ -174,4 +191,18 @@ fn mount_one(
             }
         }
     })
+}
+
+fn i2c_bus(
+    i2c: &mut Option<I2C0<'static>>,
+    data: AnyIOPin<'static>,
+    clock_pin: u8,
+) -> anyhow::Result<I2cDriver<'static>> {
+    let unit = i2c
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("the I2C bus is taken by another entity"))?;
+    let clock = unsafe { AnyIOPin::steal(clock_pin) };
+    // The default is 1 MHz; the AHT20 and the ADXL345 take up to 400 kHz.
+    let config = I2cConfig::new().baudrate(100.kHz().into());
+    Ok(I2cDriver::new(unit, data, clock, &config)?)
 }

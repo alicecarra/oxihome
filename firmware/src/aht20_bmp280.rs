@@ -98,7 +98,7 @@ impl Aht20Bmp280 {
 }
 
 /// The addresses that answer, to tell a wiring problem from another chip.
-fn scan(i2c: &mut I2cDriver<'static>) -> String {
+pub fn scan(i2c: &mut I2cDriver<'static>) -> String {
     let found: Vec<String> = (0x08..0x78)
         .filter(|&address| i2c.write(address, &[], timeout()).is_ok())
         .map(|address| format!("0x{address:02x}"))

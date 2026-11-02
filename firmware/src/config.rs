@@ -63,6 +63,15 @@ pub fn default_hardware(peripherals: &str) -> anyhow::Result<Hardware> {
                 if esp32c6 { 2 } else { 34 },
                 Driver::Potentiometer { minimum_change: 2 },
             ),
+            "accelerometer" => entity(
+                9,
+                if esp32c6 { 6 } else { 21 },
+                Driver::Adxl345 {
+                    clock_pin: if esp32c6 { 7 } else { 22 },
+                    read_interval_seconds: 30,
+                    vibration_threshold_milli_g: 250,
+                },
+            ),
             _ => anyhow::bail!("unknown peripheral \"{name}\" in cfg.toml"),
         });
     }
