@@ -14,6 +14,26 @@ pub fn connect(
     password: &str,
     power_save: i32,
 ) -> anyhow::Result<Wifi> {
+    let mut wifi = start(modem, event_loop, nvs, ssid, password)?;
+    set_power_save(power_save);
+    match wifi.connect().and_then(|()| wifi.wait_netif_up()) {
+        Ok(()) => {
+            let ip = wifi.wifi().sta_netif().get_ip_info()?.ip;
+            log::info!("Wi-Fi connected to {ssid}, IP {ip}");
+        }
+        Err(error) => log::warn!("Wi-Fi not connected to {ssid} ({error}), retrying"),
+    }
+    Ok(wifi)
+}
+
+/// The station started but not connected, as an ESP-NOW leaf keeps it.
+pub fn start(
+    modem: impl WifiModemPeripheral + 'static,
+    event_loop: EspSystemEventLoop,
+    nvs: EspDefaultNvsPartition,
+    ssid: &str,
+    password: &str,
+) -> anyhow::Result<Wifi> {
     let mut wifi = BlockingWifi::wrap(
         EspWifi::new(modem, event_loop.clone(), Some(nvs))?,
         event_loop,
@@ -30,14 +50,6 @@ pub fn connect(
     }))?;
 
     wifi.start()?;
-    set_power_save(power_save);
-    match wifi.connect().and_then(|()| wifi.wait_netif_up()) {
-        Ok(()) => {
-            let ip = wifi.wifi().sta_netif().get_ip_info()?.ip;
-            log::info!("Wi-Fi connected to {ssid}, IP {ip}");
-        }
-        Err(error) => log::warn!("Wi-Fi not connected to {ssid} ({error}), retrying"),
-    }
     Ok(wifi)
 }
 

@@ -12,3 +12,8 @@ topic deny oxihome/oxihome-hub/up
 user observer
 topic read oxihome/#
 topic deny oxihome/observer/up
+
+# ESP-NOW gateways publish and read for their leaves (docs/setup.md, "ESP-NOW leaves and gateway").
+user esp32-e8f60afb3ddc
+topic write oxihome/esp32-e8f60af8b410/up
+topic read oxihome/esp32-e8f60af8b410/down

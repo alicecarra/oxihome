@@ -13,6 +13,18 @@ pub struct Config {
     mqtt_password: &'static str,
     #[default("climate, external_led, buzzer, ir, potentiometer")]
     peripherals: &'static str,
+    /// On a leaf: the device id of its ESP-NOW gateway; the board then stays off the broker.
+    #[default("")]
+    espnow_gateway: &'static str,
+    /// On a leaf: its key, from `espnow-key.sh`.
+    #[default("")]
+    espnow_key: &'static str,
+    /// On a gateway: the device ids of its leaves, comma-separated.
+    #[default("")]
+    espnow_leaves: &'static str,
+    /// On a gateway: the hex secret the leaves' keys come from.
+    #[default("")]
+    espnow_secret: &'static str,
 }
 
 /// The factory hardware: the onboard LED and BOOT button, plus `peripherals` on today's pins.

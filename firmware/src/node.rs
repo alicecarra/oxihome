@@ -105,11 +105,21 @@ impl<T: Transport> Node<T> {
             esp_idf_svc::hal::reset::restart();
         }
         if let Some((url, digest)) = self.board.pending_update.take() {
-            match self.ota.update(&url, digest) {
+            let result = self
+                .transport
+                .prepare_download()
+                .map_err(|error| (ErrorCode::UpdateDownloadFailed, format!("{error:#}")))
+                .and_then(|()| {
+                    self.ota
+                        .update(&url, digest)
+                        .map_err(|error| (error.code(), error.to_string()))
+                });
+            match result {
                 Ok(()) => esp_idf_svc::hal::reset::restart(),
-                Err(error) => {
-                    log::warn!("OTA: {error}");
-                    self.send_error(error.code(), error.to_string());
+                Err((code, detail)) => {
+                    log::warn!("OTA: {detail}");
+                    self.transport.download_failed();
+                    self.send_error(code, detail);
                 }
             }
         }

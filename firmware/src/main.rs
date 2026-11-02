@@ -3,15 +3,19 @@ mod button;
 mod buzzer;
 mod climate;
 mod config;
+mod espnow;
+mod gateway;
 mod gps;
 mod ir;
 mod ir_transmitter;
+mod leaf;
 mod nmea;
 mod node;
 mod ota;
 mod peripheral;
 mod potentiometer;
 mod recovery;
+mod relay;
 mod settings;
 mod storage;
 mod transport;
@@ -27,10 +31,12 @@ use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use oxihome_protocol::management::{HEARTBEAT_INTERVAL, WIFI_CHECK_INTERVAL, WIFI_POWER_SAVE};
 
 use config::CONFIG;
+use gateway::Gateway;
+use leaf::RelayTransport;
 use node::{Board, Node};
 use ota::Ota;
 use settings::Settings;
-use transport::MqttTransport;
+use transport::{MqttTransport, Transport};
 
 const POLL_INTERVAL_MS: u32 = 10;
 /// Longer than the blocking parts of the loop, the over-the-air download included.
@@ -84,15 +90,6 @@ fn run() -> anyhow::Result<()> {
         log::warn!("{reason}");
     }
 
-    let mut wifi = wifi::connect(
-        peripherals.modem,
-        EspSystemEventLoop::take()?,
-        nvs,
-        CONFIG.wifi_ssid,
-        CONFIG.wifi_password,
-        settings.get(WIFI_POWER_SAVE),
-    )?;
-    let transport = MqttTransport::new(CONFIG.mqtt_url, &device_id, CONFIG.mqtt_password)?;
     let board = Board {
         settings,
         hardware: selection.hardware,
@@ -103,8 +100,6 @@ fn run() -> anyhow::Result<()> {
         pending_restart: false,
         restart_reason,
     };
-    let mut node = Node::new(device_id, transport, board, Ota::new()?);
-
     let mut watchdog = TWDTDriver::new(
         peripherals.twdt,
         &TWDTConfig {
@@ -113,6 +108,51 @@ fn run() -> anyhow::Result<()> {
             ..Default::default()
         },
     )?;
+
+    if !CONFIG.espnow_gateway.is_empty() {
+        let wifi = wifi::start(
+            peripherals.modem,
+            EspSystemEventLoop::take()?,
+            nvs,
+            CONFIG.wifi_ssid,
+            CONFIG.wifi_password,
+        )?;
+        let transport = RelayTransport::new(wifi, CONFIG.espnow_gateway, CONFIG.espnow_key)?;
+        let node = Node::new(device_id, transport, board, Ota::new()?);
+        return serve(node, None, &mut watchdog, started);
+    }
+
+    let power_save = board.settings.get(WIFI_POWER_SAVE);
+    let wifi = wifi::connect(
+        peripherals.modem,
+        EspSystemEventLoop::take()?,
+        nvs,
+        CONFIG.wifi_ssid,
+        CONFIG.wifi_password,
+        power_save,
+    )?;
+    let gateway = if CONFIG.espnow_leaves.is_empty() {
+        None
+    } else {
+        Some(Gateway::new(CONFIG.espnow_leaves, CONFIG.espnow_secret)?)
+    };
+    let transport = MqttTransport::new(
+        CONFIG.mqtt_url,
+        &device_id,
+        CONFIG.mqtt_password,
+        gateway,
+    )?;
+    let node = Node::new(device_id, transport, board, Ota::new()?);
+    serve(node, Some(wifi), &mut watchdog, started)
+}
+
+/// The main loop. `wifi` is the connected station; a leaf has none (its transport keeps it).
+fn serve<T: Transport>(
+    mut node: Node<T>,
+    mut wifi: Option<wifi::Wifi>,
+    watchdog: &mut TWDTDriver<'_>,
+    started: Instant,
+) -> anyhow::Result<()> {
     let mut subscription = watchdog.watch_current_task()?;
     let mut last_wifi_check = Instant::now();
     let mut last_heartbeat = Instant::now();
@@ -122,9 +162,11 @@ fn run() -> anyhow::Result<()> {
             log::error!("New image did not reach the broker; restarting to roll back");
             esp_idf_svc::hal::reset::restart();
         }
-        if last_wifi_check.elapsed() >= node.settings().interval(WIFI_CHECK_INTERVAL) {
-            wifi::ensure_connected(&mut wifi);
-            last_wifi_check = Instant::now();
+        if let Some(wifi) = &mut wifi {
+            if last_wifi_check.elapsed() >= node.settings().interval(WIFI_CHECK_INTERVAL) {
+                wifi::ensure_connected(wifi);
+                last_wifi_check = Instant::now();
+            }
         }
         if last_heartbeat.elapsed() >= node.settings().interval(HEARTBEAT_INTERVAL) {
             node.send_heartbeat(uptime_seconds(), wifi::rssi());
