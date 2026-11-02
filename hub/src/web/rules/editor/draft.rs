@@ -191,6 +191,7 @@ pub(super) enum ActionKind {
     Invoke,
     Notify,
     Wait,
+    Run,
 }
 
 impl Kind for ActionKind {
@@ -200,6 +201,7 @@ impl Kind for ActionKind {
         Self::Invoke,
         Self::Notify,
         Self::Wait,
+        Self::Run,
     ];
 
     fn key(self) -> &'static str {
@@ -209,6 +211,7 @@ impl Kind for ActionKind {
             Self::Invoke => "invoke",
             Self::Notify => "notify",
             Self::Wait => "wait",
+            Self::Run => "run",
         }
     }
 
@@ -219,6 +222,7 @@ impl Kind for ActionKind {
             Self::Invoke => "Invoke an action",
             Self::Notify => "Notify",
             Self::Wait => "Wait",
+            Self::Run => "Run a scene",
         }
     }
 }
@@ -232,6 +236,8 @@ pub(super) struct Draft {
     pub(super) enabled: bool,
     /// A duration such as `1h`; empty for none.
     pub(super) cooldown: String,
+    /// A button rule's room; empty for none.
+    pub(super) room: String,
     pub(super) trigger: TriggerDraft,
     pub(super) conditions: Vec<ConditionDraft>,
     pub(super) actions: Vec<ActionDraft>,
@@ -409,6 +415,7 @@ impl Draft {
             name: rule.name.clone(),
             enabled: rule.enabled,
             cooldown: rule.cooldown.map(duration_text).unwrap_or_default(),
+            room: rule.room.clone().unwrap_or_default(),
             trigger,
             conditions: rule
                 .conditions
@@ -447,6 +454,7 @@ impl Draft {
             name: field("name"),
             enabled: fields.contains_key("enabled"),
             cooldown: field("cooldown"),
+            room: field("room"),
             trigger: TriggerDraft {
                 kind: TriggerKind::from_key(&field("trigger.kind")),
                 channel: field("trigger.channel"),
@@ -556,7 +564,7 @@ impl Draft {
                 ActionKind::Invoke => {
                     Control::for_invoke(catalog.declared(&action.channel)).settle(&mut action.value)
                 }
-                ActionKind::Toggle | ActionKind::Notify | ActionKind::Wait => {}
+                ActionKind::Toggle | ActionKind::Notify | ActionKind::Wait | ActionKind::Run => {}
             }
         }
     }
@@ -638,6 +646,11 @@ impl ActionDraft {
             Action::Wait(time) => Self {
                 kind: ActionKind::Wait,
                 wait: time.to_string(),
+                ..Self::default()
+            },
+            Action::Run(scene) => Self {
+                kind: ActionKind::Run,
+                value: scene.clone(),
                 ..Self::default()
             },
         }

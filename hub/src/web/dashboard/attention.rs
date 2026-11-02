@@ -3,7 +3,7 @@
 use super::{job, reminders};
 use crate::config::dashboard::{Block, BlockKind, Dashboard};
 use crate::hub::Hub;
-use crate::web::overview;
+use crate::web::overview::{self, Presence};
 
 /// Worst last: a tab shows the worst of its blocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -40,6 +40,19 @@ fn block_attention(hub: &Hub, block: &Block) -> Attention {
         }
         BlockKind::Nodes | BlockKind::Buttons | BlockKind::Events | BlockKind::Rules => {
             Attention::None
+        }
+        BlockKind::Room
+            if block
+                .room
+                .as_deref()
+                .and_then(|room| overview::room(hub, room))
+                .is_some_and(|room| {
+                    room.nodes
+                        .iter()
+                        .any(|node| node.presence == Presence::Offline)
+                }) =>
+        {
+            Attention::Warning
         }
         _ if shown_nodes(block).any(|device| !hub.is_online(device)) => Attention::Warning,
         _ => Attention::None,

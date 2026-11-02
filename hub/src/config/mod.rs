@@ -75,11 +75,12 @@ impl HomeConfig {
             .and_then(|()| rules.check_remote_keys(&remotes))
             .and_then(|()| rules.check_buttons())
             .and_then(|()| rules.check_placeholders())
+            .and_then(|()| rules.check_scenes(&nodes))
             .with_context(|| format!("{}", path.display()))?;
         let path = directory.join("dashboard.toml");
         let dashboards: Dashboards = parse(&path, text("dashboard.toml"))?;
         dashboards
-            .validate(&rules)
+            .validate(&rules, &nodes)
             .with_context(|| format!("{}", path.display()))?;
         Ok(Self {
             nodes,

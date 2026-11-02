@@ -13,6 +13,7 @@ mod node;
 mod nodes;
 mod overview;
 mod remotes;
+mod rooms;
 mod rules;
 mod settings;
 mod timeline;
@@ -71,6 +72,10 @@ pub fn router(hub: Arc<Hub>, auth: Auth, listen_host: &str, allowed_hosts: &[Str
         .page(node::fields_edit_fragment)
         .page(node::history_fragment)
         .page(node::hardware_fragment)
+        .page(rooms::rooms_page)
+        .page(rooms::rooms_fragment)
+        .page(rooms::room_page)
+        .page(rooms::room_fragment)
         .page(rules::rules)
         .page(rules::indicator_fragment)
         .page(rules::new_rule)

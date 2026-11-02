@@ -14,6 +14,9 @@ use toml_edit::{DocumentMut, InlineTable, Item, Table, TableLike, Value};
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Nodes {
+    /// In the order the pages list them.
+    #[serde(default)]
+    rooms: Vec<String>,
     #[serde(default)]
     nodes: HashMap<String, NodeConfig>,
 }
@@ -22,6 +25,8 @@ pub struct Nodes {
 #[serde(deny_unknown_fields)]
 struct NodeConfig {
     name: Option<String>,
+    /// One of `rooms`.
+    room: Option<String>,
     /// Keyed by entity id; TOML keys are strings.
     #[serde(default)]
     entities: HashMap<String, EntityConfig>,
@@ -96,6 +101,18 @@ impl Nodes {
         self.nodes.keys().map(String::as_str)
     }
 
+    pub fn rooms(&self) -> &[String] {
+        &self.rooms
+    }
+
+    pub fn has_room(&self, room: &str) -> bool {
+        self.rooms.iter().any(|known| known == room)
+    }
+
+    pub fn room(&self, device_id: &str) -> Option<&str> {
+        self.nodes.get(device_id)?.room.as_deref()
+    }
+
     /// By entity id; keys that are not ids are left out.
     pub fn entities(&self, device_id: &str) -> Vec<ConfiguredEntity> {
         let Some(node) = self.nodes.get(device_id) else {
@@ -159,7 +176,22 @@ impl Nodes {
     /// Rejects parameter values the nodes would refuse and hardware that does not parse. Pins are
     /// checked before sending, once the node's target is known.
     pub fn validate(&self) -> anyhow::Result<()> {
+        for (index, room) in self.rooms.iter().enumerate() {
+            if room.trim().is_empty() || room.contains('/') {
+                bail!(
+                    "room \"{room}\": the name goes in the address, so it cannot be empty or have /"
+                );
+            }
+            if self.rooms[..index].contains(room) {
+                bail!("two rooms are named \"{room}\"");
+            }
+        }
         for (device_id, node) in &self.nodes {
+            if let Some(room) = &node.room
+                && !self.has_room(room)
+            {
+                bail!("{device_id}: room \"{room}\" is not in rooms");
+            }
             if let Some(entries) = &node.hardware {
                 parse_hardware(entries).with_context(|| format!("{device_id}: hardware"))?;
             }
@@ -376,6 +408,47 @@ mod tests {
             parse("[nodes.\"esp32-test\"]\nparameters = { wifi_check_interval = 0 }").unwrap();
         let message = nodes.validate().unwrap_err().to_string();
         assert!(message.contains("esp32-test"), "{message}");
+    }
+
+    #[test]
+    fn rooms_keep_their_order_and_nodes_name_one() {
+        let nodes = parse(
+            r#"
+            rooms = ["Sala", "Escritório"]
+
+            [nodes."esp32-test"]
+            room = "Escritório"
+
+            [nodes.weather]
+            name = "Weather"
+        "#,
+        )
+        .unwrap();
+        nodes.validate().unwrap();
+        assert_eq!(nodes.rooms(), ["Sala", "Escritório"]);
+        assert_eq!(nodes.room(DEVICE), Some("Escritório"));
+        assert_eq!(nodes.room("weather"), None);
+        assert_eq!(nodes.room("other"), None);
+    }
+
+    #[test]
+    fn bad_rooms_are_rejected() {
+        let message = |text: &str| parse(text).unwrap().validate().unwrap_err().to_string();
+        assert!(message("[nodes.\"esp32-test\"]\nroom = \"Sala\"").contains("is not in rooms"));
+        assert!(message("rooms = [\"Sala\", \"Sala\"]").contains("two rooms"));
+        assert!(message("rooms = [\"A/B\"]").contains("cannot be empty or have /"));
+    }
+
+    #[test]
+    fn edits_keep_rooms() {
+        let text = "rooms = [\"Sala\"]\n\n[nodes.\"esp32-test\"]\nroom = \"Sala\"\n";
+        let edits = NodeEdits {
+            name: Some(Some("Bench".into())),
+            ..NodeEdits::default()
+        };
+        let edited = with_node_edits(text, DEVICE, &edits).unwrap();
+        assert!(edited.starts_with("rooms = [\"Sala\"]\n"), "{edited}");
+        assert_eq!(parse(&edited).unwrap().room(DEVICE), Some("Sala"));
     }
 
     #[test]

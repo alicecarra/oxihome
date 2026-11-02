@@ -22,6 +22,7 @@ pub use trigger::{
     StateTrigger, TrafficTrigger, Trigger,
 };
 
+use super::nodes::Nodes;
 use super::remotes::Remotes;
 use crate::node::events::EventRecord;
 use crate::node::state::ChannelUpdate;
@@ -32,6 +33,8 @@ pub struct Rule {
     pub name: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Button rules only: the room whose page shows the button. One of the `rooms` of `nodes.toml`.
+    pub room: Option<String>,
     pub when: Trigger,
     /// Checked when the trigger fires; every condition must hold for the actions to run.
     #[serde(default, rename = "if")]
@@ -42,6 +45,9 @@ pub struct Rule {
     #[serde(default, deserialize_with = "cooldown")]
     pub cooldown: Option<SignedDuration>,
 }
+
+/// How many scenes deep `run` actions may go.
+const DEEPEST_SCENES: usize = 8;
 
 const LONGEST_COOLDOWN: SignedDuration = SignedDuration::from_hours(7 * 24);
 
@@ -293,6 +299,54 @@ impl Rules {
         Ok(())
     }
 
+    /// A `room` is on a button rule and exists; every `run` names a button, without going in
+    /// circles or too deep.
+    pub fn check_scenes(&self, nodes: &Nodes) -> anyhow::Result<()> {
+        for rule in &self.rules {
+            if let Some(room) = &rule.room {
+                if !matches!(rule.when, Trigger::Button(_)) {
+                    bail!("rule \"{}\": only a button rule has a room", rule.name);
+                }
+                if !nodes.has_room(room) {
+                    bail!(
+                        "rule \"{}\": room \"{room}\" is not in the rooms of nodes.toml",
+                        rule.name
+                    );
+                }
+            }
+            self.scene_depth(rule, &mut vec![rule.name.as_str()])
+                .map_err(|error| anyhow::anyhow!("rule \"{}\": {error}", rule.name))?;
+        }
+        Ok(())
+    }
+
+    /// How many scenes deep the rule's `run` actions go; `path` holds the rules on the way here.
+    fn scene_depth<'a>(&'a self, rule: &'a Rule, path: &mut Vec<&'a str>) -> Result<usize, String> {
+        let mut depth = 0;
+        for action in &rule.then {
+            let Action::Run(scene) = action else {
+                continue;
+            };
+            let Some(target) = self.button(scene) else {
+                return Err(format!("no rule has the button \"{scene}\""));
+            };
+            if path.contains(&target.name.as_str()) {
+                return Err(format!(
+                    "running \"{scene}\" goes in a circle: {} -> {}",
+                    path.join(" -> "),
+                    target.name
+                ));
+            }
+            path.push(&target.name);
+            depth = depth.max(self.scene_depth(target, path)? + 1);
+            path.pop();
+            if depth > DEEPEST_SCENES {
+                return Err(format!("scenes run more than {DEEPEST_SCENES} levels deep"));
+            }
+        }
+        Ok(depth)
+    }
+
     /// Every placeholder in a rule's texts is one its trigger fills.
     pub fn check_placeholders(&self) -> anyhow::Result<()> {
         for rule in &self.rules {
@@ -506,6 +560,143 @@ mod tests {
         .unwrap();
         let error = twice.check_buttons().unwrap_err().to_string();
         assert!(error.contains("another rule has the button"), "{error}");
+    }
+
+    fn nodes_with_a_room() -> Nodes {
+        toml::from_str("rooms = [\"Sala\"]").unwrap()
+    }
+
+    fn scene_error(text: &str) -> String {
+        toml::from_str::<Rules>(text)
+            .unwrap()
+            .check_scenes(&nodes_with_a_room())
+            .unwrap_err()
+            .to_string()
+    }
+
+    #[test]
+    fn scene_is_a_button_with_a_room() {
+        let rules: Rules = toml::from_str(
+            r#"
+            [[rules]]
+            name = "Movie"
+            room = "Sala"
+            when = { scene = "Cinema" }
+            then = []
+
+            [[rules]]
+            name = "Key"
+            when = { remote = "TV", key = "Red" }
+            then = [{ run = "Cinema" }]
+        "#,
+        )
+        .unwrap();
+        rules.check_scenes(&nodes_with_a_room()).unwrap();
+        let scene = rules.button("Cinema").unwrap();
+        assert_eq!(scene.name, "Movie");
+        assert_eq!(scene.room.as_deref(), Some("Sala"));
+        assert_eq!(rules.all()[1].then, [Action::Run("Cinema".into())]);
+    }
+
+    #[test]
+    fn rooms_of_rules_are_checked() {
+        let unknown = scene_error(
+            r#"
+            [[rules]]
+            name = "A"
+            room = "Garagem"
+            when = { button = "Go" }
+            then = []
+        "#,
+        );
+        assert!(
+            unknown.contains("\"Garagem\" is not in the rooms"),
+            "{unknown}"
+        );
+        let not_a_button = scene_error(
+            r#"
+            [[rules]]
+            name = "A"
+            room = "Sala"
+            when = { offline = "*" }
+            then = []
+        "#,
+        );
+        assert!(
+            not_a_button.contains("only a button rule"),
+            "{not_a_button}"
+        );
+    }
+
+    #[test]
+    fn run_names_a_button() {
+        let error = scene_error(
+            r#"
+            [[rules]]
+            name = "A"
+            when = { offline = "*" }
+            then = [{ run = "Nothing" }]
+        "#,
+        );
+        assert!(
+            error.contains("no rule has the button \"Nothing\""),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn scenes_cannot_go_in_circles() {
+        let error = scene_error(
+            r#"
+            [[rules]]
+            name = "A"
+            when = { button = "a" }
+            then = [{ run = "b" }]
+
+            [[rules]]
+            name = "B"
+            when = { scene = "b" }
+            then = [{ run = "a" }]
+        "#,
+        );
+        assert!(error.contains("A -> B -> A"), "{error}");
+        let itself = scene_error(
+            r#"
+            [[rules]]
+            name = "A"
+            when = { button = "a" }
+            then = [{ run = "a" }]
+        "#,
+        );
+        assert!(itself.contains("A -> A"), "{itself}");
+    }
+
+    #[test]
+    fn scenes_cannot_go_too_deep() {
+        let chain = |length: usize| {
+            let mut text = String::new();
+            for index in 0..length {
+                let run = if index + 1 < length {
+                    format!("{{ run = \"{}\" }}", index + 1)
+                } else {
+                    String::new()
+                };
+                text += &format!(
+                    "[[rules]]\nname = \"R{index}\"\nwhen = {{ button = \"{index}\" }}\nthen = [{run}]\n"
+                );
+            }
+            toml::from_str::<Rules>(&text).unwrap()
+        };
+        assert!(
+            chain(DEEPEST_SCENES + 1)
+                .check_scenes(&Nodes::default())
+                .is_ok()
+        );
+        let error = chain(DEEPEST_SCENES + 2)
+            .check_scenes(&Nodes::default())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("levels deep"), "{error}");
     }
 
     #[test]

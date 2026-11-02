@@ -10,6 +10,7 @@ use super::format::{channel_label, elapsed, entity_label, unit_symbol};
 use crate::config::dashboard::ChannelReference;
 use crate::config::nodes::{ConfiguredEntity, NameTarget, Nodes};
 use crate::config::remotes::Remotes;
+use crate::config::rules::Trigger;
 use crate::hub::{Hub, Snapshot};
 use crate::node::events::data_label;
 use crate::node::registry::{Node, Registry};
@@ -25,6 +26,8 @@ pub use rules::{
 pub struct NodeOverview {
     pub device_id: String,
     pub name: Option<String>,
+    /// From `nodes.toml`.
+    pub room: Option<String>,
     /// What runs on it, e.g. "firmware 0.12.1 (esp32)"; `None` for a node that never sent a `Hello`.
     pub software: Option<String>,
     /// Of its last `Hello`; `None` for a node never seen.
@@ -46,6 +49,26 @@ pub enum Presence {
     Offline,
     /// In `nodes.toml` but has never sent a `Hello`.
     NotSeen,
+}
+
+/// A button rule, as a room shows it.
+#[derive(Clone)]
+pub struct SceneOverview {
+    pub button: String,
+    pub rule: String,
+    pub room: Option<String>,
+    pub enabled: bool,
+    pub running: bool,
+    /// How long ago it ran and the errors of the actions that failed.
+    pub last_run: Option<(Duration, Vec<String>)>,
+}
+
+/// A room with its nodes and scenes.
+#[derive(Clone)]
+pub struct RoomOverview {
+    pub name: String,
+    pub nodes: Vec<NodeOverview>,
+    pub scenes: Vec<SceneOverview>,
 }
 
 /// A channel of a dashboard `channels` block.
@@ -170,6 +193,7 @@ pub fn nodes(hub: &Hub) -> Vec<NodeOverview> {
                     .nodes
                     .name(&NameTarget::Node(device_id.to_string()))
                     .map(String::from),
+                room: snapshot.nodes.room(device_id).map(String::from),
                 software: None,
                 protocol_version: None,
                 presence: Presence::NotSeen,
@@ -184,6 +208,74 @@ pub fn nodes(hub: &Hub) -> Vec<NodeOverview> {
         (first.presence, &first.device_id).cmp(&(second.presence, &second.device_id))
     });
     nodes
+}
+
+/// The nodes in the order of their rooms, those without one last, then as `nodes` lists them.
+pub fn nodes_by_room(hub: &Hub) -> Vec<NodeOverview> {
+    let rooms = hub.rooms();
+    let mut nodes = nodes(hub);
+    nodes.sort_by_key(|node| room_position(&rooms, node.room.as_deref()));
+    nodes
+}
+
+fn room_position(rooms: &[String], room: Option<&str>) -> usize {
+    room.and_then(|room| rooms.iter().position(|known| known == room))
+        .unwrap_or(rooms.len())
+}
+
+/// Every room in the order of `nodes.toml`; nodes and scenes without a room are in none.
+pub fn rooms(hub: &Hub) -> Vec<RoomOverview> {
+    group_rooms(&hub.rooms(), nodes(hub), scenes(hub))
+}
+
+pub fn room(hub: &Hub, name: &str) -> Option<RoomOverview> {
+    rooms(hub).into_iter().find(|room| room.name == name)
+}
+
+fn scenes(hub: &Hub) -> Vec<SceneOverview> {
+    let mut runs = hub.rule_runs();
+    let now = Timestamp::now();
+    hub.rules()
+        .into_iter()
+        .filter_map(|rule| {
+            let Trigger::Button(trigger) = &rule.when else {
+                return None;
+            };
+            Some(SceneOverview {
+                button: trigger.button.clone(),
+                running: hub.running().includes(&rule.name),
+                last_run: runs
+                    .remove(&rule.name)
+                    .map(|run| (elapsed(run.at, now), run.errors)),
+                rule: rule.name,
+                room: rule.room,
+                enabled: rule.enabled,
+            })
+        })
+        .collect()
+}
+
+fn group_rooms(
+    names: &[String],
+    nodes: Vec<NodeOverview>,
+    scenes: Vec<SceneOverview>,
+) -> Vec<RoomOverview> {
+    names
+        .iter()
+        .map(|name| RoomOverview {
+            name: name.clone(),
+            nodes: nodes
+                .iter()
+                .filter(|node| node.room.as_ref() == Some(name))
+                .cloned()
+                .collect(),
+            scenes: scenes
+                .iter()
+                .filter(|scene| scene.room.as_ref() == Some(name))
+                .cloned()
+                .collect(),
+        })
+        .collect()
 }
 
 /// In the order of `references`.
@@ -253,6 +345,7 @@ fn node_overview(
     NodeOverview {
         device_id: device_id.to_string(),
         name: name(NameTarget::Node(device_id.to_string())),
+        room: snapshot.nodes.room(device_id).map(String::from),
         software: Some(node.build.to_string()),
         protocol_version: Some(node.protocol_version),
         presence: if node.online {
@@ -465,4 +558,54 @@ pub fn channel_name(
         quantity,
     );
     format!("{entity_name} · {channel_name}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(device_id: &str, room: Option<&str>) -> NodeOverview {
+        NodeOverview {
+            device_id: device_id.into(),
+            name: None,
+            room: room.map(String::from),
+            software: None,
+            protocol_version: None,
+            presence: Presence::NotSeen,
+            last_seen: None,
+            uptime_seconds: None,
+            rssi: None,
+            channels: Vec::new(),
+            configured_entities: Vec::new(),
+        }
+    }
+
+    fn scene(button: &str, room: Option<&str>) -> SceneOverview {
+        SceneOverview {
+            button: button.into(),
+            rule: button.into(),
+            room: room.map(String::from),
+            enabled: true,
+            running: false,
+            last_run: None,
+        }
+    }
+
+    #[test]
+    fn rooms_hold_only_what_names_them() {
+        let names = ["Sala".to_string(), "Quarto".to_string()];
+        let rooms = group_rooms(
+            &names,
+            vec![node("tv", Some("Sala")), node("notebook", None)],
+            vec![scene("Cinema", Some("Sala")), scene("Alarm", None)],
+        );
+        assert_eq!(rooms.len(), 2);
+        assert_eq!(rooms[0].name, "Sala");
+        assert_eq!(rooms[0].nodes.len(), 1);
+        assert_eq!(rooms[0].nodes[0].device_id, "tv");
+        assert_eq!(rooms[0].scenes.len(), 1);
+        assert_eq!(rooms[0].scenes[0].button, "Cinema");
+        assert!(rooms[1].nodes.is_empty());
+        assert!(rooms[1].scenes.is_empty());
+    }
 }

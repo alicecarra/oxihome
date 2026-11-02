@@ -308,7 +308,7 @@ pub async fn run_now(cx: &Cx, Form(form): Form<RunForm>) -> Result<ViewHandle> {
             let waits = rule
                 .then
                 .iter()
-                .any(|action| matches!(action, Action::Wait(_)));
+                .any(|action| matches!(action, Action::Wait(_) | Action::Run(_)));
             let subject = Subject::by_hand(&rule.when, hub.as_ref());
             let message = match start(hub.clone(), rule, subject) {
                 Start::Started(actions) if !waits => {

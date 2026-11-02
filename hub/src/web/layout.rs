@@ -16,8 +16,9 @@ use super::toasts::toast_poller;
 use super::tools::TOOLS;
 use crate::hub::Hub;
 
-pub(super) const MENU: [(&str, &str, IconData); 7] = [
+pub(super) const MENU: [(&str, &str, IconData); 8] = [
     ("/", "Dashboard", icons::DASHBOARD),
+    ("/rooms", "Rooms", icons::ROOMS),
     ("/nodes", "Nodes", icons::NODES),
     ("/rules", "Rules", icons::RULES),
     ("/timeline", "Timeline", icons::TIMELINE),

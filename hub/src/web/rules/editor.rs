@@ -451,7 +451,7 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(5))
             .unwrap();
         assert_eq!(edited, None);
-        assert_eq!(placeholders, ["node", "channel", "value"]);
+        assert_eq!(placeholders, ["node", "room", "channel", "value"]);
         assert!(copied.unwrap().contains("already a rule named \"Hot\""));
     }
 }

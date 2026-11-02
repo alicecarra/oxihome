@@ -45,6 +45,8 @@ pub enum Action {
     },
     /// Pauses before the next action.
     Wait(WaitTime),
+    /// Runs the rule of a button, a scene, and waits for it to end.
+    Run(String),
 }
 
 /// `wait = "2s"`, `"500ms"`, `"1m 30s"`: more than zero, at most 30 minutes.
@@ -104,6 +106,7 @@ impl fmt::Display for Action {
             } => write!(formatter, "invoke {device} {entity}/{channel}"),
             Action::Notify { title, .. } => write!(formatter, "notify \"{title}\""),
             Action::Wait(time) => write!(formatter, "wait {time}"),
+            Action::Run(scene) => write!(formatter, "run \"{scene}\""),
         }
     }
 }
@@ -122,11 +125,12 @@ impl Action {
     }
 }
 
-/// What a rule runs about, for `{node}`, `{channel}`, `{detail}`, `{value}`, `{title}` and
-/// `{message}` in the text of its `notify` and `invoke` actions. Which ones a rule may use depends on its trigger.
+/// What a rule runs about, for `{node}`, `{room}`, `{channel}`, `{detail}`, `{value}`, `{title}`
+/// and `{message}` in the text of its `notify` and `invoke` actions. Which ones a rule may use depends on its trigger.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Subject {
     pub node: Option<String>,
+    pub room: Option<String>,
     pub channel: Option<String>,
     pub detail: Option<String>,
     pub value: Option<String>,
@@ -140,6 +144,7 @@ pub struct Subject {
 /// Friendly names and values for a subject; the hub in practice.
 pub trait Names {
     fn node_name(&self, device_id: &str) -> String;
+    fn room_name(&self, device_id: &str) -> String;
     fn channel_name(&self, device_id: &str, entity: u8, channel: u8) -> String;
     /// With the channel's unit, e.g. `22.3 °C`.
     fn value_label(&self, device_id: &str, entity: u8, channel: u8, value: &Value) -> String;
@@ -148,6 +153,10 @@ pub trait Names {
 impl Names for Hub {
     fn node_name(&self, device_id: &str) -> String {
         Hub::node_name(self, device_id)
+    }
+
+    fn room_name(&self, device_id: &str) -> String {
+        Hub::room_name(self, device_id)
     }
 
     fn channel_name(&self, device_id: &str, entity: u8, channel: u8) -> String {
@@ -164,6 +173,7 @@ impl Subject {
     pub fn of_event(event: &EventRecord, names: &impl Names) -> Self {
         Self {
             node: Some(names.node_name(&event.device_id)),
+            room: Some(names.room_name(&event.device_id)),
             channel: Some(names.channel_name(&event.device_id, event.entity, event.channel)),
             value: event.data.as_ref().map(data_label),
             ..Self::default()
@@ -191,6 +201,7 @@ impl Subject {
     ) -> Self {
         Self {
             node: Some(names.node_name(device_id)),
+            room: Some(names.room_name(device_id)),
             channel: Some(names.channel_name(device_id, entity, channel)),
             value: Some(names.value_label(device_id, entity, channel, value)),
             ..Self::default()
@@ -207,20 +218,30 @@ impl Subject {
                     .map_or_else(|| "any node".to_string(), |device| names.node_name(device)),
             )
         };
+        let room = |device: &Option<String>| {
+            Some(
+                device
+                    .as_deref()
+                    .map_or_else(|| "any room".to_string(), |device| names.room_name(device)),
+            )
+        };
         match trigger {
             Trigger::Offline(OfflineTrigger { device, .. })
             | Trigger::Online(OnlineTrigger { device }) => Self {
                 node: node(device),
+                room: room(device),
                 ..Self::default()
             },
             Trigger::Notice(NoticeTrigger { device }) => Self {
                 node: node(device),
+                room: room(device),
                 title: Some("a notice".into()),
                 message: Some("run by hand".into()),
                 ..Self::default()
             },
             Trigger::Traffic(TrafficTrigger { kind, device }) => Self {
                 node: node(device),
+                room: room(device),
                 channel: matches!(kind, AlertKind::Stopped | AlertKind::Noisy)
                     .then(|| "a channel".to_string()),
                 detail: Some("run by hand".into()),
@@ -234,6 +255,7 @@ impl Subject {
                 ..
             }) => Self {
                 node: Some(names.node_name(device)),
+                room: Some(names.room_name(device)),
                 channel: Some(names.channel_name(device, *entity, *channel)),
                 value: Some(data.clone().unwrap_or_else(|| "a value".into())),
                 ..Self::default()
@@ -246,6 +268,7 @@ impl Subject {
                 ..
             }) => Self {
                 node: Some(names.node_name(device)),
+                room: Some(names.room_name(device)),
                 channel: Some(names.channel_name(device, *entity, *channel)),
                 value: Some(names.value_label(device, *entity, *channel, &test.example())),
                 ..Self::default()
@@ -275,6 +298,7 @@ impl Subject {
     fn placeholder(&self, name: &str) -> Option<&str> {
         match name {
             "node" => self.node.as_deref(),
+            "room" => self.room.as_deref(),
             "channel" => self.channel.as_deref(),
             "detail" => self.detail.as_deref(),
             "value" => self.value.as_deref(),
@@ -729,7 +753,7 @@ impl Drop for RunningGuard {
 
 /// Returns what happened, for the log.
 async fn perform(
-    hub: &Hub,
+    hub: &Arc<Hub>,
     action: &Action,
     rule_name: &str,
     subject: &Subject,
@@ -738,6 +762,19 @@ async fn perform(
         Action::Wait(WaitTime(duration)) => {
             tokio::time::sleep(duration.unsigned_abs()).await;
             return Ok("done".into());
+        }
+        Action::Run(scene) => {
+            let Some(rule) = hub.button_rule(scene).filter(|rule| rule.enabled) else {
+                bail!("no enabled rule has the button");
+            };
+            return match start(hub.clone(), rule, Subject::default()) {
+                Start::Started(actions) => {
+                    actions.await?;
+                    Ok("done".into())
+                }
+                Start::Skipped(condition) => Ok(format!("skipped, {condition} does not hold")),
+                Start::Busy => bail!("still running"),
+            };
         }
         Action::Notify { title, message } => {
             hub.notify(
@@ -804,6 +841,10 @@ mod tests {
             format!("Board {device_id}")
         }
 
+        fn room_name(&self, device_id: &str) -> String {
+            format!("Room of {device_id}")
+        }
+
         fn channel_name(&self, _: &str, entity: u8, channel: u8) -> String {
             format!("Sensor {entity}.{channel}")
         }
@@ -833,6 +874,27 @@ mod tests {
             .try_into()
             .unwrap();
         assert_eq!(actions[0].to_string(), "wait 2s");
+    }
+
+    #[test]
+    fn run_is_an_action_with_the_scene_name() {
+        let actions: Vec<Action> = toml::from_str::<toml::Table>(r#"then = [{ run = "Cinema" }]"#)
+            .unwrap()
+            .remove("then")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        assert_eq!(actions[0], Action::Run("Cinema".into()));
+        assert_eq!(actions[0].to_string(), "run \"Cinema\"");
+    }
+
+    #[test]
+    fn subjects_name_the_room_of_their_node() {
+        let subject = Subject::of_value("a", 1, 0, &Value::Bool(true), &Board);
+        assert_eq!(subject.fill("{node} in {room}"), "Board a in Room of a");
+        let by_hand = Subject::by_hand(&when("{ offline = \"*\" }").unwrap(), &Board);
+        assert_eq!(by_hand.fill("{room}"), "any room");
+        assert!(check_placeholders("{room}", &["node", "room"]).is_ok());
     }
 
     #[test]

@@ -9,9 +9,14 @@
 # output (inverted = false), button (pull_up = true, toggles = <output entity>),
 # dht11 (read_interval_seconds = 30, 2-3600), buzzer, ir_receiver, ir_transmitter,
 # potentiometer (minimum_change = 2 percent, 1-50).
+# rooms: the rooms in the order the pages list them; a node's room = "..." is one of them, and nodes
+# without one are in no room. Goes above the first [nodes...] section.
+
+rooms = ["Office", "Living room"]
 
 [nodes."esp32-08d1f9ca41e4"]
 name = "Test board"
+room = "Office"
 entities.1 = { name = "LED", channels.0 = "Power" }
 entities.2 = { name = "BOOT button", channels.0 = "Press" }
 entities.3 = { name = "Climate sensor" }
@@ -32,6 +37,7 @@ hardware = [
 
 [nodes."esp32-14335c2e7270"]
 name = "living room remote"
+room = "Living room"
 entities.1 = { name = "LED", channels.0 = "Power" }
 entities.2 = { name = "BOOT button", channels.0 = "Press" }
 entities.3 = { name = "IR transmitter", channels.0 = "Code" }
@@ -45,6 +51,7 @@ hardware = [
 
 [nodes."esp32-e8f60af8b410"]
 name = "C6 board"
+room = "Office"
 entities.2 = { name = "BOOT button", channels.0 = "Press" }
 entities.3 = { name = "Climate sensor" }
 entities.4 = { name = "IR transmitter", channels.0 = "Code" }

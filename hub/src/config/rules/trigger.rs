@@ -45,17 +45,17 @@ impl Trigger {
     pub fn placeholders(&self) -> &'static [&'static str] {
         match self {
             Trigger::Event(trigger) if trigger.event == EventKind::Received => {
-                &["node", "channel", "value"]
+                &["node", "room", "channel", "value"]
             }
-            Trigger::Event(_) => &["node", "channel"],
-            Trigger::State(_) => &["node", "channel", "value"],
-            Trigger::Offline(_) | Trigger::Online(_) => &["node"],
+            Trigger::Event(_) => &["node", "room", "channel"],
+            Trigger::State(_) => &["node", "room", "channel", "value"],
+            Trigger::Offline(_) | Trigger::Online(_) => &["node", "room"],
             Trigger::Traffic(TrafficTrigger {
                 kind: AlertKind::Stopped | AlertKind::Noisy,
                 ..
-            }) => &["node", "channel", "detail"],
-            Trigger::Traffic(_) => &["node", "detail"],
-            Trigger::Notice(_) => &["node", "title", "message"],
+            }) => &["node", "room", "channel", "detail"],
+            Trigger::Traffic(_) => &["node", "room", "detail"],
+            Trigger::Notice(_) => &["node", "room", "title", "message"],
             Trigger::Schedule(_)
             | Trigger::Cron(_)
             | Trigger::RemoteKey(_)
@@ -106,6 +106,8 @@ struct TriggerFields {
     remote: Option<String>,
     key: Option<String>,
     button: Option<String>,
+    /// Another name for `button`.
+    scene: Option<String>,
     notice: Option<String>,
 }
 
@@ -134,6 +136,7 @@ impl TriggerFields {
             ("remote", self.remote.is_some()),
             ("key", self.key.is_some()),
             ("button", self.button.is_some()),
+            ("scene", self.scene.is_some()),
             ("notice", self.notice.is_some()),
         ]
         .into_iter()
@@ -151,7 +154,7 @@ impl TryFrom<TriggerFields> for Trigger {
 
     fn try_from(fields: TriggerFields) -> Result<Self, String> {
         let traffic_alone = fields.has_only(&["stopped", "noisy", "unanswered", "reported"]);
-        let button_alone = fields.has_only(&["button"]);
+        let button_alone = fields.has_only(&["button", "scene"]);
         let remote_key_alone = fields.has_only(&["remote", "key"]);
         let offline_alone = fields.has_only(&["offline", "for"]);
         let notice_alone = fields.has_only(&["notice"]);
@@ -177,9 +180,12 @@ impl TryFrom<TriggerFields> for Trigger {
             let device = (device != "*").then_some(device);
             return Ok(Trigger::Traffic(TrafficTrigger { kind, device }));
         }
-        if let Some(button) = fields.button {
+        if fields.button.is_some() && fields.scene.is_some() {
+            return Err("use `button` or `scene`, not both".into());
+        }
+        if let Some(button) = fields.button.or(fields.scene) {
             if !button_alone {
-                return Err("a button trigger is `button` alone".into());
+                return Err("a button trigger is `button` or `scene` alone".into());
             }
             return Ok(Trigger::Button(ButtonTrigger { button }));
         }
@@ -594,7 +600,7 @@ mod tests {
     fn online_trigger_goes_alone_and_fills_the_node() {
         let any = when(r#"{ online = "*" }"#).unwrap();
         assert_eq!(any, Trigger::Online(OnlineTrigger { device: None }));
-        assert_eq!(any.placeholders(), ["node"]);
+        assert_eq!(any.placeholders(), ["node", "room"]);
         let Trigger::Online(tv) = when(r#"{ online = "tv" }"#).unwrap() else {
             panic!("not an online trigger");
         };
@@ -611,7 +617,7 @@ mod tests {
     fn notice_trigger_goes_alone_and_fills_title_and_message() {
         let any = when(r#"{ notice = "*" }"#).unwrap();
         assert_eq!(any, Trigger::Notice(NoticeTrigger { device: None }));
-        assert_eq!(any.placeholders(), ["node", "title", "message"]);
+        assert_eq!(any.placeholders(), ["node", "room", "title", "message"]);
         let Trigger::Notice(reminders) = when(r#"{ notice = "reminders" }"#).unwrap() else {
             panic!("not a notice trigger");
         };

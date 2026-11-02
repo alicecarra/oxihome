@@ -8,7 +8,7 @@ use crate::web::nodes::{channel_controls, channel_value};
 use crate::web::overview::DashboardChannel;
 
 #[component]
-pub(super) async fn channels_block(
+pub(crate) async fn channels_block(
     channels: Vec<DashboardChannel>,
     several_nodes: bool,
 ) -> Result<impl View> {

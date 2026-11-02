@@ -476,6 +476,12 @@ never reused: a node that drops one leaves the id unused.
   parameters = { heartbeat_interval = 30, wifi_check_interval = 5 }
   ```
 
+- Rooms, in `nodes.toml`: `rooms = ["Office", "Living room"]` above the first node section sets them
+  and their order, and `room = "Living room"` in a node's section places it; a room that is not in the
+  list stops the file from loading. `/rooms` lists each room with its nodes online, what they
+  measure and its scenes, `/rooms/<name>` adds every channel with value and controls, and `/nodes`
+  is ordered by room with a Room column. Nodes and scenes without a room stay out of `/rooms`.
+
 - `rules.toml`: a rule runs its actions when its trigger (`when`) fires. Actions set or toggle
   boolean channels, or show a notification as a toast on the web interface
   (`notify = { title = "...", message = "..." }`), or fire a `Trigger` channel such as the test
@@ -496,6 +502,8 @@ never reused: a node that drops one leaves the id unused.
   | `notice` | `{node}`, `{title}`, `{message}` |
   | `at`, `cron`, `button`, `remote` | none |
 
+  Every trigger with `{node}` also has `{room}`, the node's room, or `no room` without one.
+
   Names come from `nodes.toml`, then from what the node declares. A placeholder the trigger does
   not fill, or a misspelled one, stops the file from loading; `{{` and `}}` are literal braces.
   An `invoke` on an `Enum` channel cannot use placeholders, since the value must be one of the
@@ -514,13 +522,19 @@ never reused: a node that drops one leaves the id unused.
   offline (its heartbeat interval times `missed_heartbeats`) and runs only if the value is still so
   then. A wait whose rule changed or went away, also while the hub was down, is dropped; a new or
   changed rule whose value already passes starts waiting from the moment it is saved.
+  `{ run = "Cinema" }` runs the rule of that button, a scene, and waits for it to end, so a
+  remote key, a board's button and a schedule can share one list of actions; its own conditions
+  still apply. A `run` of a button no rule has, a circle of scenes or more than 8 levels stop the
+  file from loading; a disabled scene or one still running fails the action when it runs.
   `enabled = false` turns a rule off. Triggers:
   - an event of a channel: `when = { device = "...", entity = 2, channel = 0, event = "Press" }`;
     `data = "NEC 00 52"` also requires the event's text to be exactly that (a held key's
     `NEC 00 52 repeat` does not match);
   - a button, pressed on a `buttons` block of the dashboard or with "Press" on `/rules`:
-    `when = { button = "Turn on" }` (the text is the button's label; two rules with the same button
-    are an error when the configuration loads);
+    `when = { button = "Turn on" }` or `when = { scene = "Turn on" }`, which is the same (the text
+    is the button's label; two rules with the same button are an error when the configuration
+    loads); `room = "Living room"` next to `when` shows it on that room's page and must be one of the
+    `rooms` of `nodes.toml` (the rule editor writes `button`);
   - a key of a remote named in `remotes.toml`, from any IR receiver:
     `when = { remote = "Kit Lafvin", key = "0" }` (repeats do not match; an unknown key is an
     error when the configuration loads);
@@ -633,7 +647,7 @@ never reused: a node that drops one leaves the id unused.
 - `dashboard.toml`: the home page `/`, a list of blocks in file order on a grid of three columns
   (one on phones), refreshed live; the cards of a row share its height. Each block has a `type`, an optional `title` and a `width` of
   1 to 3 columns (default 1). Types: `nodes` (nodes by presence), `channels` (chosen channels with
-  value and controls), `buttons` (buttons of rules by name, `buttons = ["Turn on", "Turn off"]`; a button of a disabled rule is greyed out), `value` (one channel's value, large, dimmed
+  value and controls), `buttons` (buttons of rules by name, `buttons = ["Turn on", "Turn off"]`; a button of a disabled rule is greyed out), `room` (a room's summary, `room = "Living room"`), `value` (one channel's value, large, dimmed
   while its node is offline), `history` (the node page's chart for one channel, with 15 min, 1 h, 6 h and 24 h
   buttons; `range` of `15m`, `1h`, `6h` or `24h` sets the default, `24h` when missing; the picked range stays
   in the address, `?range4=6h` for the fifth block, through live updates and reloads), `rules` (the next 5 scheduled runs and the rules whose last run failed,

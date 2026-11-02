@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use anyhow::bail;
 use serde::Deserialize;
 
+use super::nodes::Nodes;
 use super::rules::Rules;
 
 /// The home page, from `dashboard.toml`: each dashboard is a tab, in file order, the first at `/`
@@ -79,6 +80,8 @@ pub struct Block {
     pub range: Option<String>,
     /// `events` and `feeds` blocks only: how many to show, 1 to 50 (default 10).
     pub limit: Option<usize>,
+    /// `room` blocks only: one of the `rooms` of `nodes.toml`.
+    pub room: Option<String>,
     /// `feeds` blocks: a node laid out like the rss node; `reminders` blocks: like the reminders
     /// node; `job` blocks: the node doing the job.
     pub device: Option<String>,
@@ -135,6 +138,8 @@ pub enum BlockKind {
     Job,
     /// The reminders of a reminders node, pending first, with done and snooze.
     Reminders,
+    /// A summary of a room: its nodes, what they measure and its scenes.
+    Room,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -166,6 +171,7 @@ impl BlockKind {
             BlockKind::Feeds => "feeds",
             BlockKind::Job => "job",
             BlockKind::Reminders => "reminders",
+            BlockKind::Room => "room",
         }
     }
 }
@@ -185,7 +191,7 @@ impl Dashboards {
         &self.dashboards
     }
 
-    pub fn validate(&self, rules: &Rules) -> anyhow::Result<()> {
+    pub fn validate(&self, rules: &Rules, nodes: &Nodes) -> anyhow::Result<()> {
         let mut names = HashSet::new();
         for dashboard in &self.dashboards {
             if dashboard.name.trim().is_empty() {
@@ -236,6 +242,13 @@ impl Dashboards {
                         bail!("{place}: a job block needs active, the states in which it runs")
                     }
                     BlockKind::Job => {}
+                    BlockKind::Room => match block.room.as_deref() {
+                        None => bail!("{place}: a room block needs room"),
+                        Some(room) if !nodes.has_room(room) => {
+                            bail!("{place}: room \"{room}\" is not in the rooms of nodes.toml")
+                        }
+                        Some(_) => {}
+                    },
                     BlockKind::Buttons => {
                         if let Some(button) = block
                             .buttons
@@ -245,6 +258,9 @@ impl Dashboards {
                             bail!("{place}: no rule has the button \"{button}\"")
                         }
                     }
+                }
+                if block.kind != BlockKind::Room && block.room.is_some() {
+                    bail!("{place}: only a room block has room");
                 }
                 if block.kind != BlockKind::Channels && !block.channels.is_empty() {
                     bail!("{place}: only a channels block has channels");
@@ -363,13 +379,16 @@ mod tests {
 
     fn error(text: &str) -> String {
         let dashboards: Dashboards = toml::from_str(text).unwrap();
-        dashboards.validate(&rules()).unwrap_err().to_string()
+        dashboards
+            .validate(&rules(), &Nodes::default())
+            .unwrap_err()
+            .to_string()
     }
 
     #[test]
     fn blocks_keep_the_file_order() {
         let dashboards: Dashboards = toml::from_str(EXAMPLE).unwrap();
-        assert!(dashboards.validate(&rules()).is_ok());
+        assert!(dashboards.validate(&rules(), &Nodes::default()).is_ok());
         let blocks = &dashboards.first().unwrap().blocks;
         let kinds: Vec<BlockKind> = blocks.iter().map(|block| block.kind).collect();
         assert_eq!(
@@ -417,7 +436,7 @@ mod tests {
              [[dashboards.blocks]]\ntype = \"rules\"\nattention = false",
         )
         .unwrap();
-        assert!(dashboards.validate(&rules()).is_ok());
+        assert!(dashboards.validate(&rules(), &Nodes::default()).is_ok());
         assert_eq!(dashboards.first().unwrap().name, "Home");
         let printer = dashboards.named("Printer").unwrap();
         assert!(!printer.blocks[0].attention);

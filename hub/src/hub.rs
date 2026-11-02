@@ -557,6 +557,21 @@ impl Hub {
             .map_or_else(|| device_id.to_string(), String::from)
     }
 
+    /// The node's room, as `{room}` shows it.
+    pub fn room_name(&self, device_id: &str) -> String {
+        self.nodes
+            .lock()
+            .unwrap()
+            .room(device_id)
+            .unwrap_or("no room")
+            .to_string()
+    }
+
+    /// In the order of `nodes.toml`.
+    pub fn rooms(&self) -> Vec<String> {
+        self.nodes.lock().unwrap().rooms().to_vec()
+    }
+
     /// `LED · Brightness`, `LED`: from `nodes.toml`, or what the node declares.
     pub fn channel_name(&self, device_id: &str, entity: u8, channel: u8) -> String {
         let registry = self.registry.lock().unwrap();

@@ -87,6 +87,13 @@ pub(super) async fn rule_form(editor: Editor) -> Result<impl View> {
                                 )
                                 <p class="text-sm text-muted-foreground">"After the rule starts, triggers about the same node and channel are ignored this long. At most 7 days."</p>
                             </div>
+                        } else {
+                            <div class="mt-4 space-y-2">
+                                form_field(title: "Room (optional)", name: "room".to_string(),
+                                    text_input(name: "room".to_string(), text: draft.room.clone(), placeholder: Some("e.g. Living room"))
+                                )
+                                <p class="text-sm text-muted-foreground">"The room whose page shows this button, one of the rooms in nodes.toml."</p>
+                            </div>
                         }
                     )
                 )
@@ -645,6 +652,12 @@ async fn action_fields(
                         text_input(name: name("wait"), text: action.wait, placeholder: Some("e.g. 2s"))
                     )
                     <p class="text-sm text-muted-foreground">"Pauses before the next action; at most 30 minutes."</p>
+                },
+                ActionKind::Run => {
+                    form_field(title: "Scene", name: name("value"),
+                        text_input(name: name("value"), text: action.value, placeholder: Some("e.g. Good night"))
+                    )
+                    <p class="text-sm text-muted-foreground">"Runs the rule of that button and waits for it to end."</p>
                 },
             }
             if let Some(warning) = warning {

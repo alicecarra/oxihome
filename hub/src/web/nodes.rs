@@ -14,6 +14,7 @@ use super::format::{ago_label, bool_label, css_color, duration_label, entity_lab
 use super::icons;
 use super::layout::layout;
 use super::overview::{self, ChannelOverview, Invocation, NodeOverview, Presence};
+use super::rooms::room_path;
 use crate::components::badge::{BadgeVariant, badge};
 use crate::components::button::{ButtonSize, ButtonVariant, button};
 use crate::components::input::input;
@@ -51,7 +52,7 @@ pub async fn nodes_page(cx: &Cx) -> Result<impl View> {
                 }
             </div>
             <div id="nodes" hx-get="/nodes/fragment" hx-trigger="sse:nodes, every 30s, refresh">
-                node_list(nodes: overview::nodes(hub))
+                node_list(nodes: overview::nodes_by_room(hub), rooms: hub.rooms())
             </div>
             <p id="nodes-filtered-out" class="text-muted-foreground" hidden="">"No nodes match the filter."</p>
             <script src="/static/filter.js"></script>
@@ -63,12 +64,12 @@ pub async fn nodes_page(cx: &Cx) -> Result<impl View> {
 #[page("/nodes/fragment")]
 pub async fn nodes_fragment(cx: &Cx) -> Result<impl View> {
     let hub: &Arc<Hub> = app_context(cx);
-    Ok(view! { node_list(nodes: overview::nodes(hub)) })
+    Ok(view! { node_list(nodes: overview::nodes_by_room(hub), rooms: hub.rooms()) })
 }
 
-/// One row per node; values and controls live on each node's page and on the dashboard.
+/// One row per node, by room; values and controls live on each node's page and on the dashboard.
 #[component]
-pub async fn node_list(nodes: Vec<NodeOverview>) -> Result<impl View> {
+pub async fn node_list(nodes: Vec<NodeOverview>, rooms: Vec<String>) -> Result<impl View> {
     Ok(view! {
         if nodes.is_empty() {
             <p class="text-muted-foreground">"No nodes yet."</p>
@@ -79,6 +80,7 @@ pub async fn node_list(nodes: Vec<NodeOverview>) -> Result<impl View> {
                     <thead class="text-left text-muted-foreground">
                         <tr>
                             sortable_header(column: "node", class: "", "Node")
+                            sortable_header(column: "room", class: "", "Room")
                             sortable_header(column: "status", class: "", "Status")
                             sortable_header(column: "channels", class: "hidden sm:table-cell", "Channels")
                             sortable_header(column: "software", class: "hidden sm:table-cell", "Software")
@@ -88,7 +90,7 @@ pub async fn node_list(nodes: Vec<NodeOverview>) -> Result<impl View> {
                     </thead>
                     <tbody>
                         for node in nodes {
-                            node_row(node: node)
+                            node_row(node: node, rooms: rooms.clone())
                         }
                     </tbody>
                 </table>
@@ -117,8 +119,15 @@ async fn sortable_header(
 }
 
 #[component]
-async fn node_row(node: NodeOverview) -> Result<impl View> {
+async fn node_row(node: NodeOverview, rooms: Vec<String>) -> Result<impl View> {
     let title = node.name.clone().unwrap_or_else(|| node.device_id.clone());
+    // Empty, so nodes without a room sort last either way.
+    let room_order = node
+        .room
+        .as_ref()
+        .and_then(|room| rooms.iter().position(|known| known == room))
+        .map(|position| position.to_string())
+        .unwrap_or_default();
     let (channels_count, channels_label, channels_title) = if node.presence == Presence::NotSeen {
         let configured: usize = node
             .configured_entities
@@ -164,6 +173,7 @@ async fn node_row(node: NodeOverview) -> Result<impl View> {
             class="border-t border-border"
             data-presence=(presence_key(node.presence))
             data-sort-node=(title.to_lowercase())
+            data-sort-room=(room_order)
             data-sort-status=((node.presence as u8).to_string())
             data-sort-channels=(channels_count.to_string())
             data-sort-software=(node.software.clone().unwrap_or_default())
@@ -175,6 +185,12 @@ async fn node_row(node: NodeOverview) -> Result<impl View> {
                 <span class="ml-2">protocol_badge(version: node.protocol_version)</span>
                 if node.name.is_some() {
                     <p class="text-xs text-muted-foreground">(node.device_id.clone())</p>
+                }
+            </td>
+            <td class="px-4 py-3">
+                match node.room.clone() {
+                    Some(room) => <a href=(room_path(&room)) class="hover:underline">(room)</a>,
+                    None => "—",
                 }
             </td>
             <td class="px-4 py-3">presence_badge(presence: node.presence)</td>

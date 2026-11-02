@@ -13,7 +13,7 @@ use crate::config::rules;
 use crate::hub::Hub;
 
 /// A button and the rule it runs.
-pub(super) struct RuleButton {
+pub(crate) struct RuleButton {
     pub button: String,
     pub rule: String,
     pub enabled: bool,
@@ -49,7 +49,7 @@ pub(super) async fn buttons_block(buttons: Vec<RuleButton>) -> Result<impl View>
 }
 
 #[component]
-async fn rule_button_view(rule_button: RuleButton) -> Result<impl View> {
+pub(crate) async fn rule_button_view(rule_button: RuleButton) -> Result<impl View> {
     let tooltip = if rule_button.enabled {
         rule_button.rule
     } else {

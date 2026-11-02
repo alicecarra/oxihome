@@ -83,6 +83,7 @@ pub fn on_message(hub: &Arc<Hub>, message: &Message) {
             );
             let subject = Subject {
                 node: Some(node),
+                room: Some(hub.room_name(&message.src)),
                 title: Some(title.clone()),
                 message: Some(text.clone()),
                 ..Subject::default()
@@ -206,6 +207,7 @@ fn on_alert(hub: &Arc<Hub>, raised: &RaisedAlert) {
     hub.notify(title, raised.detail.clone(), alert.device_id.clone());
     let subject = Subject {
         node: Some(node),
+        room: Some(hub.room_name(&alert.device_id)),
         channel,
         detail: Some(raised.detail.clone()),
         ..Subject::default()
@@ -228,6 +230,7 @@ fn on_node_event(hub: &Arc<Hub>, node_event: &NodeEvent) {
             hub.end_holds(device_id, None);
             let subject = Subject {
                 node: Some(hub.node_name(device_id)),
+                room: Some(hub.room_name(device_id)),
                 device_id: Some(device_id.clone()),
                 ..Subject::default()
             };
@@ -237,6 +240,7 @@ fn on_node_event(hub: &Arc<Hub>, node_event: &NodeEvent) {
             hub.end_offline_holds(device_id);
             let subject = Subject {
                 node: Some(hub.node_name(device_id)),
+                room: Some(hub.room_name(device_id)),
                 device_id: Some(device_id.clone()),
                 ..Subject::default()
             };

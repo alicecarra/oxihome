@@ -11,7 +11,8 @@ use topcoat::{
 use super::chart::{Chart, ChartRange};
 use super::format::query_value;
 use super::layout::layout;
-use super::overview::{self, Activity, DashboardChannel, NodeOverview, RulesSummary};
+use super::overview::{self, Activity, DashboardChannel, NodeOverview, RoomOverview, RulesSummary};
+use super::rooms::{room_summary, room_trigger};
 use crate::components::card::{card, card_content, card_header, card_title};
 use crate::config::dashboard::{Block, BlockKind, ChannelReference, DEFAULT_EVENTS, Dashboard};
 use crate::hub::{Hub, node_event};
@@ -29,8 +30,7 @@ mod rules;
 mod tabs;
 mod value;
 
-use buttons::{RuleButton, buttons_block, rule_buttons};
-use channels::channels_block;
+use buttons::{buttons_block, rule_buttons};
 use events::events_block;
 use feeds::{FeedList, feed_list, feeds_block};
 use history::{history, history_block};
@@ -40,6 +40,9 @@ use reminders::{ReminderList, reminder_list, reminders_block};
 use rules::rules_block;
 use tabs::{TabRow, dashboard_tabs, tab_row};
 use value::value_block;
+
+pub(crate) use buttons::{RuleButton, rule_button_view};
+pub(crate) use channels::channels_block;
 
 pub use buttons::press;
 pub use tabs::dashboard_tabs_fragment;
@@ -88,6 +91,8 @@ enum BlockContent {
         list: Option<ReminderList>,
         device_id: String,
     },
+    /// `None` when `nodes.toml` no longer has the room.
+    Room(Option<RoomOverview>),
 }
 
 const UPCOMING_RULES: usize = 5;
@@ -362,7 +367,10 @@ impl PageState {
         };
         let mut view = block_view(hub, block, range, choices, read).await;
         view.index = index;
-        view.trigger = block_trigger(block, range);
+        view.trigger = match &view.content {
+            BlockContent::Room(Some(room)) => room_trigger(room),
+            _ => block_trigger(block, range),
+        };
         view
     }
 }
@@ -451,6 +459,7 @@ fn block_trigger(block: &Block, range: ChartRange) -> String {
             vec!["sse:config".into(), "sse:timeline".into()]
         }
         BlockKind::Events => vec!["sse:timeline".into(), "sse:notifications".into()],
+        BlockKind::Room => vec!["sse:config".into()],
     };
     triggers.extend(["every 60s".into(), "refresh".into()]);
     triggers.join(", ")
@@ -581,6 +590,11 @@ async fn block_view(
                 .map_or_else(|| device_id.clone(), |list| list.node_label.clone());
             (title, BlockContent::Reminders { list, device_id })
         }
+        BlockKind::Room => {
+            let name = block.room.clone().unwrap_or_default();
+            let room = overview::room(hub, &name);
+            (name, BlockContent::Room(room))
+        }
     };
     BlockView {
         index: 0,
@@ -695,6 +709,7 @@ async fn dashboard_block(block: BlockView, place: Place, query: String) -> Resul
                         BlockContent::Job(job) => job_block(job: job),
                         BlockContent::Reminders { list, device_id } => reminders_block(list: list, device_id: device_id),
                         BlockContent::Buttons(buttons) => buttons_block(buttons: buttons),
+                        BlockContent::Room(room) => room_summary(room: room),
                     }
                 )
             )

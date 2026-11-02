@@ -194,6 +194,11 @@ fn action_table(action: &ActionDraft) -> Built<InlineTable> {
         table.insert("wait", wait.into());
         return Ok(table);
     }
+    if action.kind == ActionKind::Run {
+        let scene = required(&action.value, "write the scene's button")?;
+        table.insert("run", scene.into());
+        return Ok(table);
+    }
     let mut inner = InlineTable::new();
     match action.kind {
         ActionKind::Set => {
@@ -212,7 +217,7 @@ fn action_table(action: &ActionDraft) -> Built<InlineTable> {
             inner.insert("title", required(&action.title, "write the title")?.into());
             inner.insert("message", action.message.trim().into());
         }
-        ActionKind::Wait => unreachable!("handled above"),
+        ActionKind::Wait | ActionKind::Run => unreachable!("handled above"),
     }
     table.insert(action.kind.key(), inner.into());
     Ok(table)
@@ -234,6 +239,10 @@ pub(super) fn rule_table(draft: &Draft, catalog: &Catalog) -> Built<Table> {
     );
     if !draft.enabled {
         table.insert("enabled", value(false));
+    }
+    let room = draft.room.trim();
+    if !room.is_empty() && draft.trigger.kind == TriggerKind::Button {
+        table.insert("room", value(room));
     }
     let when = trigger_table(&draft.trigger, catalog).map_err(|error| format!("When: {error}"))?;
     table.insert("when", value(when));

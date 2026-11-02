@@ -493,6 +493,7 @@ fn action_description(nodes: &Nodes, registry: &Registry, action: &Action) -> St
         }
         Action::Notify { title, message } => format!("Notify \"{title}\": {message}"),
         Action::Wait(time) => format!("Wait {time}"),
+        Action::Run(scene) => format!("Run scene \"{scene}\""),
     }
 }
 
