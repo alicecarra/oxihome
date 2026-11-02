@@ -170,6 +170,7 @@ pub fn unit_symbol(unit: Unit) -> &'static str {
         Unit::Hectopascal => "hPa",
         Unit::Degree => "°",
         Unit::Meter => "m",
+        Unit::StandardGravity => "g",
     }
 }
 

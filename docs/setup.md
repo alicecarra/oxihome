@@ -280,6 +280,41 @@ come from the AHT20 (0x38) and pressure from the BMP280 (0x77, or 0x76); the BMP
 temperature is not reported, because the chip warms itself. A board has one I2C bus for it, so a
 second such entity fails to mount.
 
+## ADXL345 accelerometer
+
+Driver `adxl345`, on either chip, for vibration and tilt. Board `esp32-e8f60afbdf9c` (NanoESP32-C6)
+has it as entity 9 through `peripherals = "accelerometer"` in its board file, which picks SDA on
+GPIO6 and SCL on GPIO7 (GPIO21 and GPIO22 on the classic ESP32).
+
+| Module | Board |
+|---|---|
+| VCC | 3V3 |
+| GND | GND |
+| SDA | GPIO6 |
+| SCL | GPIO7 |
+| CS | 3V3 (selects I2C) |
+| SDO | GND (address 0x53; high is 0x1D) |
+| INT1, INT2 | not connected |
+
+In `nodes.toml` the same is `{ id = 9, pin = 6, driver = "adxl345", clock_pin = 7 }`, with
+`read_interval_seconds` (30 by default, 2 to 3600) and `vibration_threshold_milli_g` (250 by
+default, 10 to 16000). It uses the board's one I2C bus, so it cannot share a board with
+`aht20_bmp280` yet: the second of them fails to mount.
+
+Channels: `Vibrating` (0), acceleration `X`, `Y` and `Z` in g (1 to 3), `Pitch` and `Roll` in
+degrees (4 and 5). `Vibrating` is reported as soon as it changes, the others every read interval
+as the average of the latest 100 ms. The board reads the chip's FIFO every 100 ms; a swing above the
+threshold on any axis inside one read is vibration, and it ends after 5 quiet seconds. The chip's
+own activity detection is not used: with link mode and ac coupling it went on and off every 5 s on
+a board at rest (firmware 0.27.0 during development). Tune the threshold with the sensor fixed to
+the real appliance.
+
+Creating the board's broker user:
+
+```sh
+ssh docker-host oxihome/mosquitto/set-password.sh esp32-e8f60afbdf9c   # goes in mqtt_password
+```
+
 ## GPS module
 
 GY-NEO6MV2 (u-blox NEO-6M), driver `gps`, on either chip. It sends NMEA at 9600 baud once a

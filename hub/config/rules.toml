@@ -280,3 +280,26 @@ then = [
 name = "Reminders: list from Telegram"
 when = { device = "telegram", entity = 2, channel = 0, event = "Received", data = "lembretes" }
 then = [{ invoke = { device = "reminders", entity = 1, channel = 2 } }]
+
+# Scenes from Telegram
+
+[[rules]]
+name = "Telegram /cena: run a scene"
+when = { device = "telegram", entity = 2, channel = 1, event = "Received" }
+then = [
+    { run_named = { name = "{value}", reply = { device = "telegram", entity = 1, channel = 0 } } },
+]
+
+[[rules]]
+name = "Telegram /cena without a name: list the scenes"
+when = { device = "telegram", entity = 2, channel = 0, event = "Received", data = "cena" }
+then = [
+    { run_named = { reply = { device = "telegram", entity = 1, channel = 0 } } },
+]
+
+[[rules]]
+name = "Telegram /cenas: list the scenes"
+when = { device = "telegram", entity = 2, channel = 0, event = "Received", data = "cenas" }
+then = [
+    { run_named = { reply = { device = "telegram", entity = 1, channel = 0 } } },
+]

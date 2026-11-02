@@ -215,6 +215,13 @@ fn driver_label(driver: &Driver) -> String {
         } => format!(
             "AHT20 + BMP280, SDA on this pin, SCL on {clock_pin}, read every {read_interval_seconds} s"
         ),
+        Driver::Adxl345 {
+            clock_pin,
+            read_interval_seconds,
+            vibration_threshold_milli_g,
+        } => format!(
+            "ADXL345, SDA on this pin, SCL on {clock_pin}, read every {read_interval_seconds} s, vibration above {vibration_threshold_milli_g} mg"
+        ),
         Driver::Gps {
             report_interval_seconds,
         } => format!("GPS, RX on this pin, reported every {report_interval_seconds} s"),
