@@ -34,6 +34,13 @@ pub enum Driver {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         toggles: Option<u8>,
     },
+    /// Reed switch or any other contact, open or closed; closed is low unless `inverted`.
+    Contact {
+        #[serde(default = "enabled")]
+        pull_up: bool,
+        #[serde(default)]
+        inverted: bool,
+    },
     Dht11 {
         #[serde(default = "default_read_interval")]
         read_interval_seconds: u16,
@@ -107,6 +114,7 @@ impl Driver {
         match self {
             Driver::Output { .. } => "output",
             Driver::Button { .. } => "button",
+            Driver::Contact { .. } => "contact",
             Driver::Dht11 { .. } => "dht11",
             Driver::Buzzer => "buzzer",
             Driver::IrReceiver => "ir_receiver",
@@ -343,6 +351,9 @@ impl Hardware {
                         });
                     }
                 }
+            }
+            Driver::Contact { pull_up, .. } if *pull_up && chip.input_only(pin) => {
+                problems.push(HardwareProblem::NoPullUp { entity: id, pin });
             }
             Driver::Dht11 {
                 read_interval_seconds,
@@ -609,6 +620,35 @@ mod tests {
             alone(sensor(21, 35)).validate("esp32"),
             vec![HardwareProblem::InputOnlyPin { entity: 8, pin: 35 }]
         );
+    }
+
+    #[test]
+    fn contact() {
+        let json = r#"{"entities":[{"id":10,"pin":20,"driver":"contact"}]}"#;
+        let mut hardware = Hardware::from_json(json).unwrap();
+        assert_eq!(
+            hardware.entities[0].driver,
+            Driver::Contact {
+                pull_up: true,
+                inverted: false,
+            }
+        );
+        assert_eq!(hardware.validate("esp32c6"), vec![]);
+        assert_eq!(Hardware::from_json(&hardware.to_json()).unwrap(), hardware);
+
+        hardware.entities[0].pin = 35;
+        assert_eq!(
+            hardware.validate("esp32"),
+            vec![HardwareProblem::NoPullUp {
+                entity: 10,
+                pin: 35,
+            }]
+        );
+        hardware.entities[0].driver = Driver::Contact {
+            pull_up: false,
+            inverted: true,
+        };
+        assert_eq!(hardware.validate("esp32"), vec![]);
     }
 
     #[test]
