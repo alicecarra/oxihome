@@ -13,7 +13,7 @@ peripherals = "climate, external_led, buzzer, ir, potentiometer"
 #espnow_gateway = "esp32-..."
 #espnow_key = "..."
 # ESP-NOW gateway: its leaves' device ids, and a secret the leaves' keys come from
-# (openssl rand -hex 16). Each leaf also needs lines in the broker's acl (see docs/setup.md).
+# (openssl rand -hex 16). Each leaf also needs lines in the broker's acl (see docs/firmware/espnow.md).
 #espnow_leaves = "esp32-..., esp32-..."
 #espnow_secret = "..."
 # Read only by build-images.sh: esp32 (default) or esp32c6.

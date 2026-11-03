@@ -67,7 +67,7 @@ Deleting and reordering rules are out of scope. Use **Edit in Settings** for tho
 - `hub/src/web/rules.rs`: the New rule, Edit and Duplicate links
 - `hub/src/web/mod.rs`: the pages and routes
 - `hub/src/components/select.rs` and `checkbox.rs`: Topcoat components (`topcoat ui add select
-  checkbox`, see `docs/setup.md`). Their `lucide:*` icons were changed to `tabler:check` and
+  checkbox`, see `docs/hub/web-interface.md`). Their `lucide:*` icons were changed to `tabler:check` and
   `tabler:chevron-down` because `build.rs` only prepares the tabler set.
 
 ## Status

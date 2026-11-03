@@ -1,4 +1,4 @@
-# Production stack on docker-host, copied to ~/oxihome/compose.yaml there (see docs/setup.md, Production).
+# Production stack on docker-host, copied to ~/oxihome/compose.yaml there (see docs/production.md).
 name: oxihome
 
 x-logging: &logging
